@@ -1,6 +1,6 @@
 [package]
 name = "premise"
-version = "0.0.0"
+version = "1.0.0"
 edition = "2021"
 description = "A library and CLI scaffolded from mise-rust-template."
 license = "MIT"

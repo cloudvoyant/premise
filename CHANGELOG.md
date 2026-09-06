@@ -1,3 +1,10 @@
+# 1.0.0 (2026-09-06)
+
+
+### Features
+
+* initialized repo from mise-lib-template, scaffolded for rust ([67da34c](https://github.com/cloudvoyant/premise/commit/67da34cb6418851949d9f54f3d89263db221654b))
+
 ## [2.15.0](https://github.com/cloudvoyant/premise/compare/v2.14.0...v2.15.0) (2026-07-15)
 * emit placeholder docs during scaffold
 
