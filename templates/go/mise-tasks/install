@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+#MISE description="Install npm tools and download Go module dependencies"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+npm install --no-save --prefix "${MISE_PROJECT_ROOT:-$PWD}" \
+  semantic-release \
+  @semantic-release/changelog \
+  @semantic-release/exec \
+  @semantic-release/git \
+  @semantic-release/github \
+  conventional-changelog-conventionalcommits
+go mod download 2>/dev/null || true

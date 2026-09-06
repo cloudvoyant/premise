@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Format code"
+set -euo pipefail
+echo "TODO: Implement formatting"

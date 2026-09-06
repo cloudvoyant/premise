@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+#MISE description="Publish RC package to PyPI as a pre-release for validation"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+source "${MISE_PROJECT_ROOT:-$PWD}/mise-tasks/utils"
+
+# PEP 440 requires the rc suffix to be a number (PyPI rejects +local segments and the
+# commit sha), so the human-readable UTC timestamp (yyyymmddhhmm) doubles as the rc
+# number — unique per commit and time-sortable. pip/uv ignore pre-releases by default,
+# so an rcN release on PyPI does not affect normal installs.
+RC_NUM="$(date -u +%Y%m%d%H%M)"
+# Re-runs within the same minute would collide; bump GITHUB_RUN_ATTEMPT into a .post seg.
+[ "${GITHUB_RUN_ATTEMPT:-1}" != "1" ] && RC_NUM="${RC_NUM}.post${GITHUB_RUN_ATTEMPT}"
+RC_VERSION="${VERSION}rc${RC_NUM}"   # PEP 440: 2.2.0rc202607091142 (or .post2)
+
+log_info "Setting RC version $RC_VERSION in pyproject.toml..."
+sed_inplace "s/^version = .*/version = \"$RC_VERSION\"/" pyproject.toml
+
+log_info "Publishing $PROJECT $RC_VERSION to PyPI (pre-release)..."
+mise run publish
+
+log_success "Published $PROJECT $RC_VERSION to PyPI"

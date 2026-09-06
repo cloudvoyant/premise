@@ -1,0 +1,34 @@
+# Sample Test File for Testing Case Replacements
+
+# Test cases using template name in different formats:
+
+test_mise_lib_template_functionality() {
+    # snake_case usage
+    assert mise_lib_template == "template"
+}
+
+test-mise-lib-template-integration() {
+    # kebab-case usage
+    config.template-name = mise-lib-template
+}
+
+class TestMiseLibTemplate {
+    // PascalCase usage
+    MiseLibTemplate instance;
+    MiseLibTemplateService service;
+}
+
+describe('miseLibTemplate', () => {
+    // camelCase usage
+    const miseLibTemplateInstance = new MiseLibTemplate();
+    const miseLibTemplateConfig = getMiseLibTemplateConfig();
+});
+
+# Configuration examples
+NV_LIB_TEMPLATE_CONFIG_PATH=/etc/mise-lib-template/config
+mise_lib_template_database_url=postgres://mise_lib_template:password@localhost/mise_lib_template
+
+# Function names
+function initialize_mise_lib_template() { }
+function createMiseLibTemplateService() { }
+function MiseLibTemplateFactory() { }

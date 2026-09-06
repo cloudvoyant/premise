@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+#MISE description="Build Go project (debug)"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+# Compile-check every package, then emit a runnable binary (plain `go build ./...`
+# discards its output, so the task looked like a no-op).
+go build ./...
+mkdir -p bin
+go build -o "bin/$PROJECT" .
+echo "Build successful → bin/$PROJECT"

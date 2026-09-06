@@ -1,0 +1,17 @@
+[package]
+name = "mise_lib_template"
+version = "0.0.0"
+edition = "2021"
+description = "A library and CLI scaffolded from mise-rust-template."
+license = "MIT"
+
+# A single crate exposing both a library (for `{ git, tag }` consumers) and a
+# binary (for `cargo install --git`). Keeping `[package]` first makes the
+# version sed in .releaserc.json / templates:publish unambiguous.
+[lib]
+name = "mise_lib_template"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mise_lib_template"
+path = "src/main.rs"

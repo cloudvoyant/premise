@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+#MISE description="Cross-compile for all supported platforms"
+#MISE hide=true
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+source "${MISE_PROJECT_ROOT:-$PWD}/mise-tasks/utils"
+
+TARGETS=(
+    "x86_64-linux"
+    "aarch64-linux"
+    "x86_64-macos"
+    "aarch64-macos"
+    "x86_64-windows"
+)
+
+# Run a native build first to ensure fingerprint is current (auto-fixed after scaffold rename)
+mise run build >/dev/null
+
+mkdir -p zig-out/release
+
+for target in "${TARGETS[@]}"; do
+    log_info "Building for $target..."
+    zig build -Doptimize=ReleaseFast \
+        -Dtarget="$target" \
+        --prefix "zig-out/release/$target"
+    ext=""
+    [[ "$target" == *windows* ]] && ext=".exe"
+    archive="zig-out/release/${PROJECT}-v${VERSION}-${target}.tar.gz"
+    tar -czf "$archive" \
+        -C "zig-out/release/$target/bin" "${PROJECT}${ext}"
+    log_info "Packaged $archive"
+done
+
+log_success "All platform builds complete in zig-out/release/"

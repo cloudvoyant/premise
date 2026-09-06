@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+#MISE description="Publish a source release to GitHub (Odin ships as source, no binaries)"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+source "${MISE_PROJECT_ROOT:-$PWD}/mise-tasks/utils"
+
+# Odin ships as source (see CLAUDE.md): the git tag + GitHub release is the artifact, so
+# we publish no binaries. Idempotent — upversion usually creates the release already; only
+# create it here if missing, so `mise run publish` is safe to run standalone.
+if gh release view "v$VERSION" >/dev/null 2>&1; then
+    log_info "Source release v$VERSION already exists — nothing to upload (source-only)"
+else
+    log_info "Creating source release v$VERSION..."
+    gh release create "v$VERSION" --generate-notes
+fi
+
+log_success "Published $PROJECT v$VERSION as a source release (no binaries)"

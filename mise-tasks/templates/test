@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Run bats tests for scaffold and all templates"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+bats --jobs 4 test/scaffold.bats test/scaffold-templates.bats test/template-export.bats

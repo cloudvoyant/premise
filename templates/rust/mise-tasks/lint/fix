@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Auto-fix clippy findings"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+cargo clippy --fix --allow-dirty --allow-staged

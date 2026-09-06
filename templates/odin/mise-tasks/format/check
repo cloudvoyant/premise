@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#MISE description="Check Odin formatting (no-op: no bundled formatter)"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+# No native formatter and odinfmt has no --check mode; a no-op keeps format:check green
+# (it is a RUNNABLE contract task). Must exit 0.
+echo "WARNING: format:check is a no-op — Odin has no bundled formatter." >&2

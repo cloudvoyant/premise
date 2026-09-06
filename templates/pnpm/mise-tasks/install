@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Install npm dependencies"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+pnpm install

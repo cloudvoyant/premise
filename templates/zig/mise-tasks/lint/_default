@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Lint mise-tasks/ shell scripts with shellcheck"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+find mise-tasks -type f -exec shellcheck {} +

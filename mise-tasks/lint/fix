@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Auto-fix markdown formatting with Prettier"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+prettier --write "**/*.md"

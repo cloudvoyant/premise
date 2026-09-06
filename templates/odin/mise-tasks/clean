@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Remove Odin build artifacts"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+rm -rf bin/

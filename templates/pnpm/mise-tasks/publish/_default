@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Publish package to npm"
+#MISE depends=["build"]
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+pnpm publish --access public --no-git-checks

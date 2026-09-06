@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Remove Zig build artifacts"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+rm -rf zig-out/ zig-cache/ .zig-cache/

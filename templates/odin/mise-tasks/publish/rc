@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+#MISE description="Publish an RC source pre-release to GitHub (no binaries)"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+source "${MISE_PROJECT_ROOT:-$PWD}/mise-tasks/utils"
+
+SHORT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "dev")
+TIMESTAMP=$(date -u +%Y%m%d%H%M)
+# Human-readable UTC timestamp (yyyymmddhhmm) prefixes the sha so each commit gets a
+# unique, time-sortable RC tag. semver: v2.2.0-rc.202607091142.abc1234
+RC_TAG="v${VERSION}-rc.${TIMESTAMP}.${SHORT_SHA}"
+# Re-runs reuse the SHA/minute but bump GITHUB_RUN_ATTEMPT; fold it in so a re-run mints a
+# fresh tag instead of colliding with the pre-release already published.
+[ "${GITHUB_RUN_ATTEMPT:-1}" != "1" ] && RC_TAG="${RC_TAG}.${GITHUB_RUN_ATTEMPT}"
+
+log_info "Cleaning up previous RC pre-releases for v${VERSION}-rc.*..."
+while IFS= read -r tag; do
+    [[ "$tag" == "$RC_TAG" ]] && continue
+    gh release delete "$tag" --yes --cleanup-tag 2>/dev/null || true
+done < <(gh release list --json tagName,isPrerelease \
+    --jq '.[] | select(.isPrerelease) | .tagName' \
+    | grep "^v${VERSION}-rc\." || true)
+
+# The pre-release (with its auto-created git tag at HEAD) is the source artifact — Odin
+# ships no binaries, so there is nothing further to upload.
+log_info "Creating GitHub source pre-release $RC_TAG..."
+gh release create "$RC_TAG" \
+    --title "RC: $RC_TAG" \
+    --notes "Source pre-release from commit $SHORT_SHA. Not for production use." \
+    --prerelease
+
+log_success "Published $PROJECT $RC_TAG as a source pre-release (no binaries)"

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Run tests"
+#MISE depends=["build"]
+set -euo pipefail
+echo "TODO: Implement test"

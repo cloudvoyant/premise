@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Preview next semantic-release version"
+set -euo pipefail
+mise run upversion -- --dry-run

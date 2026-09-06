@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="List available language templates"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+find templates/ -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort

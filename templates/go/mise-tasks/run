@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Build and run the project"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+go run .

@@ -1,0 +1,23 @@
+# =============================================================================
+# mise.toml - go template
+# Overlays the base mise.toml during scaffold. Tasks are file tasks under
+# mise-tasks/ (this template overrides only the tasks that differ from base).
+# =============================================================================
+
+[env]
+_.path  = ['{{config_root}}/node_modules/.bin']
+PROJECT = "mise-lib-template"
+VERSION = "{{exec(command='cat version.txt 2>/dev/null || echo 0.1.0')}}"
+
+[tools]
+go         = "1.24"
+node       = "lts"
+bats       = "latest"
+shellcheck = "latest"
+shfmt      = "latest"
+
+[task_config]
+includes = ["mise-tasks"]
+
+[settings]
+experimental = true

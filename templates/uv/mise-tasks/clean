@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Remove build artifacts"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+rm -rf dist/ .ruff_cache/ __pycache__/ .pytest_cache/ src/*.egg-info/ .venv/

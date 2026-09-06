@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+#MISE description="Create new version based on commits (semantic-release)"
+: <<DOCUMENTATION
+Analyzes commits and creates a new version using semantic-release.
+
+This script wraps semantic-release to provide a consistent interface for
+version management across local and CI environments.
+
+Usage:
+  mise run upversion
+
+Behavior:
+- Analyzes commits since last release
+- Determines next version based on conventional commits
+- Updates CHANGELOG.md
+- Creates git tag
+- Pushes tag to remote (in CI only)
+
+Outputs (for CI):
+- new_release_published: true/false
+- new_release_version: X.Y.Z
+
+LANGUAGE-SPECIFIC PLUGINS:
+Configure in .releaserc.json or package.json
+
+Python: Update version in setup.py/pyproject.toml
+  npm install --save-dev @semantic-release/exec
+  Add to .releaserc.json:
+    "plugins": [
+      ["@semantic-release/exec", {
+        "prepareCmd": "sed -i 's/version=\".*\"/version=\"\${nextRelease.version}\"/' setup.py"
+      }]
+    ]
+
+Go: Update version in go.mod or version file
+  Similar @semantic-release/exec configuration
+
+Rust: Update Cargo.toml version
+  Similar @semantic-release/exec configuration
+
+Node: Uses @semantic-release/npm by default
+DOCUMENTATION
+
+# IMPORTS ----------------------------------------------------------------------
+set -euo pipefail
+
+source "$(dirname "$0")/utils"
+
+# MAIN -------------------------------------------------------------------------
+
+log_info "Running semantic-release"
+
+# Check if semantic-release is available
+if ! command_exists semantic-release; then
+    log_error "semantic-release not found. Run: mise install"
+    exit 1
+fi
+
+# Capture current version before running semantic-release
+CURRENT_VERSION=$(get_version)
+
+# Run semantic-release
+if [ -n "$CI" ]; then
+    # v0 first release: semantic-release defaults the first release to 1.0.0 and does not allow
+    # overriding it. To start new libraries in the 0.x range, seed a v0.0.0 baseline tag when no
+    # version tag exists yet, anchored at the root commit so all commits count toward the first
+    # release. semantic-release then computes feat -> 0.1.0, fix -> 0.0.1.
+    # NOTE: the first breaking change below 1.0.0 still promotes the project to 1.0.0.
+    #
+    # Match FINAL release tags only (vMAJOR.MINOR.PATCH). `git tag -l 'v*.*.*'` uses glob
+    # matching where '*' also spans '-', so it would match pre-release tags like
+    # v0.0.0-rc.<sha> (the zig template's publish-rc creates those via `gh release create`)
+    # and wrongly suppress the seed. An anchored regex ignores anything with a -rc suffix.
+    if ! git tag -l 'v*' | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+        ROOT_COMMIT=$(git rev-list --max-parents=0 HEAD | tail -n1)
+        if [ -n "$ROOT_COMMIT" ]; then
+            log_info "No version tag found — seeding v0.0.0 at root commit for a 0.x first release"
+            git tag -a v0.0.0 "$ROOT_COMMIT" -m "Initial version baseline (v0)" 2>/dev/null || true
+        fi
+    fi
+    log_info "Running in CI mode - will create release and push"
+    semantic-release
+    EXIT_CODE=$?
+else
+    log_info "Running in local mode - dry-run only (no tags will be created)"
+    semantic-release --dry-run
+    EXIT_CODE=$?
+fi
+
+if [ $EXIT_CODE -ne 0 ]; then
+    log_error "Semantic-release failed with exit code $EXIT_CODE"
+    exit $EXIT_CODE
+fi
+
+log_success "Semantic-release completed successfully"
+
+# Detect if a new release was published by checking if version changed
+NEW_VERSION=$(get_version)
+
+# Set GitHub Actions outputs if running in CI
+if [ -n "$CI" ] && [ -n "$GITHUB_OUTPUT" ]; then
+    if [ "$CURRENT_VERSION" != "$NEW_VERSION" ] && [ -n "$NEW_VERSION" ]; then
+        echo "new_release_published=true" >> "$GITHUB_OUTPUT"
+        echo "new_release_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+        log_success "New release published: v$NEW_VERSION"
+    else
+        echo "new_release_published=false" >> "$GITHUB_OUTPUT"
+        log_info "No new release published (no commits requiring version bump)"
+    fi
+fi
+
+log_info "Version update complete"

@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# install.sh — Install {{PROJECT_NAME}} binary (prebuilt Linux tarball)
+# Usage: curl -fsSL https://raw.githubusercontent.com/{{GITHUB_ORG}}/{{PROJECT_NAME}}/main/install.sh | bash
+#
+# Linux only in v1. On macOS/Windows (or to build from source), use Cargo directly:
+#   cargo install --git https://github.com/{{GITHUB_ORG}}/{{PROJECT_NAME}} --tag <vX.Y.Z>
+#
+# Set LIBC=musl to fetch the statically-linked musl build instead of the default gnu build.
+set -euo pipefail
+
+PROJECT="{{PROJECT_NAME}}"
+GITHUB_ORG="{{GITHUB_ORG}}"
+REPO="$GITHUB_ORG/$PROJECT"
+LIBC="${LIBC:-gnu}"
+
+OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+ARCH="$(uname -m)"
+
+case "$ARCH" in
+    x86_64)          ARCH="x86_64" ;;
+    aarch64|arm64)   ARCH="aarch64" ;;
+    *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;;
+esac
+
+if [[ "$OS" != "linux" ]]; then
+    echo "Prebuilt binaries are Linux-only. On $OS, install with Cargo:" >&2
+    echo "  cargo install --git https://github.com/$REPO --tag <vX.Y.Z>" >&2
+    exit 1
+fi
+
+case "$LIBC" in
+    gnu)  TARGET="${ARCH}-unknown-linux-gnu"  ;;
+    musl) TARGET="${ARCH}-unknown-linux-musl" ;;
+    *) echo "Unsupported LIBC: $LIBC (use gnu or musl)" >&2; exit 1 ;;
+esac
+
+if [[ $EUID -eq 0 ]]; then
+    INSTALL_DIR="/usr/local/bin"
+else
+    INSTALL_DIR="$HOME/.local/bin"
+    mkdir -p "$INSTALL_DIR"
+fi
+
+echo "Fetching latest $PROJECT release..."
+LATEST_URL="https://api.github.com/repos/$REPO/releases/latest"
+TAG=$(curl -fsSL "$LATEST_URL" | grep '"tag_name"' | sed 's/.*"tag_name": *"\(.*\)".*/\1/')
+
+ASSET_NAME="${PROJECT}-${TAG}-${TARGET}.tar.gz"
+DOWNLOAD_URL="https://github.com/$REPO/releases/download/$TAG/$ASSET_NAME"
+
+echo "Downloading $ASSET_NAME..."
+TMP_DIR=$(mktemp -d)
+trap 'rm -rf "$TMP_DIR"' EXIT
+curl -fsSL "$DOWNLOAD_URL" | tar -xz -C "$TMP_DIR"
+
+# Cargo emits the binary under the crate/[[bin]] name (snake_case); the archived
+# member matches that. Install it under the kebab command name ($PROJECT).
+cp "$TMP_DIR/${PROJECT//-/_}" "$INSTALL_DIR/$PROJECT"
+chmod +x "$INSTALL_DIR/$PROJECT"
+
+echo "Installed $PROJECT $TAG to $INSTALL_DIR/$PROJECT"
+echo "Make sure $INSTALL_DIR is in your PATH."

@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+#MISE description="Authenticate with GCP (local: gcloud login, CI: service account)"
+set -euo pipefail
+
+if [[ " $@ " =~ " --ci " ]]; then
+    echo "CI mode - authenticating with service account"
+    KEY_FILE=$(mktemp)
+    echo "$GCP_SA_KEY" > "$KEY_FILE"
+    gcloud auth activate-service-account --key-file="$KEY_FILE"
+    rm -f "$KEY_FILE"
+    gcloud config set project "$GCP_REGISTRY_PROJECT_ID"
+else
+    echo "Local mode - interactive GCP login"
+    gcloud auth login
+    gcloud config set project "$GCP_REGISTRY_PROJECT_ID"
+fi

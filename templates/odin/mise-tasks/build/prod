@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#MISE description="Build optimized release binary"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+mkdir -p bin
+odin build src -o:speed -define:VERSION="$VERSION" -out:"bin/$PROJECT"
+echo "Release build successful → bin/$PROJECT"

@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Auto-fix mise-tasks/ shell script formatting with shfmt"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+# Odin has no source autofixer; only the shell task scripts are formatted (matches zig).
+shfmt -w mise-tasks/

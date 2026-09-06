@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+#MISE description="Format Odin source (no-op: Odin has no bundled formatter)"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+# Odin ships no `odin fmt`. odinfmt (DanielGavin/ols) is a separate, non-registry tool;
+# install it opt-in to format src/. This task is a deliberate no-op so the contract holds.
+echo "WARNING: Odin has no bundled formatter (no 'odin fmt')." >&2
+echo "         Install odinfmt from DanielGavin/ols to format src/ (opt-in)." >&2

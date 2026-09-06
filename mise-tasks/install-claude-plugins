@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Install claudevoyant plugin for Claude CLI"
+set -euo pipefail
+
+claude plugin marketplace add cloudvoyant/claudevoyant 2>&1 | grep -v "already" || true
+claude plugin install claudevoyant

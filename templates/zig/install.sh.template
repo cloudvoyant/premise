@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# install.sh — Install {{PROJECT_NAME}} binary
+# Usage: curl -fsSL https://raw.githubusercontent.com/{{GITHUB_ORG}}/{{PROJECT_NAME}}/main/install.sh | bash
+set -euo pipefail
+
+PROJECT="{{PROJECT_NAME}}"
+GITHUB_ORG="{{GITHUB_ORG}}"
+REPO="$GITHUB_ORG/$PROJECT"
+
+# Detect OS and arch
+OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+ARCH="$(uname -m)"
+
+case "$ARCH" in
+    x86_64)          ARCH="x86_64" ;;
+    aarch64|arm64)   ARCH="aarch64" ;;
+    *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;;
+esac
+
+case "$OS" in
+    linux)   TARGET="${ARCH}-linux"  ;;
+    darwin)  TARGET="${ARCH}-macos"  ;;
+    *) echo "Unsupported OS: $OS" >&2; exit 1 ;;
+esac
+
+# Determine install directory
+if [[ $EUID -eq 0 ]]; then
+    INSTALL_DIR="/usr/local/bin"
+else
+    INSTALL_DIR="$HOME/.local/bin"
+    mkdir -p "$INSTALL_DIR"
+fi
+
+# Get latest release tag
+echo "Fetching latest $PROJECT release..."
+LATEST_URL="https://api.github.com/repos/$REPO/releases/latest"
+TAG=$(curl -fsSL "$LATEST_URL" | grep '"tag_name"' | sed 's/.*"tag_name": *"\(.*\)".*/\1/')
+
+# Download
+ASSET_NAME="${PROJECT}-${TAG}-${TARGET}.tar.gz"
+DOWNLOAD_URL="https://github.com/$REPO/releases/download/$TAG/$ASSET_NAME"
+
+echo "Downloading $ASSET_NAME..."
+TMP_DIR=$(mktemp -d)
+trap "rm -rf $TMP_DIR" EXIT
+curl -fsSL "$DOWNLOAD_URL" | tar -xz -C "$TMP_DIR"
+
+# Install
+cp "$TMP_DIR/$PROJECT" "$INSTALL_DIR/$PROJECT"
+chmod +x "$INSTALL_DIR/$PROJECT"
+
+echo "Installed $PROJECT $TAG to $INSTALL_DIR/$PROJECT"
+echo "Make sure $INSTALL_DIR is in your PATH."

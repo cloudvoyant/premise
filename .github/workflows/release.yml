@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '[skip ci]') && github.event.before != '0000000000000000000000000000000000000000'"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup python symlink for gcloud installer
+        run: sudo ln -sf /usr/bin/python3 /usr/local/bin/python
+
+      - name: Setup mise
+        uses: jdx/mise-action@v4
+
+      - name: Install dependencies
+        run: mise run install
+
+      - name: Run tests
+        run: mise run test
+
+      - name: Run template tests
+        run: mise run templates:test
+
+      - name: Create new version
+        id: upversion
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CI: true
+        run: mise run upversion -- --ci
+
+      - name: Build production artifacts
+        if: steps.upversion.outputs.new_release_published == 'true'
+        run: mise run build:prod
+
+      - name: Authenticate with registry
+        if: steps.upversion.outputs.new_release_published == 'true' && env.GCP_SA_KEY != ''
+        uses: google-github-actions/auth@v2
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup gcloud
+        if: steps.upversion.outputs.new_release_published == 'true' && env.GCP_SA_KEY != ''
+        uses: google-github-actions/setup-gcloud@v2
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Publish package
+        if: steps.upversion.outputs.new_release_published == 'true' && env.GCP_SA_KEY != ''
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          GCP_REGISTRY_PROJECT_ID: ${{ secrets.GCP_REGISTRY_PROJECT_ID }}
+          GCP_REGISTRY_REGION: ${{ secrets.GCP_REGISTRY_REGION }}
+          GCP_REGISTRY_NAME: ${{ secrets.GCP_REGISTRY_NAME }}
+        run: mise run publish
+
+      - name: Create GitHub Release
+        if: steps.upversion.outputs.new_release_published == 'true'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.upversion.outputs.new_release_version }}
+          generate_release_notes: true
+          files: |
+            dist/**/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish template packages
+        if: steps.upversion.outputs.new_release_published == 'true'
+        run: mise run templates:publish
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

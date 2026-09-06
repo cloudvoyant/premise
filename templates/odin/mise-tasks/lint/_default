@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Vet Odin source with the compiler's static checks"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+odin check src -vet -strict-style

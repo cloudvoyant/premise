@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Auto-fix ESLint issues (does not fix type errors)"
+#MISE depends=["install"]
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+pnpm run lint:fix

@@ -1,0 +1,23 @@
+# =============================================================================
+# mise.toml - pnpm (TypeScript) template
+# Overlays the base mise.toml during scaffold. Tasks are file tasks under
+# mise-tasks/ (this template overrides only the tasks that differ from base).
+# =============================================================================
+
+[env]
+_.path   = ['{{config_root}}/node_modules/.bin']
+PROJECT  = "mise-lib-template"
+VERSION  = "{{exec(command='node -p \"require(\\\"./package.json\\\").version\" 2>/dev/null || echo 0.1.0')}}"
+
+[tools]
+node       = "lts"
+pnpm       = "10"
+bats       = "latest"
+shellcheck = "latest"
+shfmt      = "latest"
+
+[task_config]
+includes = ["mise-tasks"]
+
+[settings]
+experimental = true

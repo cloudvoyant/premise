@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Auto-fix mise-tasks/ shell script formatting with shfmt"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+shfmt -w mise-tasks/

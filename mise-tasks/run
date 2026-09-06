@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Run project locally"
+#MISE depends=["build"]
+set -euo pipefail
+echo "TODO: Implement run"

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Run Rust test suite"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+cargo test

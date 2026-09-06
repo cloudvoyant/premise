@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+#MISE description="Install npm tools, cross, and fetch Rust dependencies"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+source "${MISE_PROJECT_ROOT:-$PWD}/mise-tasks/utils"
+npm install --no-save --prefix "${MISE_PROJECT_ROOT:-$PWD}" \
+  semantic-release \
+  @semantic-release/changelog \
+  @semantic-release/exec \
+  @semantic-release/git \
+  @semantic-release/github \
+  conventional-changelog-conventionalcommits
+# clippy and rustfmt are not included in the default minimal toolchain. Warn (not
+# fail) so a re-run in an offline/CI-cached env stays green, but surface real errors.
+rustup component add clippy rustfmt || log_warn "rustup component add clippy rustfmt failed"
+# Cross-compile targets (Linux only in v1 — `cross` builds these inside Docker).
+rustup target add \
+  x86_64-unknown-linux-gnu \
+  aarch64-unknown-linux-gnu \
+  x86_64-unknown-linux-musl \
+  aarch64-unknown-linux-musl \
+  || log_warn "rustup target add (cross targets) failed"
+# `cross` runs each cross-compile inside Docker; installed idempotently.
+cargo install cross || log_warn "cargo install cross failed (Docker required at build time)"
+cargo fetch || log_warn "cargo fetch failed"

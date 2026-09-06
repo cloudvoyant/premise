@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Build the project"
+set -euo pipefail
+echo "TODO: Implement build for $PROJECT@$VERSION"

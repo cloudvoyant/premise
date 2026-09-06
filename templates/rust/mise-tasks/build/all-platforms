@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+#MISE description="Cross-compile Linux binaries for all supported targets"
+#MISE hide=true
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+source "${MISE_PROJECT_ROOT:-$PWD}/mise-tasks/utils"
+
+# Linux-only in v1: `cross` (Docker) cannot legally cross-compile to macOS or
+# Windows-MSVC from a Linux host (no bundled SDK). macOS/Windows users install via
+# `cargo install --git`. `mise run install` adds each target's std lib via `rustup target
+# add`; `cross` supplies the linker/toolchain via Docker for the actual cross-build.
+TARGETS=(
+    "x86_64-unknown-linux-gnu"
+    "aarch64-unknown-linux-gnu"
+    "x86_64-unknown-linux-musl"
+    "aarch64-unknown-linux-musl"
+)
+
+# Native build first to settle state (and self-heal Cargo.lock) after scaffold rename.
+mise run build >/dev/null
+
+# Publish flows invoke this task directly (not via `install`), so ensure `cross` — the
+# Docker-backed cross-compiler that provides each target's linker/toolchain — is present.
+command -v cross >/dev/null 2>&1 || cargo install cross
+
+mkdir -p target/dist
+
+for target in "${TARGETS[@]}"; do
+    log_info "Building for $target..."
+    cross build --release --target "$target"
+    archive="target/dist/${PROJECT}-v${VERSION}-${target}.tar.gz"
+    # Cargo emits the binary under the [[bin]] name (snake_case), not $PROJECT (kebab).
+    tar -czf "$archive" -C "target/${target}/release" "${PROJECT//-/_}"
+    log_info "Packaged $archive"
+done
+
+log_success "All platform builds complete in target/dist/"

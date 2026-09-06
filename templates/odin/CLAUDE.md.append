@@ -1,0 +1,61 @@
+<!-- @context: odin, build-system, source-distribution -->
+
+## Odin Development (odin template)
+
+**Compiler**: Odin (LLVM backend). Installed via the `github:odin-lang/Odin` mise
+backend — the registry short-name `odin` is broken (dead plugin repos). Odin release
+tags are calendar-based (`dev-YYYY-MM`), not semver; the pinned tool version in
+`mise.toml` must be bumped by hand periodically.
+
+**System dependency (Linux):** Odin's backend shells out to **clang** as the linker.
+`mise-action` installs the Odin compiler but NOT clang/LLVM. `mise run install` installs
+`clang llvm` on CI Linux runners; for local Linux dev install them yourself (LLVM 17–22).
+macOS uses the system/Homebrew clang.
+
+**Common commands:**
+- `mise run build` — debug build (`odin build src -out:bin/<project>`)
+- `mise run build:prod` — optimized build (`odin build src -o:speed`)
+- `mise run test` — run `@(test)` procs (`odin test src`, uses `core:testing`)
+- `mise run run` — build and run (`odin run src`)
+- `mise run lint` — vet the source (`odin check src -vet -strict-style`)
+- `mise run publish` — cut/ensure the GitHub **source** release for the current version
+
+**No formatter:** Odin ships no `odin fmt`. `mise run format` / `mise run format-check`
+are intentional **no-ops** (they warn and exit 0). The de-facto formatter is `odinfmt`
+(part of DanielGavin/ols), which is a separate tool, not in the mise registry, and has no
+`--check` mode — install it opt-in if your team wants formatting.
+
+**Source layout:**
+- `src/lib.odin` — library procs + inline `@(test)` procs
+- `src/main.odin` — entry point; imports lib procs (same package), prints the baked version
+- Odin builds a *directory* as a single package; keep all `src/*.odin` in `package main`
+- There is NO package manifest — `version.txt` is the sole version source
+
+**Writing tests:**
+- Mark test procs with `@(test)` and take a `t: ^testing.T` parameter
+- Assert with `testing.expect(t, cond)` / `testing.expectf(...)`
+- Run with `mise run test` (wraps `odin test src`)
+
+**Consuming this as a library (the Odin way):**
+- Odin has no package manager. Vendor the `src/` package or add a git submodule and wire
+  it with `-collection:name=path`, then `import name "name:..."`. The git tag is the
+  distribution; there is no library artifact to publish.
+
+**Publishing (source releases, no binaries):**
+- Odin has no package manager and no binary-library convention, so this template
+  distributes **source**, not compiled artifacts. The git tag + its GitHub release (with
+  the source archive GitHub attaches automatically) *is* the release.
+- `mise run upversion` creates the GitHub Release (via `@semantic-release/github`);
+  `mise run publish` just ensures that release exists (idempotent) — it uploads nothing.
+- `mise run publish:rc` cuts a source pre-release tagged `vX.Y.Z-rc.<ts>.<sha>`.
+- Requires `GH_TOKEN` or `GITHUB_TOKEN` in environment.
+- Consumers vendor `src/` or add a git submodule at the tag (see "Consuming this as a
+  library" above) — there is no binary to download and no `install.sh` flow.
+
+**Why no cross-compiled binaries:** Odin drives clang and links with the *host* linker by
+default, so a single CI runner cannot reliably link foreign targets (macOS/Windows/arm64)
+without per-arch cross-linkers/SDKs — and a bad cross-link can even exit 0 with an unusable
+binary (odin-lang/Odin#4821). Combined with Odin's source-first distribution model,
+shipping binaries adds risk for no ecosystem benefit. If you *do* need app binaries for a
+specific platform, run `mise run build:prod` on a matching runner and attach the result
+yourself.

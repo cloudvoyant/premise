@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Get next version (from semantic-release)"
+set -euo pipefail
+source "${MISE_PROJECT_ROOT:-$PWD}/mise-tasks/utils"
+get_next_version

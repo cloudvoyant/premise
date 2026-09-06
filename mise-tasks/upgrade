@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+#MISE description="Upgrade to newer template version (requires Claude Code)"
+set -euo pipefail
+
+if command -v claude >/dev/null 2>&1; then
+    claude /upgrade
+else
+    echo "Claude Code CLI not found"
+    echo "Install Claude Code or run: /upgrade"
+    exit 1
+fi

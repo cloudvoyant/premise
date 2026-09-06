@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Build optimized static release binary"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+mkdir -p dist
+CGO_ENABLED=0 go build -ldflags "-X main.version=$VERSION -s -w" -o "dist/$PROJECT" .

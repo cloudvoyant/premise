@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+#MISE description="Check Go formatting without modifying files"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+unformatted=$(gofmt -l .)
+if [ -n "$unformatted" ]; then
+    echo "Unformatted files:" >&2
+    echo "$unformatted" >&2
+    exit 1
+fi

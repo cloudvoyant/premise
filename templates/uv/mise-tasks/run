@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Run the project"
+#MISE depends=["install"]
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+uv run python -m mise_lib_template

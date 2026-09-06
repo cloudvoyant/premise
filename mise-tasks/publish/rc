@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Publish RC package for pre-release validation"
+set -euo pipefail
+echo "TODO: Implement RC publishing for $PROJECT@$VERSION"

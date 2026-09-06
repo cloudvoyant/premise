@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Auto-format then vet Go source"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+gofmt -w .
+go vet ./...

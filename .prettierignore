@@ -1,0 +1,9 @@
+node_modules/
+dist/
+CHANGELOG.md
+RELEASE_NOTES.md
+**/*.template.md
+.codevoyant/
+.worktrees/
+.tmp/
+templates/**/node_modules/

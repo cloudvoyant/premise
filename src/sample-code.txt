@@ -1,0 +1,28 @@
+# Sample Code File for Testing Case Replacements
+
+# Template name in different formats:
+# snake_case
+template_name = mise_lib_template
+
+# kebab-case
+template-name: mise-lib-template
+
+# PascalCase
+class MiseLibTemplate:
+    pass
+
+class MiseLibTemplateService:
+    pass
+
+# camelCase
+const miseLibTemplate = "template";
+const miseLibTemplateConfig = {};
+
+# flatcase
+nvlibtemplate
+
+# Mixed examples
+def create_mise_lib_template_instance():
+    return MiseLibTemplate()
+
+export const miseLibTemplateHelper = new MiseLibTemplateService();

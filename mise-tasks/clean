@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Clean build artifacts"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+rm -rf .tmp
+echo "TODO: Implement clean"

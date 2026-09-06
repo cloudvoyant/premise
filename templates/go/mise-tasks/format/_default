@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Format Go source files in-place"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+gofmt -w .

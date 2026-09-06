@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+#MISE description="Build Rust project (debug)"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+# First build after scaffold rename regenerates Cargo.lock's root package name (self-heal).
+cargo build
+# Cargo emits the binary under the crate/[[bin]] name (snake_case), not $PROJECT (kebab).
+echo "Build successful → target/debug/${PROJECT//-/_}"

@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+#MISE hide=true
+#MISE description="Publish RC versions of template packages (CI pre-release validation)"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+source "${MISE_PROJECT_ROOT:-$PWD}/mise-tasks/utils"
+
+SHORT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "dev")
+TIMESTAMP=$(date -u +%Y%m%d%H%M)
+# Human-readable UTC timestamp (yyyymmddhhmm) prefixes the sha so RC versions are
+# per-commit-unique and time-sortable. PEP 440 (PyPI) can't carry the sha, so the
+# timestamp doubles as the numeric rc there; npm/zig keep timestamp.sha in the tag.
+RC_NUM="${TIMESTAMP}"
+RC_TAG="v${VERSION}-rc.${TIMESTAMP}.${SHORT_SHA}"   # semver: v2.2.0-rc.202607091142.abc1234
+# Re-runs within the same minute would collide; bump GITHUB_RUN_ATTEMPT into a suffix.
+if [ "${GITHUB_RUN_ATTEMPT:-1}" != "1" ]; then
+    RC_NUM="${RC_NUM}.post${GITHUB_RUN_ATTEMPT}"
+    RC_TAG="${RC_TAG}.${GITHUB_RUN_ATTEMPT}"
+fi
+RC_VERSION_PEP="${VERSION}rc${RC_NUM}"          # PEP 440: 2.2.0rc202607091142 (or .post2)
+
+# Capture GH_REPO before changing directories
+BASE_GH_REPO="${GITHUB_REPOSITORY:-$(git remote get-url origin 2>/dev/null \
+    | sed 's|.*github.com[:/]\([^/]*/[^/.]*\).*|\1|')}"
+
+TMP_DIR=".tmp/publish-templates-rc"
+rm -rf "$TMP_DIR"
+mkdir -p "$TMP_DIR"
+
+log_info "Publishing RC template packages at $RC_TAG..."
+
+# --- Clean up previous RC pre-releases for this base version ---
+log_info "Cleaning up previous RC pre-releases for v${VERSION}-rc.*..."
+while IFS= read -r tag; do
+    # Delete all prior RC pre-releases for this base version, INCLUDING the current
+    # tag, so a re-run of the same commit can recreate it cleanly (avoids HTTP 422
+    # "tag_name already exists").
+    gh release delete "$tag" --yes --cleanup-tag 2>/dev/null || true
+done < <(gh release list --json tagName,isPrerelease \
+    --jq '.[] | select(.isPrerelease) | .tagName' \
+    | grep "^v${VERSION}-rc\." || true)
+
+# --- Create GitHub pre-release for RC tag ---
+# No upversion runs on feature branches, so we create the pre-release explicitly
+# before calling zig publish (which always uploads to an existing release).
+log_info "Creating GitHub pre-release $RC_TAG..."
+gh release create "$RC_TAG" \
+    --title "RC: $RC_TAG" \
+    --notes "Pre-release build from commit $SHORT_SHA. Not for production use." \
+    --prerelease
+
+# --- mise-uv-template RC → PyPI (pre-release) ---
+log_info "Scaffolding mise-uv-template RC..."
+mkdir -p "$TMP_DIR/mise-uv-template"
+mise run scaffold -- \
+    --src . --dest "$TMP_DIR/mise-uv-template" \
+    --project mise-uv-template --template uv --non-interactive
+
+sed_inplace "s/^version = .*/version = \"$RC_VERSION_PEP\"/" \
+    "$TMP_DIR/mise-uv-template/pyproject.toml"
+
+log_info "Publishing mise-uv-template $RC_VERSION_PEP to PyPI (pre-release)..."
+(cd "$TMP_DIR/mise-uv-template" && mise run publish)
+log_success "mise-uv-template $RC_VERSION_PEP published to PyPI"
+
+# --- mise-zig-template RC → assets on GitHub pre-release ---
+# Pre-release already created above; zig publish uploads to existing release.
+log_info "Scaffolding mise-zig-template RC..."
+mkdir -p "$TMP_DIR/mise-zig-template"
+mise run scaffold -- \
+    --src . --dest "$TMP_DIR/mise-zig-template" \
+    --project mise-zig-template --template zig --non-interactive
+
+echo "${RC_TAG#v}" > "$TMP_DIR/mise-zig-template/version.txt"
+sed_inplace "s/^\\( *\\)\\.version = \".*\"/\\1.version = \"${RC_TAG#v}\"/" \
+    "$TMP_DIR/mise-zig-template/build.zig.zon"
+
+log_info "Uploading mise-zig-template $RC_TAG binaries to GitHub pre-release..."
+(cd "$TMP_DIR/mise-zig-template" && GH_REPO="$BASE_GH_REPO" mise run publish)
+log_success "mise-zig-template $RC_TAG assets uploaded to GitHub pre-release"
+
+# --- mise-go-template RC → assets on GitHub pre-release ---
+# Pre-release already created above; go publish uploads to the existing release.
+log_info "Scaffolding mise-go-template RC..."
+mkdir -p "$TMP_DIR/mise-go-template"
+mise run scaffold -- \
+    --src . --dest "$TMP_DIR/mise-go-template" \
+    --project mise-go-template --template go --non-interactive
+
+echo "${RC_TAG#v}" > "$TMP_DIR/mise-go-template/version.txt"
+
+log_info "Uploading mise-go-template $RC_TAG binaries to GitHub pre-release..."
+(cd "$TMP_DIR/mise-go-template" && GH_REPO="$BASE_GH_REPO" mise run publish)
+log_success "mise-go-template $RC_TAG assets uploaded to GitHub pre-release"
+
+# --- mise-rust-template RC → assets on GitHub pre-release ---
+# Pre-release already created above; rust publish uploads to existing release.
+log_info "Scaffolding mise-rust-template RC..."
+mkdir -p "$TMP_DIR/mise-rust-template"
+mise run scaffold -- \
+    --src . --dest "$TMP_DIR/mise-rust-template" \
+    --project mise-rust-template --template rust --non-interactive
+
+echo "${RC_TAG#v}" > "$TMP_DIR/mise-rust-template/version.txt"
+sed_inplace "s/^version = \".*\"/version = \"${RC_TAG#v}\"/" \
+    "$TMP_DIR/mise-rust-template/Cargo.toml"
+
+log_info "Uploading mise-rust-template $RC_TAG binaries to GitHub pre-release..."
+(cd "$TMP_DIR/mise-rust-template" && GH_REPO="$BASE_GH_REPO" mise run publish)
+log_success "mise-rust-template $RC_TAG assets uploaded to GitHub pre-release"
+
+# --- mise-odin-template RC → assets on GitHub pre-release ---
+# Pre-release already created above; odin publish uploads to the existing release.
+# Odin has no manifest — only version.txt needs the RC version.
+log_info "Scaffolding mise-odin-template RC..."
+mkdir -p "$TMP_DIR/mise-odin-template"
+mise run scaffold -- \
+    --src . --dest "$TMP_DIR/mise-odin-template" \
+    --project mise-odin-template --template odin --non-interactive
+
+echo "${RC_TAG#v}" > "$TMP_DIR/mise-odin-template/version.txt"
+
+log_info "Uploading mise-odin-template $RC_TAG binaries to GitHub pre-release..."
+(cd "$TMP_DIR/mise-odin-template" && GH_REPO="$BASE_GH_REPO" mise run publish)
+log_success "mise-odin-template $RC_TAG assets uploaded to GitHub pre-release"
+
+# --- mise-pnpm-template RC → npm ---
+log_info "Scaffolding mise-pnpm-template RC..."
+mkdir -p "$TMP_DIR/mise-pnpm-template"
+mise run scaffold -- \
+    --src . --dest "$TMP_DIR/mise-pnpm-template" \
+    --project mise-pnpm-template --template pnpm --non-interactive
+
+node -e "
+const fs = require('fs');
+const pkg = JSON.parse(fs.readFileSync('$TMP_DIR/mise-pnpm-template/package.json', 'utf8'));
+pkg.version = '${RC_TAG#v}';
+fs.writeFileSync('$TMP_DIR/mise-pnpm-template/package.json', JSON.stringify(pkg, null, 2) + '\n');
+"
+
+log_info "Publishing mise-pnpm-template $RC_TAG to npm with tag 'next'..."
+# pnpm (10+) ignores auth tokens in a project-committed .npmrc and only honors a
+# user-level ~/.npmrc, so write the token there. Use mise's pinned pnpm (10) — no
+# `corepack enable` (that pulls pnpm 11, which ignores package.json
+# onlyBuiltDependencies and fails on esbuild's build script).
+[ -n "${NPM_TOKEN:-}" ] || { log_error "NPM_TOKEN is empty"; exit 1; }
+printf '//registry.npmjs.org/:_authToken=%s\n' "${NPM_TOKEN}" > "$HOME/.npmrc"
+# The scaffolded project ships its own .npmrc (_authToken=${NODE_AUTH_TOKEN}); a
+# project-level .npmrc shadows the user ~/.npmrc, so remove it to use our auth.
+rm -f "$TMP_DIR/mise-pnpm-template/.npmrc"
+(cd "$TMP_DIR/mise-pnpm-template" && mise run install && \
+    pnpm publish --access public --no-git-checks --tag next)
+log_success "mise-pnpm-template $RC_TAG published to npm (tag: next)"
+
+rm -rf "$TMP_DIR"
+log_success "RC template packages published at $RC_TAG"

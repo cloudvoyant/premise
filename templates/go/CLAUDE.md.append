@@ -1,0 +1,56 @@
+<!-- @context: go, build-system, cross-platform -->
+
+## Go Development (go template)
+
+**Build system**: `go build` / `go test` via mise tasks — do not invoke `go` directly for
+release builds; use the tasks so the version ldflags and cross-compile matrix stay consistent.
+
+**Common commands:**
+- `mise run build` — compile all packages (`go build ./...`)
+- `mise run build:prod` — stripped static release binary (`CGO_ENABLED=0 go build -ldflags "-X main.version=$VERSION -s -w"`)
+- `mise run test` — run tests (`go test ./...`)
+- `mise run run` — build and run (`go run .`)
+- `mise run format` / `mise run format:check` — `gofmt -w .` / `gofmt -l .`
+- `mise run lint` / `mise run lint:fix` — `go vet ./...`
+- `mise run build:all-platforms` — cross-compile all targets to `dist/release/`
+- `mise run publish` — build all platforms, upload binaries to the existing GitHub release
+  (created by `mise run upversion`)
+
+**Source layout:**
+- `main.go` — CLI entry point (`package main`); `var version` is set at build time via ldflags
+- `src/<project>/` — library package, imported by module path; add exported functions here
+- `go.mod` — module manifest; the module path org must match your GitHub org (see Publishing)
+
+**Version injection:** the binary version comes from `-ldflags "-X main.version=$VERSION"`,
+where `$VERSION` is read from `version.txt`. Do not hardcode versions in source.
+
+**Writing tests:**
+- Test files are `*_test.go` next to the code, `func TestXxx(t *testing.T)`
+- Run with `mise run test` (wraps `go test ./...`); `go test -v ./...` for per-test output
+- `go test -run TestName ./...` to run a single test
+
+**Cross-compilation targets** (pure-Go, `CGO_ENABLED=0` — no C toolchain needed):
+- Linux: `x86_64-linux`, `aarch64-linux`
+- macOS: `x86_64-macos`, `aarch64-macos`
+- Windows: `x86_64-windows` (binary is `.exe` inside the `.tar.gz`)
+
+**Adding dependencies:**
+1. `go get github.com/org/dep@vX.Y.Z`
+2. `go mod tidy`
+3. Commit the updated `go.mod` / `go.sum`
+
+**Publishing:**
+- Libraries publish by tag alone: `mise run upversion` creates the `vX.Y.Z` tag + GitHub
+  Release, which makes the module consumable via `go get <module>@vX.Y.Z`. **The `go.mod`
+  module path org must match this repo's GitHub org** — update it if scaffold left the
+  placeholder org.
+- CLIs additionally get prebuilt binaries: `mise run publish` cross-compiles all platforms and
+  uploads the `.tar.gz` assets to the existing release (requires `GH_TOKEN`/`GITHUB_TOKEN`).
+- End users install via `install.sh` (downloads from GitHub Releases) or
+  `go install <module>@vX.Y.Z`.
+
+**Graduating to GoReleaser:** this template hand-rolls the cross-compile matrix to match the
+repo's semantic-release-owns-the-release model. If you later need signed checksums, Homebrew
+taps, Linux packages (`nfpm`), or SBOMs, migrate `publish`/`build:all-platforms` to
+[GoReleaser](https://goreleaser.com/) — but note it wants to own tag→changelog→release itself,
+which conflicts with the `.releaserc.json` flow, so you would also rework `upversion`.

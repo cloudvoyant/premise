@@ -1,0 +1,14 @@
+.{
+    .name = .mise_lib_template,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    // Fingerprint uniquely identifies this package. Regenerate with: zig build --fetch
+    .fingerprint = 0xf15126191304b6d9,
+    // After scaffolding, run `zig build --fetch` to populate .hash if you add dependencies.
+    // No external dependencies by default.
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

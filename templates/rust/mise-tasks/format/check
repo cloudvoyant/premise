@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Check Rust formatting without modifying files"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+cargo fmt --check

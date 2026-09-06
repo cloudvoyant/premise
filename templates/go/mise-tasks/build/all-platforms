@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+#MISE description="Cross-compile for all supported platforms"
+#MISE hide=true
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+source "${MISE_PROJECT_ROOT:-$PWD}/mise-tasks/utils"
+
+# "GOOS/GOARCH:target-label" — labels match the zig template so install.sh is shared.
+TARGETS=(
+    "linux/amd64:x86_64-linux"
+    "linux/arm64:aarch64-linux"
+    "darwin/amd64:x86_64-macos"
+    "darwin/arm64:aarch64-macos"
+    "windows/amd64:x86_64-windows"
+)
+
+mkdir -p dist/release
+
+for entry in "${TARGETS[@]}"; do
+    goos="${entry%%/*}"
+    rest="${entry#*/}"
+    goarch="${rest%%:*}"
+    target="${rest#*:}"
+    log_info "Building for $target ($goos/$goarch)..."
+    ext=""
+    [[ "$goos" == "windows" ]] && ext=".exe"
+    bindir="dist/release/$target"
+    mkdir -p "$bindir"
+    GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 \
+        go build -ldflags "-X main.version=$VERSION -s -w" \
+        -o "$bindir/${PROJECT}${ext}" .
+    archive="dist/release/${PROJECT}-v${VERSION}-${target}.tar.gz"
+    tar -czf "$archive" -C "$bindir" "${PROJECT}${ext}"
+    log_info "Packaged $archive"
+done
+
+log_success "All platform builds complete in dist/release/"

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Get current version"
+set -euo pipefail
+echo "$VERSION"

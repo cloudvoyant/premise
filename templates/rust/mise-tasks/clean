@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Remove Rust build artifacts"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+cargo clean
+rm -rf target/dist

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+#MISE description="Install npm tools and ensure clang/LLVM for the Odin linker"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+
+# Odin's LLVM backend links via clang; ubuntu CI runners lack it and mise-action does not
+# provide it. Install it only in CI-on-Linux when it's missing (idempotent; leaves local
+# macOS/Homebrew clang alone). Assumes a GitHub-hosted runner with passwordless sudo.
+if [ "${CI:-}" = "true" ] && [ "$(uname -s)" = "Linux" ] && ! command -v clang >/dev/null 2>&1; then
+  sudo apt-get update -y
+  sudo apt-get install -y clang llvm
+fi
+
+npm install --no-save --prefix "${MISE_PROJECT_ROOT:-$PWD}" \
+  semantic-release \
+  @semantic-release/changelog \
+  @semantic-release/exec \
+  @semantic-release/git \
+  @semantic-release/github \
+  conventional-changelog-conventionalcommits

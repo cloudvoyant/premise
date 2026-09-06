@@ -1,0 +1,129 @@
+# Auto detect text files and normalize line endings to LF
+* text=auto eol=lf
+
+# Source code
+*.c text diff=c
+*.h text diff=c
+*.cpp text diff=cpp
+*.cc text diff=cpp
+*.cxx text diff=cpp
+*.hpp text diff=cpp
+*.hh text diff=cpp
+*.hxx text diff=cpp
+*.cu text diff=cpp
+*.cuh text diff=cpp
+*.go text diff=golang
+*.js text diff=js
+*.jsx text diff=js
+*.mjs text diff=js
+*.cjs text diff=js
+*.ts text diff=ts
+*.tsx text diff=ts
+*.py text diff=python
+*.pyw text diff=python
+*.pyi text diff=python
+*.zig text diff=zig
+*.rs text diff=rust
+*.java text diff=java
+*.cs text diff=csharp
+*.csx text diff=csharp
+
+# Configuration and data files
+*.json text
+*.xml text
+*.yaml text
+*.yml text
+*.toml text
+*.ini text
+*.cfg text
+*.conf text
+*.config text
+
+# Scripts
+*.sh text eol=lf
+*.bash text eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Documentation
+*.md text diff=markdown
+*.txt text
+*.rst text
+*.tex text
+
+# Build files
+Makefile text
+*.mk text
+*.cmake text
+CMakeLists.txt text
+*.gradle text
+*.maven text
+*.sbt text
+*.proj text
+*.csproj text
+*.sln text eol=crlf
+
+# Archives and binaries
+*.zip binary
+*.tar binary
+*.gz binary
+*.7z binary
+*.jar binary
+*.war binary
+*.ear binary
+*.exe binary
+*.dll binary
+*.so binary
+*.dylib binary
+*.a binary
+*.lib binary
+*.o binary
+*.obj binary
+*.class binary
+
+# Images
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg text
+*.webp binary
+*.bmp binary
+
+# Fonts
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
+*.eot binary
+
+# Audio/Video
+*.mp3 binary
+*.mp4 binary
+*.avi binary
+*.mov binary
+*.wav binary
+*.flac binary
+
+# Other
+*.pdf binary
+*.db binary
+*.sqlite binary
+*.wasm binary
+
+# GitHub Template: Exclude template-specific files when using "Use this template"
+# These files are for template development and should not be copied to new projects
+test/ export-ignore
+docs/migrations/ export-ignore
+docs/decisions/ export-ignore
+CHANGELOG.md export-ignore
+RELEASE_NOTES.md export-ignore
+.claude/plan.md export-ignore
+.claude/tasks.md export-ignore
+.claude/migrations/generate-migration-guide.md export-ignore
+.claude/commands/new-migration.md export-ignore
+.claude/commands/validate-template.md export-ignore
+.mise.local.toml export-ignore
+node_modules/ export-ignore

@@ -1,0 +1,59 @@
+<!-- @context: rust, cargo, cross-platform -->
+
+## Rust Development (rust template)
+
+**Build system**: `cargo` — do not invoke `rustc` directly or hand-roll build scripts.
+
+**Common commands:**
+- `mise run build` — debug build (`cargo build`)
+- `mise run build:prod` — release build (`cargo build --release`)
+- `mise run test` — run tests (`cargo test`)
+- `mise run run` — build and run (`cargo run`)
+- `mise run lint` — `cargo clippy --all-targets --all-features -- -D warnings`
+- `mise run lint:fix` — `cargo clippy --fix --allow-dirty --allow-staged`
+- `mise run format` / `mise run format:check` — `cargo fmt` / `cargo fmt --check`
+- `mise run publish` — cross-compile Linux binaries, upload to the existing GitHub release
+
+**Source layout:**
+- `src/lib.rs` — library crate (consumed via `{ git, tag }`)
+- `src/main.rs` — CLI entry point (depends on the lib crate)
+- `Cargo.toml` — package manifest; keep `[package]` first (the version sed depends on it)
+- `Cargo.lock` — committed for reproducible git-tag consumers; regenerated on `cargo build`.
+  The base `.gitignore`'s broad `*.lock` is overridden by a `!Cargo.lock` negation so the
+  lock is tracked; do not remove that negation.
+
+**Writing tests:**
+- Unit tests live in `#[cfg(test)] mod tests { ... }` inside the source file
+- Run with `mise run test` (wraps `cargo test`)
+- `cargo test -- --nocapture` for stdout during tests
+
+**Consuming this project (no crates.io required):**
+- Library dependency (pinned, reproducible — Cargo locks the commit in `Cargo.lock`):
+  ```toml
+  [dependencies]
+  <project_snake> = { git = "https://github.com/<org>/<project>", tag = "vX.Y.Z" }
+  # branch = "main" / rev = "<sha>" also supported
+  ```
+- Installable binary (no registry):
+  ```bash
+  cargo install --git https://github.com/<org>/<project> --tag vX.Y.Z
+  # --branch / --rev / --bin <name> also supported
+  ```
+- Prebuilt binary (no Rust toolchain, Linux only in v1): `install.sh` downloads the
+  cross-compiled tarball from the GitHub Release.
+
+**Cross-compilation (v1 = Linux only):**
+- `mise run build:all-platforms` uses `cross` (Docker) to build the four Linux triples:
+  `x86_64`/`aarch64` × `unknown-linux-gnu`/`unknown-linux-musl`
+- `mise run install` adds clippy, rustfmt, and the four cross targets via `rustup`, then
+  installs `cross` (requires Docker at build time).
+- macOS / Windows prebuilt binaries are a known gap — those users run `cargo install --git`
+  (needs a local toolchain). Closing the gap is an opt-in: run `dist init` (cargo-dist) in
+  this project to take over the release matrix, dropping semantic-release.
+- `cross` requires Docker on the runner; `cargo install cross` is done by `mise run install`.
+
+**Publishing:**
+- `mise run upversion` creates the GitHub Release (via `@semantic-release/github`) and syncs
+  the version into `Cargo.toml`/`version.txt`
+- `mise run publish` cross-compiles and uploads binaries to the existing release
+- Requires `GH_TOKEN` or `GITHUB_TOKEN` in environment

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+#MISE description="Publish package to registry"
+#MISE depends=["test", "build:prod"]
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+gcloud artifacts generic upload \
+    --project=$GCP_REGISTRY_PROJECT_ID \
+    --location=$GCP_REGISTRY_REGION \
+    --repository=$GCP_REGISTRY_NAME \
+    --package=$PROJECT \
+    --version=$VERSION \
+    --source=dist/artifact.txt

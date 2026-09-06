@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#MISE description="Build Odin project (debug)"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+mkdir -p bin
+odin build src -define:VERSION="$VERSION" -out:"bin/$PROJECT"
+echo "Build successful → bin/$PROJECT"

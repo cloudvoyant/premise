@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+#MISE description="Build Zig project (debug)"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+if out=$(zig build 2>&1); then
+  echo "Build successful → zig-out/bin/${PROJECT}"
+else
+  fp=$(printf '%s\n' "$out" | grep -oE '(use this|suggested) value: 0x[0-9a-f]+' | grep -oE '0x[0-9a-f]+' | head -1)
+  if [ -n "$fp" ]; then
+    if grep -q 'fingerprint' build.zig.zon; then
+      if sed --version 2>/dev/null | grep -q GNU; then
+        sed -i "s/.fingerprint = 0x[0-9a-f]*/.fingerprint = $fp/" build.zig.zon
+      else
+        sed -i '' "s/.fingerprint = 0x[0-9a-f]*/.fingerprint = $fp/" build.zig.zon
+      fi
+    else
+      awk -v fp="$fp" '/paths[[:space:]]*=/{print "    .fingerprint = " fp ","} {print}' build.zig.zon > build.zig.zon.tmp && mv build.zig.zon.tmp build.zig.zon
+    fi
+    zig build && echo "Build successful → zig-out/bin/${PROJECT}"
+  else
+    printf '%s\n' "$out" >&2; exit 1
+  fi
+fi

@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+#MISE description="Upload cross-platform binaries to existing GitHub release"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+source "${MISE_PROJECT_ROOT:-$PWD}/mise-tasks/utils"
+
+log_info "Building release binaries for all platforms..."
+mise run build:all-platforms
+
+# Collect built assets
+ASSETS=()
+while IFS= read -r bin; do ASSETS+=("$bin"); done \
+    < <(find dist/release -maxdepth 1 -type f -name "$PROJECT-*" 2>/dev/null)
+
+log_info "Uploading binaries to GitHub release v$VERSION..."
+gh release upload "v$VERSION" "${ASSETS[@]}" --clobber
+
+log_success "Published $PROJECT v$VERSION to GitHub Releases"

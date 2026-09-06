@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#MISE description="Build for production"
+set -euo pipefail
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+mkdir -p dist
+echo "$PROJECT $VERSION - Replace with your build artifact" > dist/artifact.txt
+echo "Production artifact created: dist/artifact.txt"
