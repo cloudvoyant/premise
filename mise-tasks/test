@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Run tests"
-#MISE depends=["build"]
+#MISE description="Run Rust test suite"
 set -euo pipefail
-echo "TODO: Implement test"
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+cargo test

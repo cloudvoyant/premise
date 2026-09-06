@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Run project locally"
-#MISE depends=["build"]
+#MISE description="Build and run the project"
 set -euo pipefail
-echo "TODO: Implement run"
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+cargo run

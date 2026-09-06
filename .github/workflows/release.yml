@@ -33,9 +33,6 @@ jobs:
       - name: Run tests
         run: mise run test
 
-      - name: Run template tests
-        run: mise run templates:test
-
       - name: Create new version
         id: upversion
         env:
@@ -48,7 +45,7 @@ jobs:
         run: mise run build:prod
 
       - name: Authenticate with registry
-        if: steps.upversion.outputs.new_release_published == 'true' && env.GCP_SA_KEY != ''
+        if: steps.upversion.outputs.new_release_published == 'true'
         uses: google-github-actions/auth@v2
         env:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
@@ -56,13 +53,13 @@ jobs:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
       - name: Setup gcloud
-        if: steps.upversion.outputs.new_release_published == 'true' && env.GCP_SA_KEY != ''
+        if: steps.upversion.outputs.new_release_published == 'true'
         uses: google-github-actions/setup-gcloud@v2
         env:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
 
       - name: Publish package
-        if: steps.upversion.outputs.new_release_published == 'true' && env.GCP_SA_KEY != ''
+        if: steps.upversion.outputs.new_release_published == 'true'
         env:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
           GCP_REGISTRY_PROJECT_ID: ${{ secrets.GCP_REGISTRY_PROJECT_ID }}
@@ -81,10 +78,4 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish template packages
-        if: steps.upversion.outputs.new_release_published == 'true'
-        run: mise run templates:publish
-        env:
-          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Lint markdown with Prettier"
+#MISE description="Lint with clippy (deny warnings)"
 set -euo pipefail
 cd "${MISE_PROJECT_ROOT:-$PWD}"
-prettier --check "**/*.md"
+cargo clippy --all-targets --all-features -- -D warnings

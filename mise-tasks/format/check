@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Check code formatting (CI mode)"
+#MISE description="Check Rust formatting without modifying files"
 set -euo pipefail
-# Keep this task dependency-free. Markdown linting lives under `lint` (not here)
-# on purpose: the scaffold contract test runs `format:check` on a freshly
-# scaffolded project that has no tools installed, so this must not require
-# prettier or any other dependency.
-echo "TODO: Implement format checking"
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+cargo fmt --check

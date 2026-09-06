@@ -1,6 +1,0 @@
-#!/usr/bin/env bash
-#MISE description="Run vitest test suite"
-#MISE depends=["install"]
-set -euo pipefail
-cd "${MISE_PROJECT_ROOT:-$PWD}"
-pnpm run test

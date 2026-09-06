@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Get current version"
+#MISE description="Print current version"
 set -euo pipefail
-echo "$VERSION"
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+cat version.txt

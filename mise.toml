@@ -1,42 +1,25 @@
 # =============================================================================
-# mise.toml - Project configuration
-# https://mise.jdx.dev/
-#
-# Tasks live as files under mise-tasks/ (auto-loaded). Nested directories become
-# namespaced tasks: mise-tasks/build/prod -> `mise run build:prod`. A
-# `_default` file makes the directory itself runnable (`mise run build`).
+# mise.toml - rust template
+# Overlays the base mise.toml during scaffold. Tasks are file tasks under
+# mise-tasks/ (this template overrides only the tasks that differ from base).
 # =============================================================================
 
-# -----------------------------------------------------------------------------
-# Environment
-# -----------------------------------------------------------------------------
 [env]
-PROJECT                 = "mise-lib-template"
-GCP_REGISTRY_PROJECT_ID = "devops-466002"
-GCP_REGISTRY_REGION     = "us-east1"
-GCP_REGISTRY_NAME       = "cloudvoyant-generic-registry"
-VERSION                 = "{{exec(command='cat version.txt 2>/dev/null | tr -d [:space:] || echo 0.1.0')}}"
-_.path                  = ['{{config_root}}/node_modules/.bin']
-BIN_PATH                = "{{ config_root }}/node_modules/.bin"
+_.path   = ['{{config_root}}/node_modules/.bin']
+PROJECT  = "premise"
+TEMPLATE         = "mise-rust-template"
+VERSION  = "{{exec(command='cat version.txt 2>/dev/null || echo 0.1.0')}}"
 
-
-# -----------------------------------------------------------------------------
-# Tools
-# -----------------------------------------------------------------------------
 [tools]
-node        = "lts"
-shellcheck  = "latest"
-shfmt       = "latest"
-bats        = "latest"
-python      = "latest"
-gcloud      = "latest"
-starship    = "latest"
-claude      = "latest"
+# rustfmt+clippy declared here (comma-string form — mise rejects the array form) so
+# mise auto-installs them; `format:check`/`lint` then work without the install task,
+# which the contract test runs tasks without.
+rust       = { version = "1.88", components = "rustfmt,clippy" }
+node       = "lts"
+bats       = "latest"
+shellcheck = "latest"
+shfmt      = "latest"
 
-
-# -----------------------------------------------------------------------------
-# Tasks (file tasks under mise-tasks/)
-# -----------------------------------------------------------------------------
 [task_config]
 includes = ["mise-tasks"]
 

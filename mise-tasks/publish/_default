@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
-#MISE description="Publish package to registry"
-#MISE depends=["test", "build:prod"]
+#MISE description="Upload cross-platform binaries to the existing GitHub release"
 set -euo pipefail
 cd "${MISE_PROJECT_ROOT:-$PWD}"
-gcloud artifacts generic upload \
-    --project=$GCP_REGISTRY_PROJECT_ID \
-    --location=$GCP_REGISTRY_REGION \
-    --repository=$GCP_REGISTRY_NAME \
-    --package=$PROJECT \
-    --version=$VERSION \
-    --source=dist/artifact.txt
+source "${MISE_PROJECT_ROOT:-$PWD}/mise-tasks/utils"
+
+log_info "Building release binaries for all platforms..."
+mise run build:all-platforms
+
+# Collect built assets
+ASSETS=()
+while IFS= read -r bin; do ASSETS+=("$bin"); done \
+    < <(find target/dist -maxdepth 1 -type f -name "$PROJECT-*" 2>/dev/null)
+
+log_info "Uploading binaries to GitHub release v$VERSION..."
+gh release upload "v$VERSION" "${ASSETS[@]}" --clobber
+
+log_success "Published $PROJECT v$VERSION to GitHub Releases"

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Format code"
+#MISE description="Format Rust source files in-place"
 set -euo pipefail
-echo "TODO: Implement formatting"
+cd "${MISE_PROJECT_ROOT:-$PWD}"
+cargo fmt

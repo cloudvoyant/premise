@@ -1,4 +1,4 @@
-# mise-lib-template Style Guide
+# premise Style Guide
 
 <!-- CRITICAL RULES — always apply these; load relevant sections below for your current task -->
 
@@ -90,18 +90,6 @@ Use Conventional Commits. No Claude attributions.
 
 ---
 
-<!-- @context: test, bats -->
-
-## Testing
-
-Tests live in `test/` and use bats-core.
-
-- Run with: `mise run templates:test`
-- Test files: `test/*.bats`
-- Tests cover scaffold behavior, mise.toml handling, case replacements, template cleanup
-- Add `--exclude='node_modules'` to any `rsync` calls in test setup
-
----
 
 <!-- @context: docs -->
 
@@ -151,17 +139,3 @@ Tests live in `test/` and use bats-core.
 
 **CLAUDE.md.append rules:**
 
-- Do NOT include `<!-- @context: test, bats -->` — scaffold strips sections with that marker
-- Append only language-specific conventions (commands, code style, testing patterns)
-- A `---` separator is added automatically before the appended content
-
-**Why no template-specific GitHub Actions:**
-`jdx/mise-action@v4` reads `mise.toml` and installs all declared tools (uv, zig, etc.)
-automatically. Base workflows call `mise run test`, `mise run publish`, etc. — these
-resolve to template-specific implementations via `mise.toml` task definitions.
-
-**Template-only scripts** (removed from scaffolded projects by scaffold cleanup):
-
-- `mise-tasks/template-utils` — template discovery helpers
-- `mise-tasks/templates/` — template-dev task namespace (`templates:list`,
-  `templates:publish`, `templates:publish-rc`, `templates:test`)

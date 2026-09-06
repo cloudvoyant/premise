@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-#MISE description="Run Zig test suite"
-set -euo pipefail
-cd "${MISE_PROJECT_ROOT:-$PWD}"
-zig build test

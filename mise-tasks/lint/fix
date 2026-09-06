@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Auto-fix markdown formatting with Prettier"
+#MISE description="Auto-fix clippy findings"
 set -euo pipefail
 cd "${MISE_PROJECT_ROOT:-$PWD}"
-prettier --write "**/*.md"
+cargo clippy --fix --allow-dirty --allow-staged

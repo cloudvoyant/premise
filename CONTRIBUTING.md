@@ -5,8 +5,8 @@
 Fork and clone the repository:
 
 ```bash
-git clone https://github.com/cloudvoyant/mise-lib-template.git
-cd mise-lib-template
+git clone https://github.com/cloudvoyant/premise.git
+cd premise
 mise install                     # Install tools declared in mise.toml
 mise run install                 # Install project dependencies (semantic-release)
 mise run install-claude-plugins  # Install the Claudevoyant plugin for Claude CLI
