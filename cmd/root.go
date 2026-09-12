@@ -17,16 +17,14 @@ projects converged on those templates, and wires mise tasks into CI.`,
 	SilenceUsage: true,
 }
 
-// Execute runs the root command. version is injected by main at build time.
-func Execute(version, miseTemplate string) {
+// Execute runs the root command.
+func Execute(miseTemplate string) {
 	workspaceMiseTemplate = miseTemplate
-	rootCmd.Version = version
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
 }
 
 func init() {
-	rootCmd.SetVersionTemplate("{{.Version}}\n")
 	rootCmd.AddCommand(initCmd, installCmd, generateCmd, templateCmd)
 }

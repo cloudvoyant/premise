@@ -24,7 +24,7 @@ var templateInitCmd = &cobra.Command{
 			kind = args[0]
 		} else {
 			var err error
-			kind, err = askTemplateKind()
+			kind, err = core.AskTemplateKind()
 			if err != nil {
 				return err
 			}

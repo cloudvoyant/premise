@@ -94,6 +94,17 @@ func TestCLIWorkspaceAndTemplateLifecycle(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(workspace, "premise.yaml")); err != nil {
 		t.Fatal(err)
 	}
+	expectedMise, err := os.ReadFile(filepath.Join(repositoryRoot, "templates", "mise.toml"))
+	if err != nil {
+		t.Fatalf("read embedded workspace mise template: %v", err)
+	}
+	generatedMise, err := os.ReadFile(filepath.Join(workspace, "mise.toml"))
+	if err != nil {
+		t.Fatalf("read generated workspace mise configuration: %v", err)
+	}
+	if string(generatedMise) != string(expectedMise) {
+		t.Fatalf("installed binary did not embed workspace mise template:\n%s", generatedMise)
+	}
 	command := exec.Command(binary, "init")
 	command.Dir = workspace
 	if output, err := command.CombinedOutput(); err == nil || !strings.Contains(string(output), "already exists") {

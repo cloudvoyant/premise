@@ -52,17 +52,14 @@ runs:
         set -euo pipefail
         mkdir -p "$INSTALL_DIR"
         if [[ "$GITHUB_REPOSITORY" == "cloudvoyant/premise" ]]; then
-          SOURCE_VERSION=$(cat "$ACTION_PATH/version.txt")
           (
             cd "$ACTION_PATH"
-            go build -ldflags "-X main.version=$SOURCE_VERSION" \
-              -o "$INSTALL_DIR/premise" .
+            go build -o "$INSTALL_DIR/premise" .
           )
           ln -sf premise "$INSTALL_DIR/pm"
         else
           bash "$ACTION_PATH/install.sh"
         fi
-        "$INSTALL_DIR/premise" --version
 
     - name: Install dependencies
       if: inputs.install == 'true'

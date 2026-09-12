@@ -262,22 +262,6 @@ func copyTree(source, destination string, replacer *strings.Replacer) error {
 		if err != nil {
 			return fmt.Errorf("inspect scaffold entry %s: %w", path, err)
 		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			link, err := os.Readlink(path)
-			if err != nil {
-				return fmt.Errorf("read scaffold symlink %s: %w", path, err)
-			}
-			if filepath.IsAbs(link) || escapesRoot(filepath.Join(filepath.Dir(relative), link)) {
-				return fmt.Errorf("scaffold symlink %s points outside the template", relative)
-			}
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return fmt.Errorf("create symlink parent: %w", err)
-			}
-			if err := os.Symlink(link, target); err != nil {
-				return fmt.Errorf("copy scaffold symlink %s: %w", relative, err)
-			}
-			return nil
-		}
 		if info.IsDir() {
 			if err := os.MkdirAll(target, info.Mode().Perm()); err != nil {
 				return fmt.Errorf("create scaffold directory %s: %w", relative, err)

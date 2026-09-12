@@ -1,4 +1,4 @@
-package cmd
+package core
 
 import (
 	"context"
@@ -7,14 +7,14 @@ import (
 	"strings"
 
 	"charm.land/huh/v2"
-	core "github.com/cloudvoyant/premise/core"
 )
 
-type huhQuestionnaire struct{}
+// InteractiveQuestionnaire collects generation answers from a terminal.
+type InteractiveQuestionnaire struct{}
 
-var _ core.Questionnaire = huhQuestionnaire{}
+var _ Questionnaire = InteractiveQuestionnaire{}
 
-func (huhQuestionnaire) Ask(questions []core.Question) (map[string]string, error) {
+func (InteractiveQuestionnaire) Ask(questions []Question) (map[string]string, error) {
 	answers := make(map[string]string, len(questions))
 	for _, question := range questions {
 		var value string
@@ -54,7 +54,8 @@ func requiredAnswer(value string) error {
 	return nil
 }
 
-func askTemplateKind() (string, error) {
+// AskTemplateKind lets a user choose a supported template kind.
+func AskTemplateKind() (string, error) {
 	var kind string
 	err := huh.NewSelect[string]().
 		Title("Template kind:").
@@ -67,8 +68,9 @@ func askTemplateKind() (string, error) {
 	return kind, nil
 }
 
-func askDefaultTemplate(ctx context.Context) (string, error) {
-	registry, err := core.DefaultRegistry(ctx)
+// AskDefaultTemplate lets a user choose a template from the default registry.
+func AskDefaultTemplate(ctx context.Context) (string, error) {
+	registry, err := DefaultRegistry(ctx)
 	if err != nil {
 		return "", err
 	}

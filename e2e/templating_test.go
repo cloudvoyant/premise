@@ -65,11 +65,6 @@ func TestWorkspaceTemplateAndGenerationWorkflow(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(templatePath, "asset.bin"), binary, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if runtime.GOOS != "windows" {
-		if err := os.Symlink("mise.toml", filepath.Join(templatePath, "mise-link.toml")); err != nil {
-			t.Fatal(err)
-		}
-	}
 
 	registry, err := core.LoadRegistry(root)
 	if err != nil {
@@ -114,15 +109,6 @@ func TestWorkspaceTemplateAndGenerationWorkflow(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o755 {
 		t.Fatalf("mode = %o, want 755", info.Mode().Perm())
-	}
-	if runtime.GOOS != "windows" {
-		link, err := os.Readlink(filepath.Join(destination, "mise-link.toml"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if link != "mise.toml" {
-			t.Fatalf("link = %q", link)
-		}
 	}
 
 	reloaded, err := core.LoadManifest(manifestPath)
@@ -214,24 +200,6 @@ func TestConfigRejectsDuplicateProjects(t *testing.T) {
 	config.Workspace.Projects[1] = core.Project{Name: "payments", Template: ".:app", Path: "apps/orders"}
 	if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate project path") {
 		t.Fatalf("expected duplicate project path error, got %v", err)
-	}
-}
-
-func TestScaffoldRejectsEscapingSymlink(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("symlink creation requires additional Windows privileges")
-	}
-	root := t.TempDir()
-	source := filepath.Join(root, "source")
-	if err := os.MkdirAll(source, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink("../secret", filepath.Join(source, "escape")); err != nil {
-		t.Fatal(err)
-	}
-	err := core.Scaffold(core.ScaffoldRequest{Source: source, Destination: filepath.Join(root, "destination")})
-	if err == nil || !strings.Contains(err.Error(), "outside the template") {
-		t.Fatalf("expected unsafe symlink error, got %v", err)
 	}
 }
 

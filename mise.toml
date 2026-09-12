@@ -7,7 +7,6 @@ monorepo_root = true
 [env]
 _.path = ['{{config_root}}/bin', '{{config_root}}/node_modules/.bin']
 PROJECT = "premise"
-VERSION = "{{exec(command='cat version.txt 2>/dev/null || echo 0.1.0')}}"
 
 [tools]
 # Matches the `go` directive in go.mod (testscript/go-internal requires 1.25+).

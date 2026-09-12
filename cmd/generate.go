@@ -35,11 +35,11 @@ Use .:app to select a template from the current workspace.`,
 		if len(args) == 1 {
 			selector = args[0]
 		} else {
-			selector, err = askDefaultTemplate(cmd.Context())
+			selector, err = core.AskDefaultTemplate(cmd.Context())
 			if err != nil {
 				return err
 			}
 		}
-		return core.Generate(cmd.Context(), cwd, selector, huhQuestionnaire{}, cmd.OutOrStdout())
+		return core.Generate(cmd.Context(), cwd, selector, core.InteractiveQuestionnaire{}, cmd.OutOrStdout())
 	},
 }

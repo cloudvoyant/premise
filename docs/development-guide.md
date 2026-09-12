@@ -36,11 +36,6 @@ action.yml            # Published composite action (root — use a v0 tag while 
 4. **Check format**: `mise run format:check`; fix with `mise run format`
 5. **Lint**: `mise run lint` (`go vet ./...`)
 
-## Version Injection
-
-The binary version comes from `-ldflags "-X main.version=$VERSION"`, where `$VERSION` is
-read from `version.txt`. Do not hardcode versions in source.
-
 ## Consuming This Project
 
 ```bash
