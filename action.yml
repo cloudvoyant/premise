@@ -1,0 +1,122 @@
+name: premise
+description: Set up mise and run premise's named CI tasks for a given flow.
+author: cloudvoyant
+branding:
+  icon: package
+  color: purple
+
+inputs:
+  flow:
+    description: "Flow to run: setup | feature | deploy"
+    required: false
+    default: setup
+  mise-version:
+    description: mise version to install (defaults to the latest release)
+    required: false
+  install:
+    description: Run `pm install` after mise is set up
+    required: false
+    default: "true"
+  install-premise:
+    description: Install the premise binary and put it on PATH
+    required: false
+    default: "true"
+  premise-version:
+    description: premise release tag to install (defaults to the latest release)
+    required: false
+    default: ""
+  github-token:
+    description: Token used by flows that need GitHub access
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Setup mise
+      uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+      with:
+        version: ${{ inputs.mise-version }}
+
+    # Tasks may shell out to `pm`, so the binary has to be on PATH before any
+    # `mise run`. This repository builds the checked-out source to avoid a
+    # release bootstrap cycle; consumers install a published release.
+    - name: Install premise
+      if: inputs.install-premise == 'true'
+      shell: bash
+      env:
+        VERSION: ${{ inputs.premise-version }}
+        INSTALL_DIR: ${{ runner.temp }}/premise-bin
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        mkdir -p "$INSTALL_DIR"
+        if [[ "$GITHUB_REPOSITORY" == "cloudvoyant/premise" ]]; then
+          SOURCE_VERSION=$(cat "$ACTION_PATH/version.txt")
+          (
+            cd "$ACTION_PATH"
+            go build -ldflags "-X main.version=$SOURCE_VERSION" \
+              -o "$INSTALL_DIR/premise" .
+          )
+          ln -sf premise "$INSTALL_DIR/pm"
+        else
+          bash "$ACTION_PATH/install.sh"
+        fi
+        "$INSTALL_DIR/premise" --version
+
+    - name: Install dependencies
+      if: inputs.install == 'true'
+      shell: bash
+      run: |
+        export PATH="${{ runner.temp }}/premise-bin:$PATH"
+        pm install
+
+    # Fail fast with a readable message when a consuming repo does not implement
+    # the task contract this action calls.
+    - name: Verify task contract
+      shell: bash
+      env:
+        FLOW: ${{ inputs.flow }}
+      run: |
+        set -euo pipefail
+        export PATH="${{ runner.temp }}/premise-bin:$PATH"
+        case "$FLOW" in
+          setup)   required="" ;;
+          feature) required="test format:check lint" ;;
+          deploy)  required="" ;;
+          *)
+            echo "::error::unknown flow '$FLOW'" \
+              "(setup | feature | deploy)"
+            exit 1
+            ;;
+        esac
+        for task in $required; do
+          mise run --dry-run --jobs 1 "//...:$task" >/dev/null 2>&1 \
+            || { echo "::error::missing required mise task: $task"; exit 1; }
+        done
+
+    - name: Test, lint, and check formatting
+      if: inputs.flow == 'feature'
+      shell: bash
+      run: |
+        export PATH="${{ runner.temp }}/premise-bin:$PATH"
+        mise run --jobs 1 '//...:test'
+        mise run --jobs 1 '//...:format:check'
+        mise run --jobs 1 '//...:lint'
+
+    # Placeholder: runs a `deploy` task when the consuming repo defines one,
+    # otherwise reports a no-op instead of failing.
+    - name: Deploy
+      if: inputs.flow == 'deploy'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -euo pipefail
+        export PATH="${{ runner.temp }}/premise-bin:$PATH"
+        if mise run --dry-run --jobs 1 '//...:deploy' >/dev/null 2>&1; then
+          mise run --jobs 1 '//...:deploy'
+        else
+          echo "No project deploy task defined — nothing to do."
+        fi

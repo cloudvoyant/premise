@@ -1,49 +1,58 @@
 #!/usr/bin/env bash
-# install.sh — Install premise binary (prebuilt Linux tarball)
+# install.sh — Install premise binary
 # Usage: curl -fsSL https://raw.githubusercontent.com/cloudvoyant/premise/main/install.sh | bash
 #
-# Linux only in v1. On macOS/Windows (or to build from source), use Cargo directly:
-#   cargo install --git https://github.com/cloudvoyant/premise --tag <vX.Y.Z>
+# Set VERSION=vX.Y.Z to pin a release; defaults to the latest.
+# Set INSTALL_DIR to override the install location.
 #
-# Set LIBC=musl to fetch the statically-linked musl build instead of the default gnu build.
+# Prebuilt binaries cover linux/macOS on x86_64 and aarch64. To build from source:
+#   go install github.com/cloudvoyant/premise@vX.Y.Z
 set -euo pipefail
 
 PROJECT="premise"
 GITHUB_ORG="cloudvoyant"
 REPO="$GITHUB_ORG/$PROJECT"
-LIBC="${LIBC:-gnu}"
 
+# Detect OS and arch
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
 
 case "$ARCH" in
-    x86_64)          ARCH="x86_64" ;;
-    aarch64|arm64)   ARCH="aarch64" ;;
-    *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;;
+    x86_64) ARCH="x86_64" ;;
+    aarch64 | arm64) ARCH="aarch64" ;;
+    *)
+        echo "Unsupported architecture: $ARCH" >&2
+        exit 1
+        ;;
 esac
 
-if [[ "$OS" != "linux" ]]; then
-    echo "Prebuilt binaries are Linux-only. On $OS, install with Cargo:" >&2
-    echo "  cargo install --git https://github.com/$REPO --tag <vX.Y.Z>" >&2
-    exit 1
-fi
-
-case "$LIBC" in
-    gnu)  TARGET="${ARCH}-unknown-linux-gnu"  ;;
-    musl) TARGET="${ARCH}-unknown-linux-musl" ;;
-    *) echo "Unsupported LIBC: $LIBC (use gnu or musl)" >&2; exit 1 ;;
+case "$OS" in
+    linux) TARGET="${ARCH}-linux" ;;
+    darwin) TARGET="${ARCH}-macos" ;;
+    *)
+        echo "Unsupported OS: $OS" >&2
+        exit 1
+        ;;
 esac
 
-if [[ $EUID -eq 0 ]]; then
+# Determine install directory
+if [[ -n "${INSTALL_DIR:-}" ]]; then
+    mkdir -p "$INSTALL_DIR"
+elif [[ $EUID -eq 0 ]]; then
     INSTALL_DIR="/usr/local/bin"
 else
     INSTALL_DIR="$HOME/.local/bin"
     mkdir -p "$INSTALL_DIR"
 fi
 
-echo "Fetching latest $PROJECT release..."
-LATEST_URL="https://api.github.com/repos/$REPO/releases/latest"
-TAG=$(curl -fsSL "$LATEST_URL" | grep '"tag_name"' | sed 's/.*"tag_name": *"\(.*\)".*/\1/')
+# Resolve release tag (VERSION pins it; otherwise use the latest release)
+if [[ -n "${VERSION:-}" ]]; then
+    TAG="$VERSION"
+else
+    echo "Fetching latest $PROJECT release..."
+    LATEST_URL="https://api.github.com/repos/$REPO/releases/latest"
+    TAG=$(curl -fsSL "$LATEST_URL" | grep '"tag_name"' | sed 's/.*"tag_name": *"\(.*\)".*/\1/')
+fi
 
 ASSET_NAME="${PROJECT}-${TAG}-${TARGET}.tar.gz"
 DOWNLOAD_URL="https://github.com/$REPO/releases/download/$TAG/$ASSET_NAME"
@@ -53,10 +62,10 @@ TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
 curl -fsSL "$DOWNLOAD_URL" | tar -xz -C "$TMP_DIR"
 
-# Cargo emits the binary under the crate/[[bin]] name (snake_case); the archived
-# member matches that. Install it under the kebab command name ($PROJECT).
-cp "$TMP_DIR/${PROJECT//-/_}" "$INSTALL_DIR/$PROJECT"
+cp "$TMP_DIR/$PROJECT" "$INSTALL_DIR/$PROJECT"
 chmod +x "$INSTALL_DIR/$PROJECT"
+ln -sf "$PROJECT" "$INSTALL_DIR/pm"
 
 echo "Installed $PROJECT $TAG to $INSTALL_DIR/$PROJECT"
+echo "Installed pm alias to $INSTALL_DIR/pm"
 echo "Make sure $INSTALL_DIR is in your PATH."

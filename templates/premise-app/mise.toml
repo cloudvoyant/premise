@@ -1,0 +1,55 @@
+[tasks.build]
+description = "Run the build contract"
+run = 'echo "premise-app: build"'
+
+[tasks.clean]
+description = "Run the clean contract"
+run = 'echo "premise-app: clean"'
+
+[tasks.test]
+description = "Run the test contract"
+run = 'echo "premise-app: test"'
+
+[tasks.lint]
+description = "Run the lint contract"
+run = 'echo "premise-app: lint"'
+
+[tasks."lint:fix"]
+description = "Run the lint:fix contract"
+run = 'echo "premise-app: lint:fix"'
+
+[tasks.format]
+description = "Run the format contract"
+run = 'echo "premise-app: format"'
+
+[tasks."format:check"]
+description = "Run the format:check contract"
+run = 'echo "premise-app: format:check"'
+
+[tasks.env-pull]
+description = "Run the env-pull contract"
+run = 'echo "premise-app: env-pull"'
+
+[tasks."publish:rc"]
+description = "Run the publish:rc contract"
+run = 'echo "premise-app: publish:rc"'
+
+[tasks.publish]
+description = "Run the publish contract"
+run = 'echo "premise-app: publish"'
+
+[tasks.run]
+description = "Run the run contract"
+run = 'echo "premise-app: run"'
+
+[tasks.dev]
+description = "Run the dev contract"
+run = 'echo "premise-app: dev"'
+
+[tasks.deploy]
+description = "Run the deploy contract"
+run = 'echo "premise-app: deploy"'
+
+[tasks.e2e]
+description = "Run the e2e contract"
+run = 'echo "premise-app: e2e"'

@@ -1,0 +1,39 @@
+[tasks.build]
+description = "Run the build contract"
+run = 'echo "premise-lib: build"'
+
+[tasks.clean]
+description = "Run the clean contract"
+run = 'echo "premise-lib: clean"'
+
+[tasks.test]
+description = "Run the test contract"
+run = 'echo "premise-lib: test"'
+
+[tasks.lint]
+description = "Run the lint contract"
+run = 'echo "premise-lib: lint"'
+
+[tasks."lint:fix"]
+description = "Run the lint:fix contract"
+run = 'echo "premise-lib: lint:fix"'
+
+[tasks.format]
+description = "Run the format contract"
+run = 'echo "premise-lib: format"'
+
+[tasks."format:check"]
+description = "Run the format:check contract"
+run = 'echo "premise-lib: format:check"'
+
+[tasks.env-pull]
+description = "Run the env-pull contract"
+run = 'echo "premise-lib: env-pull"'
+
+[tasks."publish:rc"]
+description = "Run the publish:rc contract"
+run = 'echo "premise-lib: publish:rc"'
+
+[tasks.publish]
+description = "Run the publish contract"
+run = 'echo "premise-lib: publish"'
