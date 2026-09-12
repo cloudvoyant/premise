@@ -1,27 +1,91 @@
 # =============================================================================
-# mise.toml - rust template
-# Overlays the base mise.toml during scaffold. Tasks are file tasks under
-# mise-tasks/ (this template overrides only the tasks that differ from base).
+# mise.toml - premise development environment and tasks
 # =============================================================================
 
+monorepo_root = true
+
 [env]
-_.path   = ['{{config_root}}/node_modules/.bin']
-PROJECT  = "premise"
-TEMPLATE         = "mise-rust-template"
-VERSION  = "{{exec(command='cat version.txt 2>/dev/null || echo 0.1.0')}}"
+_.path = ['{{config_root}}/bin', '{{config_root}}/node_modules/.bin']
+PROJECT = "premise"
 
 [tools]
-# rustfmt+clippy declared here (comma-string form — mise rejects the array form) so
-# mise auto-installs them; `format:check`/`lint` then work without the install task,
-# which the contract test runs tasks without.
-rust       = { version = "1.88", components = "rustfmt,clippy" }
-node       = "lts"
-bats       = "latest"
+# Matches the `go` directive in go.mod (testscript/go-internal requires 1.25+).
+go = "1.25"
+node = "lts"
+"npm:prettier" = "latest"
 shellcheck = "latest"
-shfmt      = "latest"
+shfmt = "latest"
+watchexec = "latest"
 
-[task_config]
-includes = ["mise-tasks"]
+[tasks.build]
+description = "Build the premise CLI"
+sources = ["main.go", "cmd/**/*.go", "core/**/*.go", "templates/**/*.toml", "go.mod", "go.sum"]
+run = '''
+go build ./...
+mkdir -p bin
+go build -o "bin/$PROJECT" .
+ln -sfn "$PROJECT" bin/pm
+echo "Build successful -> bin/$PROJECT (pm)"
+'''
 
-[settings]
-experimental = true
+[tasks.test]
+description = "Run all Go tests"
+run = "go test ./..."
+
+[tasks.e2e]
+description = "Run end-to-end tests"
+run = "go test ./e2e"
+
+[tasks.dev]
+description = "Watch sources and rebuild bin/premise (and pm) on change"
+run = "mise watch build"
+
+[tasks.format]
+description = "Format Go, shell, and documentation files"
+run = '''
+gofmt -w .
+shfmt -w install.sh
+if command -v prettier >/dev/null 2>&1; then
+  prettier --write .
+else
+  echo "prettier not found - run 'pm install' to format non-Go files" >&2
+fi
+'''
+
+[tasks."format:check"]
+description = "Check formatting without modifying files"
+run = '''
+status=0
+unformatted=$(gofmt -l .)
+if [ -n "$unformatted" ]; then
+  echo "Unformatted Go files:" >&2
+  echo "$unformatted" >&2
+  status=1
+fi
+shfmt -d install.sh || status=1
+if command -v prettier >/dev/null 2>&1; then
+  prettier --check . || status=1
+else
+  echo "prettier not found - run 'pm install' to check non-Go files" >&2
+fi
+exit "$status"
+'''
+
+[tasks.lint]
+description = "Run Go and shell static analysis"
+run = '''
+go vet ./...
+shellcheck install.sh
+'''
+
+[tasks."lint:fix"]
+description = "Apply safe formatting fixes, then run static analysis"
+run = '''
+gofmt -w .
+shfmt -w install.sh
+go vet ./...
+shellcheck install.sh
+'''
+
+[monorepo]
+config_roots = ["apps/*", "libs/*"]

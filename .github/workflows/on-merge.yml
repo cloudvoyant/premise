@@ -1,0 +1,28 @@
+---
+name: On Merge
+
+# Runs after a pull request merges into main. Re-validates the merged result on
+# the trunk. Release-candidate publishing will attach here once versioning
+# lands (issue #2).
+"on":
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Test, lint, and check formatting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Publish
+        uses: ./
+        with:
+          flow: feature

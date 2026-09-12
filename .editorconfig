@@ -11,8 +11,12 @@ trim_trailing_whitespace = true
 indent_style = space
 indent_size = 2
 
+# shfmt reads these settings for shell scripts.
 [*.sh]
 indent_size = 4
+space_redirects = true
+binary_next_line = true
+switch_case_indent = true
 
 [*.md]
 trim_trailing_whitespace = false

@@ -2,7 +2,7 @@
 
 ## Overview
 
-`premise` is a [`mise`](https://mise.jdx.dev/)-powered project with automated versioning, testing, and GitHub Actions CI/CD.
+`premise` is a [`mise`](https://mise.jdx.dev/)-powered project with testing and GitHub Actions CI. Release automation is tracked in [issue #2](https://github.com/cloudvoyant/premise/issues/2).
 
 ## Design
 
@@ -28,7 +28,7 @@ GCP_REGISTRY_NAME       = "your-repository-name"
 
 ### GitHub Actions For CI/CD
 
-The `ci` workflow runs on feature branch commits and publishes pre-release packages for testing. The `release` workflow runs on merge to main, where `semantic-release` bumps versions and updates the changelog.
+`.github/workflows/on-commit.yml` verifies pull requests and feature-branch pushes through the root `action.yml`. `.github/workflows/on-deploy.yml` exposes the deploy flow. The incomplete semantic-release workflow was removed; issue #2 tracks its svu and GoReleaser replacement.
 
 ### CI/CD Secrets
 
@@ -57,11 +57,6 @@ Key compatibility measures:
 ## References
 
 - [mise - the dev tool manager](https://mise.jdx.dev/)
-- [semantic-release](https://semantic-release.gitbook.io/)
 - [GitHub Actions](https://docs.github.com/en/actions)
 - [GCP Artifact Registry](https://cloud.google.com/artifact-registry/docs)
 - [Conventional Commits](https://www.conventionalcommits.org/)
-
----
-
-**Template**: mise-lib-template v2.15.0

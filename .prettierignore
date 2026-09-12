@@ -1,9 +1,7 @@
 node_modules/
+bin/
 dist/
 CHANGELOG.md
-RELEASE_NOTES.md
-**/*.template.md
 .codevoyant/
-.worktrees/
+.pi/
 .tmp/
-templates/**/node_modules/

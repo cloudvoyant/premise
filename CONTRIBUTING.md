@@ -8,31 +8,7 @@ Fork and clone the repository:
 git clone https://github.com/cloudvoyant/premise.git
 cd premise
 mise install                     # Install tools declared in mise.toml
-mise run install                 # Install project dependencies (semantic-release)
-mise run install-claude-plugins  # Install the Claudevoyant plugin for Claude CLI
-```
-
-### Claudevoyant Plugin
-
-This template uses the **Claudevoyant plugin** for slash commands like `/spec new`, `/git commit`, `/upgrade`, etc. The plugin is installed by `mise run install-claude-plugins`.
-
-If you need to reinstall the plugin manually, first add the marketplace:
-
-```bash
-claude plugin marketplace add cloudvoyant/claudevoyant
-```
-
-Then install the plugin:
-
-```bash
-claude plugin install claudevoyant
-```
-
-For local plugin development:
-
-```bash
-claude plugin marketplace add ../claudevoyant
-claude plugin install claudevoyant
+mise run install                 # Install prettier and download Go modules
 ```
 
 ## Development Workflow
@@ -137,12 +113,4 @@ Follow the documentation style guide:
 
 ## Release Process
 
-Releases are automated:
-
-1. PR merged to main
-2. `release.yml` workflow runs semantic-release
-3. Version tag created based on commits
-4. The same `release.yml` job publishes the package
-5. GitHub release created with notes
-
-Manual releases are not necessary.
+Release automation is being replaced with svu and GoReleaser in [issue #2](https://github.com/cloudvoyant/premise/issues/2). Do not create a release until that workflow is complete.

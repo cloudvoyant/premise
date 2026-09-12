@@ -1,0 +1,88 @@
+package core
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+type Questionnaire interface {
+	Ask([]Question) (map[string]string, error)
+}
+
+func Generate(ctx context.Context, cwd, selector string, prompts Questionnaire, output io.Writer) error {
+	workspaceRoot, workspaceManifestPath, err := FindManifest(cwd)
+	if err != nil {
+		return err
+	}
+	workspaceManifest, err := LoadManifest(workspaceManifestPath)
+	if err != nil {
+		return err
+	}
+
+	sourceRoot, selection, err := ResolveTemplateSource(ctx, workspaceRoot, selector)
+	if err != nil {
+		return err
+	}
+	templateManifestPath := filepath.Join(sourceRoot, ManifestFilename)
+	templateManifest, err := LoadManifest(templateManifestPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("template source %q does not contain %s; choose a Premise template repository or run `pm init` in that directory", sourceRoot, ManifestFilename)
+	}
+	if err != nil {
+		return fmt.Errorf("load template manifest: %w", err)
+	}
+	template, err := templateManifest.FindTemplate(selection.Name)
+	if err != nil {
+		return err
+	}
+	answers, err := prompts.Ask(template.Questions)
+	if err != nil {
+		return err
+	}
+	name := strings.TrimSpace(answers["name"])
+	if err := ValidateProjectName(name); err != nil {
+		return fmt.Errorf("project name: %w", err)
+	}
+	answers["name"] = name
+
+	projectDirectory, err := KindDirectory(template.Kind)
+	if err != nil {
+		return err
+	}
+	source, err := TemplateDirectory(sourceRoot, template.Name)
+	if err != nil {
+		return err
+	}
+	relativeDestination := filepath.Join(projectDirectory, name)
+	destination := filepath.Join(workspaceRoot, relativeDestination)
+	replacements, err := ResolveSubstitutions(template, answers)
+	if err != nil {
+		return err
+	}
+	if err := Scaffold(ScaffoldRequest{Source: source, Destination: destination, Replacements: replacements}); err != nil {
+		return err
+	}
+
+	project := Project{
+		Name:     name,
+		Template: selector,
+		Version:  template.Version,
+		Path:     filepath.ToSlash(relativeDestination),
+		Answers:  answers,
+	}
+	if err := workspaceManifest.AddProject(project); err != nil {
+		_ = os.RemoveAll(destination)
+		return err
+	}
+	if err := SaveManifest(workspaceManifestPath, workspaceManifest); err != nil {
+		_ = os.RemoveAll(destination)
+		return err
+	}
+	fmt.Fprintf(output, "Generated %s %s from %s at %s\n", template.Kind, name, selector, relativeDestination)
+	return nil
+}

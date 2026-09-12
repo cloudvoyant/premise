@@ -23,9 +23,6 @@ Desktop.ini
 # Build outputs and dependencies
 dist/
 build/
-# ...but keep mise task files that live under a build/ namespace dir
-!**/mise-tasks/build/
-!**/mise-tasks/build/**
 out/
 target/
 bin/
@@ -40,9 +37,6 @@ zig-out/
 
 # Package manager files
 *.lock
-# Rust: keep the committed lock for reproducible git-tag/`cargo install --git`
-# consumers (rust template ships Cargo.lock; the broad *.lock above would hide it).
-!Cargo.lock
 package-lock.json
 yarn.lock
 pnpm-lock.yaml
@@ -110,10 +104,8 @@ test-results/
 
 # Instance-specific development files
 .spec
-.claude/*
-!.claude/CLAUDE.md
-!.claude/commands/
-!.claude/commands/**
+.pi/
+.claude/
 
 # Style guide learning data (personal, not shared)
 .style/patterns.json

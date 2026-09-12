@@ -1,66 +1,66 @@
 # premise Development Guide
 
-Generated from mise-lib-template v2.15.0.
-
 ## Prerequisites
 
-- [mise](https://mise.jdx.dev/) — manages Rust and all other tools
-- Rust 1.88 is installed by `mise install`; clippy, rustfmt, and cross targets are added by `mise run install`
+- [mise](https://mise.jdx.dev/) — manages Go and all other tools
+- Go 1.25 is installed automatically by `mise install`
 - [gh CLI](https://cli.github.com/) for publishing GitHub releases
-- Docker — required by `cross` for `mise run build:all-platforms`
 
 ## Getting Started
 
 ```bash
-mise install          # Rust 1.88 + node + shell tools (from mise.toml)
-mise run install      # clippy + rustfmt + cross targets + cross binary + npm sr plugins
-mise run build        # debug build
-mise run test         # run tests
+mise install          # Go 1.25 + node + prettier + shell tools (from mise.toml)
+mise run build        # build bin/premise and its bin/pm alias
+mise run test         # go test ./...
 ```
+
+When mise is active, it prepends the repository's `bin/` directory to `PATH`. After `mise run build`, `pm` therefore uses the local development binary instead of any globally installed release while you are inside this repository.
 
 ## Project Structure
 
 ```
-src/lib.rs            # Library crate (consumed via { git, tag })
-src/main.rs           # CLI entry point (depends on the lib crate)
-Cargo.toml            # Package manifest ([package] first)
-Cargo.lock            # Committed lock for reproducible git-tag consumers
+main.go               # CLI entry point (package main)
+cmd/                   # Cobra command tree
+core/                  # Public library surface
+go.mod                # Module manifest
 mise.toml             # Task runner and tool versions
+action.yml            # Published composite action (root — use a v0 tag while premise is in alpha)
+.github/workflows/    # Own CI + published reusable workflows
 ```
 
 ## Development Workflow
 
-1. **Write code** in `src/lib.rs` (library logic) or `src/main.rs` (CLI)
-2. **Write tests** in `#[cfg(test)] mod tests { ... }` blocks
+1. **Write code** in `core/` (library logic) or `cmd/` (commands)
+2. **Write tests** as `*_test.go` files with `func TestXxx(t *testing.T)`
 3. **Run tests**: `mise run test`
 4. **Check format**: `mise run format:check`; fix with `mise run format`
-5. **Lint**: `mise run lint` (clippy denies warnings)
+5. **Lint**: `mise run lint` (`go vet ./...`)
 
-## Consuming This Project (no crates.io)
-
-```toml
-# library dependency (Cargo pins the resolved commit in Cargo.lock)
-[dependencies]
-premise = { git = "https://github.com/<org>/premise", tag = "vX.Y.Z" }
-```
+## Consuming This Project
 
 ```bash
-# installable binary
-cargo install --git https://github.com/<org>/premise --tag vX.Y.Z
+# CLI binary
+curl -fsSL https://raw.githubusercontent.com/cloudvoyant/premise/main/install.sh | bash
+go install github.com/cloudvoyant/premise@vX.Y.Z
+
+# Library
+go get github.com/cloudvoyant/premise@vX.Y.Z
 ```
 
-## Cross-Platform Compilation (Linux only in v1)
+```yaml
+# CI action (published from this repo's root action.yml)
+- uses: cloudvoyant/premise@v0
+  with:
+    flow: feature
+```
+
+## Adding Dependencies
 
 ```bash
-mise run build:all-platforms
-# cross build --release for: x86_64/aarch64 × unknown-linux-{gnu,musl}
-# Outputs target/dist/premise-vVERSION-<triple>.tar.gz
+go get github.com/org/dep@v1.2.3
+go mod tidy
 ```
-
-macOS/Windows prebuilt binaries are a known gap — those users run `cargo install --git`.
 
 ## Publishing
 
-1. Ensure `GH_TOKEN` or `GITHUB_TOKEN` is set (and Docker is available for `cross`)
-2. Push to `main` — CI runs `mise run upversion` then `mise run publish`
-3. `upversion` creates the release + tag; `publish` only uploads binaries to it
+Release automation is intentionally disabled while [issue #2](https://github.com/cloudvoyant/premise/issues/2) replaces the inherited semantic-release path with svu, a `pm version` command, and GoReleaser.
