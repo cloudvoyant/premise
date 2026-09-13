@@ -120,6 +120,76 @@ func TestWorkspaceTemplateAndGenerationWorkflow(t *testing.T) {
 	}
 }
 
+// cargoRegistryFixture writes a minimal second (non-native) template registry to
+// the given path, mirroring the shape of cloudvoyant/premise-cargo without any
+// network access.
+func cargoRegistryFixture(t *testing.T, root string) {
+	t.Helper()
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := core.NewManifest("cargo")
+	manifest.Templates = []core.Template{{
+		Name:    "premise-rust-lib",
+		Kind:    "lib",
+		Version: "0.1.0",
+		Questions: []core.Question{{
+			Prompt:   "Library name:",
+			Type:     "string",
+			Populate: "name",
+		}},
+		Substitutions: map[string]string{"premise-rust-lib": "name"},
+	}}
+	if err := core.SaveManifest(filepath.Join(root, core.ManifestFilename), manifest); err != nil {
+		t.Fatal(err)
+	}
+	templateDir := filepath.Join(root, "templates", "premise-rust-lib")
+	if err := os.MkdirAll(templateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(templateDir, "Cargo.toml"), []byte("name = \"premise-rust-lib\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGenerateFromSecondRegistry(t *testing.T) {
+	base := t.TempDir()
+	workspace := filepath.Join(base, "workspace")
+	if _, err := core.InitializeWorkspace(workspace, workspaceMiseTemplate(t)); err != nil {
+		t.Fatal(err)
+	}
+	cargoRegistry := filepath.Join(base, "cargo-fixture")
+	cargoRegistryFixture(t, cargoRegistry)
+
+	const selector = "../cargo-fixture:premise-rust-lib"
+	var output bytes.Buffer
+	if err := core.Generate(context.Background(), workspace, selector, fixedQuestionnaire{"name": "orders"}, &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "Generated lib orders") {
+		t.Fatalf("unexpected generation output: %s", output.String())
+	}
+
+	generated, err := os.ReadFile(filepath.Join(workspace, "libs", "orders", "Cargo.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(generated), "name = \"orders\"") || strings.Contains(string(generated), "premise-rust-lib") {
+		t.Fatalf("unexpected generated Cargo.toml:\n%s", generated)
+	}
+
+	reloaded, err := core.LoadManifest(filepath.Join(workspace, core.ManifestFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reloaded.Workspace.Projects) != 1 {
+		t.Fatalf("unexpected projects: %#v", reloaded.Workspace.Projects)
+	}
+	if project := reloaded.Workspace.Projects[0]; project.Template != selector || project.Path != "libs/orders" {
+		t.Fatalf("unexpected provenance: %#v", project)
+	}
+}
+
 func TestGenerateExplainsMissingTemplateManifest(t *testing.T) {
 	workspace := filepath.Join(t.TempDir(), "workspace")
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
