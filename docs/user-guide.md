@@ -80,15 +80,23 @@ Premise asks the questions declared by the selected template and creates `apps/<
 pm generate
 ```
 
-When the selector is omitted, Premise loads the official `cloudvoyant/premise` registry and lists `premise-app` and `premise-lib` in an interactive picker. Choosing an entry is equivalent to passing its native `:<template>` selector.
+When the selector is omitted, Premise loads every official registry — `cloudvoyant/premise` and `cloudvoyant/premise-cargo` — and lists their templates in one interactive picker: `premise-app` and `premise-lib` (Go), plus `premise-rust-lib`, `premise-rust-app`, `premise-clap-cli`, and `premise-ratatui-app` (Cargo). Choosing an entry records its fully qualified `<owner>/<repo>:<template>` selector, so a picked Cargo template resolves to `cloudvoyant/premise-cargo:<template>` and never collides with a same-named Go template.
 
-### Generate a native template
+### Generate from one registry
 
 ```bash
-pm generate :premise-app
+pm generate cloudvoyant/premise-cargo
 ```
 
-The leading colon expands to the official repository, so `:premise-app` is equivalent to `cloudvoyant/premise:premise-app`. The source manifest must declare the selected template name; shorthand expansion does not create a missing template.
+Passing an `<owner>/<repo>` with no `:<template>` loads that one registry and opens a picker scoped to its templates, returning the selected entry's fully qualified selector. This is the same picker as `pm generate` with no argument, narrowed to a single source.
+
+### Generate a bare template name
+
+```bash
+pm generate :premise-rust-lib
+```
+
+The leading-colon shorthand names a template without a source. Premise resolves it against every official registry and generates the single match, so `:premise-rust-lib` resolves to the Cargo registry even though it is not the first official source. If the name matches no official registry, or matches more than one, Premise reports the ambiguity and asks you to qualify the source. A bare name is never searched across unofficial registries; reach those with a fully qualified `<owner>/<repo>:<template>` selector.
 
 ### Generate from a remote repository
 
@@ -184,5 +192,5 @@ Templates can define additional tasks.
 - Template source paths are fixed by template name, and generated roots are fixed by app/lib kind.
 - Substitution changes UTF-8 file contents but not file or directory names.
 - Remote templates use the repository's default branch.
-- Private-repository authentication, concurrent cache locking, and offline mode are not available yet.
+- Private-repository authentication, concurrent cache locking, and offline mode are not available yet. Credential delegation for private registry sources is deferred to DIFF-150; go-git performs clones today.
 - Premise refuses to merge into or replace an existing destination.

@@ -54,6 +54,25 @@ go get github.com/cloudvoyant/premise@vX.Y.Z
     flow: feature
 ```
 
+A consumer that needs an unreleased Premise (for example a template registry
+being bootstrapped before a release exists) can build the action from its
+checked-out source instead of installing a published release:
+
+```yaml
+- uses: cloudvoyant/premise@<revision>
+  with:
+    flow: feature
+    build-premise-from-source: "true"
+```
+
+When `build-premise-from-source` is `true` the action runs `go build` against
+`github.action_path` and exposes both `premise` and its `pm` alias on `PATH` for
+any calling repository. It defaults to `false`, which keeps the `install.sh`
+release bootstrap for ordinary consumers. In the `feature` flow the action also
+detects a repository-root `premise.yaml` that declares at least one template and
+runs `pm template test` as the authoritative registry check; repositories without
+declared templates keep only the root lifecycle checks.
+
 ## Adding Dependencies
 
 ```bash

@@ -25,6 +25,10 @@ inputs:
     description: premise release tag to install (defaults to the latest release)
     required: false
     default: ""
+  build-premise-from-source:
+    description: Build premise from source instead of installing a release
+    required: false
+    default: "false"
   github-token:
     description: Token used by flows that need GitHub access
     required: false
@@ -40,7 +44,8 @@ runs:
 
     # Tasks may shell out to `pm`, so the binary has to be on PATH before any
     # `mise run`. This repository builds the checked-out source to avoid a
-    # release bootstrap cycle; consumers install a published release.
+    # release bootstrap cycle; consumers install a published release unless they
+    # opt into a source build (needed for registries that predate a release).
     - name: Install premise
       if: inputs.install-premise == 'true'
       shell: bash
@@ -48,10 +53,12 @@ runs:
         VERSION: ${{ inputs.premise-version }}
         INSTALL_DIR: ${{ runner.temp }}/premise-bin
         ACTION_PATH: ${{ github.action_path }}
+        BUILD_FROM_SOURCE: ${{ inputs.build-premise-from-source }}
       run: |
         set -euo pipefail
         mkdir -p "$INSTALL_DIR"
-        if [[ "$GITHUB_REPOSITORY" == "cloudvoyant/premise" ]]; then
+        if [[ "$BUILD_FROM_SOURCE" == "true" \
+          || "$GITHUB_REPOSITORY" == "cloudvoyant/premise" ]]; then
           (
             cd "$ACTION_PATH"
             go build -o "$INSTALL_DIR/premise" .
@@ -100,6 +107,25 @@ runs:
         mise run --jobs 1 '//...:test'
         mise run --jobs 1 '//...:format:check'
         mise run --jobs 1 '//...:lint'
+
+    # A template registry validates its declared templates through
+    # `pm template test`; ordinary consumer repositories skip this check.
+    - name: Test template registry
+      if: inputs.flow == 'feature'
+      shell: bash
+      run: |
+        set -euo pipefail
+        export PATH="${{ runner.temp }}/premise-bin:$PATH"
+        if [[ -f premise.yaml ]] && awk '
+          /^templates:/ { in_templates = 1; next }
+          /^[^[:space:]]/ { in_templates = 0 }
+          in_templates && /^[[:space:]]+-[[:space:]]+name:/ { found = 1; exit }
+          END { exit found ? 0 : 1 }
+        ' premise.yaml; then
+          pm template test
+        else
+          echo "No templates declared — skipping template tests."
+        fi
 
     # Placeholder: runs a `deploy` task when the consuming repo defines one,
     # otherwise reports a no-op instead of failing.

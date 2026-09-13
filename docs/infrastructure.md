@@ -30,6 +30,14 @@ GCP_REGISTRY_NAME       = "your-repository-name"
 
 `.github/workflows/on-commit.yml` verifies pull requests and feature-branch pushes through the root `action.yml`. `.github/workflows/on-deploy.yml` exposes the deploy flow. The incomplete semantic-release workflow was removed; issue #2 tracks its svu and GoReleaser replacement.
 
+The `feature` flow detects a repository-root `premise.yaml` that declares at least
+one template and runs `pm template test` as the authoritative check, so a
+template-registry repository (for example `cloudvoyant/premise-cargo`) fails CI
+when any declared template contract breaks. The action can also build Premise
+from the checked-out action source via the `build-premise-from-source` input,
+which is used by registries that predate a published release; ordinary consumers
+keep the `install.sh` release bootstrap.
+
 ### CI/CD Secrets
 
 Org-level secrets are utilized to avoid the need for setting up secrets for every new project. This means setup is only needed once.
