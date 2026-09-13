@@ -65,10 +65,13 @@ checked-out source instead of installing a published release:
     build-premise-from-source: "true"
 ```
 
-When `build-premise-from-source` is `true` the action runs `go build` against
-`github.action_path` and exposes both `premise` and its `pm` alias on `PATH` for
-any calling repository. It defaults to `false`, which keeps the `install.sh`
-release bootstrap for ordinary consumers. In the `feature` flow the action also
+When `build-premise-from-source` is `true` the action builds `github.action_path`
+and exposes both `premise` and its `pm` alias on `PATH` for any calling
+repository. The build resolves Go through Mise from the action's own
+`mise.toml` (`mise exec -- go build`), which auto-installs the pinned Go
+version, so a consumer repository does not need Go on its own toolchain. It
+defaults to `false`, which keeps the `install.sh` release bootstrap for ordinary
+consumers. In the `feature` flow the action also
 detects a repository-root `premise.yaml` that declares at least one template and
 runs `pm template test` as the authoritative registry check; repositories without
 declared templates keep only the root lifecycle checks.

@@ -56,10 +56,16 @@ func resolveSelectorArgument(ctx context.Context, args []string) (string, error)
 		// it against every official registry.
 		return core.ResolveOfficialTemplateName(ctx, name)
 	}
-	if _, err := core.ParseSelector(arg); err == nil {
-		// An explicit <owner>/<repo>:<template>, local, or URL selector.
-		return arg, nil
+	if _, err := core.ParseSelector(arg); err != nil {
+		// A colon-free argument is a source-only <owner>/<repo> that loads that
+		// one registry for a scoped picker. Anything else is a malformed
+		// selector and must surface the validation error instead of trying to
+		// clone a bogus source.
+		if !strings.Contains(arg, ":") {
+			return core.AskRegistryTemplate(ctx, arg)
+		}
+		return "", err
 	}
-	// A source with no :<template> loads that one registry for a scoped picker.
-	return core.AskRegistryTemplate(ctx, arg)
+	// An explicit <owner>/<repo>:<template>, local, or URL selector.
+	return arg, nil
 }

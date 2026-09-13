@@ -61,7 +61,10 @@ runs:
           || "$GITHUB_REPOSITORY" == "cloudvoyant/premise" ]]; then
           (
             cd "$ACTION_PATH"
-            go build -o "$INSTALL_DIR/premise" .
+            # Resolve Go through Mise from the action's own mise.toml so a
+            # consumer repository without a Go toolchain can still build from
+            # source. `mise exec` auto-installs the pinned Go version.
+            mise exec -- go build -o "$INSTALL_DIR/premise" .
           )
           ln -sf premise "$INSTALL_DIR/pm"
         else
@@ -119,7 +122,7 @@ runs:
         if [[ -f premise.yaml ]] && awk '
           /^templates:/ { in_templates = 1; next }
           /^[^[:space:]]/ { in_templates = 0 }
-          in_templates && /^[[:space:]]+-[[:space:]]+name:/ { found = 1; exit }
+          in_templates && /^[[:space:]]+-[[:space:]]/ { found = 1; exit }
           END { exit found ? 0 : 1 }
         ' premise.yaml; then
           pm template test
