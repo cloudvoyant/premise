@@ -14,9 +14,35 @@ import (
 	git "github.com/go-git/go-git/v5"
 )
 
+// OfficialSources is the ordered, centralized list of official Premise template
+// registry repositories. The default picker merges them in this order, and bare
+// template names are resolved against every source listed here. Unofficial
+// registries are reachable only through an explicit <owner>/<repo>:<template>
+// selector.
+var OfficialSources = []string{
+	NativeTemplateSource,
+	"cloudvoyant/premise-cargo",
+}
+
 // Registry lists templates available from one source.
 type Registry struct {
 	Templates []Template
+}
+
+// RegistryEntry carries one template from one registry source: the source
+// repository identity, the declared template metadata, a human-readable display
+// label, and a fully qualified selector.
+type RegistryEntry struct {
+	Source   string
+	Template Template
+	Label    string
+}
+
+// Selector returns the fully qualified <source>:<template-name> selector for
+// the entry. Selectors never rely on display labels, so duplicate template
+// names across sources stay unambiguous.
+func (entry RegistryEntry) Selector() string {
+	return entry.Source + ":" + entry.Template.Name
 }
 
 func LoadRegistry(sourceRoot string) (Registry, error) {
@@ -35,12 +61,101 @@ func LoadRegistry(sourceRoot string) (Registry, error) {
 	return Registry{Templates: templates}, nil
 }
 
-func DefaultRegistry(ctx context.Context) (Registry, error) {
-	root, err := resolveRepository(ctx, NativeTemplateSource)
-	if err != nil {
-		return Registry{}, err
+// DefaultRegistry loads every official registry source and returns a merged,
+// deterministically ordered list of source-aware entries. Any source that fails
+// to load aborts the merge with a contextual aggregate error.
+func DefaultRegistry(ctx context.Context) ([]RegistryEntry, error) {
+	var entries []RegistryEntry
+	var errs []error
+	for _, source := range OfficialSources {
+		sourceEntries, err := loadSourceEntries(ctx, source)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("load official registry %s: %w", source, err))
+			continue
+		}
+		entries = append(entries, sourceEntries...)
 	}
-	return LoadRegistry(root)
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
+	}
+	disambiguateLabels(entries)
+	return entries, nil
+}
+
+// ResolveOfficialTemplateName resolves a bare template name against every
+// official registry and returns the single matching fully qualified selector.
+// Zero matches or multiple matches return an error asking the caller to qualify
+// the source. A bare name is never resolved against unofficial registries.
+func ResolveOfficialTemplateName(ctx context.Context, name string) (string, error) {
+	if err := ValidateTemplateName(name); err != nil {
+		return "", err
+	}
+	var matches []RegistryEntry
+	var errs []error
+	for _, source := range OfficialSources {
+		entries, err := loadSourceEntries(ctx, source)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("load official registry %s: %w", source, err))
+			continue
+		}
+		for _, entry := range entries {
+			if entry.Template.Name == name {
+				matches = append(matches, entry)
+			}
+		}
+	}
+	if len(errs) > 0 {
+		return "", errors.Join(errs...)
+	}
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("template name %q is not declared by any official registry (%s); qualify the source as <owner>/<repo>:<name>", name, strings.Join(OfficialSources, ", "))
+	case 1:
+		return matches[0].Selector(), nil
+	default:
+		sources := make([]string, len(matches))
+		for index, match := range matches {
+			sources[index] = match.Source
+		}
+		return "", fmt.Errorf("template name %q is declared by multiple official registries (%s); qualify the source, e.g. %s:%s", name, strings.Join(sources, ", "), sources[0], name)
+	}
+}
+
+// loadSourceEntries loads one source's registry and returns its entries with
+// the source identity attached.
+func loadSourceEntries(ctx context.Context, source string) ([]RegistryEntry, error) {
+	root, err := resolveRepository(ctx, source)
+	if err != nil {
+		return nil, err
+	}
+	registry, err := LoadRegistry(root)
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]RegistryEntry, len(registry.Templates))
+	for index, template := range registry.Templates {
+		entries[index] = newRegistryEntry(source, template)
+	}
+	return entries, nil
+}
+
+func newRegistryEntry(source string, template Template) RegistryEntry {
+	return RegistryEntry{Source: source, Template: template, Label: template.Name}
+}
+
+// disambiguateLabels appends the source identity to any label whose template
+// name is declared by more than one source, so duplicate names stay
+// distinguishable in the picker while selectors remain unambiguous.
+func disambiguateLabels(entries []RegistryEntry) {
+	counts := make(map[string]int, len(entries))
+	for _, entry := range entries {
+		counts[entry.Template.Name]++
+	}
+	for index := range entries {
+		if counts[entries[index].Template.Name] > 1 {
+			entries[index].Label = fmt.Sprintf("%s (%s)", entries[index].Template.Name, entries[index].Source)
+		}
+	}
 }
 
 func (registry Registry) Names() []string {
@@ -51,7 +166,12 @@ func (registry Registry) Names() []string {
 	return names
 }
 
-func resolveRepository(ctx context.Context, source string) (string, error) {
+// resolveRepository resolves a source identity to a local registry checkout.
+// It is a package variable so fixture-backed tests can substitute a loader that
+// never touches the network or git.
+var resolveRepository = resolveRepositoryFromCache
+
+func resolveRepositoryFromCache(ctx context.Context, source string) (string, error) {
 	repositoryURL := normalizeRepositoryURL(source)
 	home, err := os.UserHomeDir()
 	if err != nil {
