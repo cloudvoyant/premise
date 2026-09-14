@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 
 	core "github.com/cloudvoyant/premise/core"
 	"github.com/spf13/cobra"
@@ -47,25 +46,24 @@ workspace.`,
 // resolveSelectorArgument routes a generate argument to the matching selector
 // resolution strategy and returns the fully qualified selector to generate.
 func resolveSelectorArgument(ctx context.Context, args []string) (string, error) {
-	if len(args) == 0 {
-		return core.AskDefaultTemplate(ctx)
+	arg := ""
+	if len(args) > 0 {
+		arg = args[0]
 	}
-	arg := args[0]
-	if name, ok := strings.CutPrefix(arg, ":"); ok {
-		// A leading-colon shorthand names a template without a source; resolve
-		// it against every official registry.
-		return core.ResolveOfficialTemplateName(ctx, name)
-	}
-	if _, err := core.ParseSelector(arg); err != nil {
-		// A colon-free argument is a source-only <owner>/<repo> that loads that
-		// one registry for a scoped picker. Anything else is a malformed
-		// selector and must surface the validation error instead of trying to
-		// clone a bogus source.
-		if !strings.Contains(arg, ":") {
-			return core.AskRegistryTemplate(ctx, arg)
-		}
+	classified, err := core.ClassifyGenerateArgument(arg)
+	if err != nil {
 		return "", err
 	}
-	// An explicit <owner>/<repo>:<template>, local, or URL selector.
-	return arg, nil
+	switch classified.Kind {
+	case core.SelectorDefault:
+		return core.AskDefaultTemplate(ctx)
+	case core.SelectorOfficialName:
+		return core.ResolveOfficialTemplateName(ctx, classified.Value)
+	case core.SelectorSource:
+		return core.AskRegistryTemplate(ctx, classified.Value)
+	case core.SelectorExplicit:
+		return classified.Value, nil
+	default:
+		return "", fmt.Errorf("unhandled selector kind %d", classified.Kind)
+	}
 }

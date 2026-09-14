@@ -72,7 +72,7 @@ pm generate .:app
 pm generate .:lib
 ```
 
-Premise asks the questions declared by the selected template and creates `apps/<name>` or `libs/<name>` according to its `kind`. It then records the project, template selector, version, path, and answers under `workspace.projects`.
+Premise asks the questions declared by the selected template and creates `apps/<name>` or `libs/<name>` according to its `kind`. It then records the project, template selector, path, answers, and the template version when one is declared under `workspace.projects`.
 
 ### Choose from the default registry
 
@@ -157,7 +157,7 @@ projects:
       name: orders
 ```
 
-`version` is the selected template declaration's version at generation time. If project registration or manifest saving fails after copying, Premise removes the newly created destination so output and provenance do not diverge.
+`version` records the selected template declaration's version at generation time when the registry provides one; registries with repository-level versioning can omit it. If project registration or manifest saving fails after copying, Premise removes the newly created destination so output and provenance do not diverge.
 
 ### Task contracts
 
