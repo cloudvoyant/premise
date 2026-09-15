@@ -54,6 +54,28 @@ go get github.com/cloudvoyant/premise@vX.Y.Z
     flow: feature
 ```
 
+A consumer that needs an unreleased Premise (for example a template registry
+being bootstrapped before a release exists) can build the action from its
+checked-out source instead of installing a published release:
+
+```yaml
+- uses: cloudvoyant/premise@<revision>
+  with:
+    flow: feature
+    build-premise-from-source: "true"
+```
+
+When `build-premise-from-source` is `true` the action builds `github.action_path`
+and exposes both `premise` and its `pm` alias on `PATH` for any calling
+repository. The build resolves Go through Mise from the action's own
+`mise.toml` (`mise exec -- go build`), which auto-installs the pinned Go
+version, so a consumer repository does not need Go on its own toolchain. It
+defaults to `false`, which keeps the `install.sh` release bootstrap for ordinary
+consumers. In the `feature` flow the action also
+detects a repository-root `premise.yaml` that declares at least one template and
+runs `pm template test` as the authoritative registry check; repositories without
+declared templates keep only the root lifecycle checks.
+
 ## Adding Dependencies
 
 ```bash
@@ -63,4 +85,15 @@ go mod tidy
 
 ## Publishing
 
-Release automation is intentionally disabled while [issue #2](https://github.com/cloudvoyant/premise/issues/2) replaces the inherited semantic-release path with svu, a `pm version` command, and GoReleaser.
+Stable releases are versioned with `svu` (through the `pm version` command) and built by GoReleaser. Merges to `main` run `.github/workflows/on-merge.yml`, which computes the next stable version, creates and pushes the `vMAJOR.MINOR.PATCH` tag when one is missing, and publishes the GoReleaser release. Release candidates are not applicable to Go (prerelease installs resolve through commit hashes), so `mise run publish:rc` only echoes its skip message.
+
+`pm version` exposes the svu calculations used by the release pipeline:
+
+```bash
+pm version current                  # current stable version
+pm version next                     # next version from git history
+pm version bump patch|minor|major   # explicit bump
+pm version rc --identifier <id>     # MAJOR.MINOR.PATCH-rc.<id>
+```
+
+A `v0.0.0` stable bootstrap tag must exist before CI runs; it is created externally and is not produced by any task or workflow.

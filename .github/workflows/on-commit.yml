@@ -22,11 +22,44 @@ jobs:
       '0000000000000000000000000000000000000000'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
 
-      - name: Test, lint, format-check & publish rc
+      - name: Test, lint & format-check
         uses: ./
         with:
           flow: feature
+
+  # RC publication is opt-in: it runs only on a non-main branch push whose HEAD
+  # commit message contains the exact marker `[publish-rc]`. Pull requests never
+  # reach this job and never receive publish credentials. Go has no crate or
+  # prerelease artifact to publish, so the RC task only echoes its skip message;
+  # no tag or release is created.
+  publish-rc:
+    name: Opt-in RC publish (Go skip)
+    runs-on: ubuntu-latest
+    needs: verify
+    if: >-
+      github.event_name == 'push' &&
+      github.event.before !=
+      '0000000000000000000000000000000000000000' &&
+      contains(github.event.head_commit.message, '[publish-rc]')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Setup premise and mise
+        uses: ./
+        with:
+          flow: setup
+          install: "false"
+          install-premise: "true"
+
+      - name: Publish RC
+        shell: bash
+        run: |
+          set -euo pipefail
+          mise run publish:rc

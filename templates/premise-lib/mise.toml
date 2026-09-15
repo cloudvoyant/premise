@@ -30,6 +30,10 @@ run = 'echo "premise-lib: format:check"'
 description = "Run the env-pull contract"
 run = 'echo "premise-lib: env-pull"'
 
+[tasks."publish:setup"]
+description = "Run the publish:setup contract"
+run = 'echo "premise-lib: publish:setup"'
+
 [tasks."publish:rc"]
 description = "Run the publish:rc contract"
 run = 'echo "premise-lib: publish:rc"'

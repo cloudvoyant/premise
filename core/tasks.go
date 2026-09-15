@@ -9,6 +9,7 @@ var commonTasks = []string{
 	"format",
 	"format:check",
 	"env-pull",
+	"publish:setup",
 	"publish:rc",
 	"publish",
 }

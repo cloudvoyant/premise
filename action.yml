@@ -25,6 +25,10 @@ inputs:
     description: premise release tag to install (defaults to the latest release)
     required: false
     default: ""
+  build-premise-from-source:
+    description: Build premise from source instead of installing a release
+    required: false
+    default: "false"
   github-token:
     description: Token used by flows that need GitHub access
     required: false
@@ -38,9 +42,50 @@ runs:
       with:
         version: ${{ inputs.mise-version }}
 
+    # A template registry (for example cloudvoyant/premise-cargo) declares
+    # templates in its repository-root premise.yaml but is not a mise monorepo
+    # root, so `//...:<task>` cannot be addressed there. Detect that once and
+    # export the result through $GITHUB_ENV, because composite-action steps do
+    # not share shell state. Later steps gate on env.IS_TEMPLATE_REGISTRY.
+    #
+    # The templates check is key-order-independent (any list item under the
+    # top-level `templates:` key). The monorepo guard keeps the premise
+    # monorepo itself on the normal lifecycle path even though it also ships
+    # templates.
+    - name: Detect template registry
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ -f premise.yaml ]] && awk '
+          /^templates:/ { in_templates = 1; next }
+          /^[^[:space:]]/ { in_templates = 0 }
+          in_templates && /^[[:space:]]+-[[:space:]]/ { found = 1; exit }
+          END { exit found ? 0 : 1 }
+        ' premise.yaml; then
+          declares_templates=true
+        else
+          declares_templates=false
+        fi
+        if [[ -f mise.toml ]] && grep -Eq \
+            '^[[:space:]]*monorepo_root[[:space:]]*=[[:space:]]*true' \
+            mise.toml; then
+          is_monorepo=true
+        else
+          is_monorepo=false
+        fi
+        if [[ "$declares_templates" == "true" \
+          && "$is_monorepo" == "false" ]]; then
+          IS_TEMPLATE_REGISTRY=true
+        else
+          IS_TEMPLATE_REGISTRY=false
+        fi
+        echo "IS_TEMPLATE_REGISTRY=$IS_TEMPLATE_REGISTRY" >> "$GITHUB_ENV"
+        echo "Template registry detected: $IS_TEMPLATE_REGISTRY"
+
     # Tasks may shell out to `pm`, so the binary has to be on PATH before any
     # `mise run`. This repository builds the checked-out source to avoid a
-    # release bootstrap cycle; consumers install a published release.
+    # release bootstrap cycle; consumers install a published release unless they
+    # opt into a source build (needed for registries that predate a release).
     - name: Install premise
       if: inputs.install-premise == 'true'
       shell: bash
@@ -48,35 +93,43 @@ runs:
         VERSION: ${{ inputs.premise-version }}
         INSTALL_DIR: ${{ runner.temp }}/premise-bin
         ACTION_PATH: ${{ github.action_path }}
+        BUILD_FROM_SOURCE: ${{ inputs.build-premise-from-source }}
       run: |
         set -euo pipefail
         mkdir -p "$INSTALL_DIR"
-        if [[ "$GITHUB_REPOSITORY" == "cloudvoyant/premise" ]]; then
+        if [[ "$BUILD_FROM_SOURCE" == "true" \
+          || "$GITHUB_REPOSITORY" == "cloudvoyant/premise" ]]; then
           (
             cd "$ACTION_PATH"
-            go build -o "$INSTALL_DIR/premise" .
+            # Resolve Go through Mise from the action's own mise.toml so a
+            # consumer repository without a Go toolchain can still build from
+            # source. `mise exec` auto-installs the pinned Go version.
+            mise exec -- go build -o "$INSTALL_DIR/premise" .
           )
           ln -sf premise "$INSTALL_DIR/pm"
         else
           bash "$ACTION_PATH/install.sh"
         fi
+        # Expose the installed premise directory to later steps so they can
+        # call `pm` (and `premise`) directly.
+        echo "${{ runner.temp }}/premise-bin" >> "$GITHUB_PATH"
 
     - name: Install dependencies
       if: inputs.install == 'true'
       shell: bash
       run: |
-        export PATH="${{ runner.temp }}/premise-bin:$PATH"
         pm install
 
     # Fail fast with a readable message when a consuming repo does not implement
-    # the task contract this action calls.
+    # the task contract this action calls. Registries are exempt: their
+    # authoritative check is `pm template test`, not the //... lifecycle graph.
     - name: Verify task contract
+      if: env.IS_TEMPLATE_REGISTRY != 'true'
       shell: bash
       env:
         FLOW: ${{ inputs.flow }}
       run: |
         set -euo pipefail
-        export PATH="${{ runner.temp }}/premise-bin:$PATH"
         case "$FLOW" in
           setup)   required="" ;;
           feature) required="test format:check lint" ;;
@@ -93,13 +146,21 @@ runs:
         done
 
     - name: Test, lint, and check formatting
-      if: inputs.flow == 'feature'
+      if: inputs.flow == 'feature' && env.IS_TEMPLATE_REGISTRY != 'true'
       shell: bash
       run: |
-        export PATH="${{ runner.temp }}/premise-bin:$PATH"
         mise run --jobs 1 '//...:test'
         mise run --jobs 1 '//...:format:check'
         mise run --jobs 1 '//...:lint'
+
+    # A template registry validates its declared templates through
+    # `pm template test`; ordinary consumer repositories skip this check.
+    - name: Test template registry
+      if: inputs.flow == 'feature' && env.IS_TEMPLATE_REGISTRY == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        pm template test
 
     # Placeholder: runs a `deploy` task when the consuming repo defines one,
     # otherwise reports a no-op instead of failing.
@@ -111,7 +172,6 @@ runs:
         GITHUB_TOKEN: ${{ inputs.github-token }}
       run: |
         set -euo pipefail
-        export PATH="${{ runner.temp }}/premise-bin:$PATH"
         if mise run --dry-run --jobs 1 '//...:deploy' >/dev/null 2>&1; then
           mise run --jobs 1 '//...:deploy'
         else

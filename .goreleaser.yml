@@ -1,0 +1,55 @@
+---
+# GoReleaser configuration for the premise CLI.
+#
+# The archive names below must match install.sh exactly:
+#   premise-<tag>-<arch>-<os>.tar.gz
+# where <arch> is x86_64 or aarch64 and <os> is linux or macos. install.sh maps
+# GoReleaser's amd64/arm64 and linux/darwin onto those names.
+version: 2
+
+project_name: premise
+
+builds:
+  - id: premise
+    main: .
+    binary: premise
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}-{{ .Tag }}-
+      {{- if eq .Arch "amd64" }}x86_64{{- else }}aarch64{{- end }}-
+      {{- if eq .Os "darwin" }}macos{{- else }}{{ .Os }}{{- end }}
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore"
+
+release:
+  mode: keep-existing
+  replace_existing_artifacts: true
+  github:
+    owner: cloudvoyant
+    name: premise

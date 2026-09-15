@@ -16,29 +16,6 @@ import (
 
 const NativeTemplateSource = "cloudvoyant/premise"
 
-type Selection struct {
-	Source string
-	Name   string
-	Local  bool
-}
-
-func ParseSelector(selector string) (Selection, error) {
-	separator := strings.LastIndex(selector, ":")
-	if separator < 0 || separator == len(selector)-1 {
-		return Selection{}, fmt.Errorf("template selector %q must end with :<template>", selector)
-	}
-	source := selector[:separator]
-	name := selector[separator+1:]
-	if err := ValidateTemplateName(name); err != nil {
-		return Selection{}, err
-	}
-	if source == "" {
-		source = NativeTemplateSource
-	}
-	local := source == "." || filepath.IsAbs(source) || strings.HasPrefix(source, "./") || strings.HasPrefix(source, "../")
-	return Selection{Source: source, Name: name, Local: local}, nil
-}
-
 func ResolveTemplateSource(ctx context.Context, workspaceRoot, selector string) (string, Selection, error) {
 	selection, err := ParseSelector(selector)
 	if err != nil {
