@@ -110,12 +110,14 @@ runs:
         else
           bash "$ACTION_PATH/install.sh"
         fi
+        # Expose the installed premise directory to later steps so they can
+        # call `pm` (and `premise`) directly.
+        echo "${{ runner.temp }}/premise-bin" >> "$GITHUB_PATH"
 
     - name: Install dependencies
       if: inputs.install == 'true'
       shell: bash
       run: |
-        export PATH="${{ runner.temp }}/premise-bin:$PATH"
         pm install
 
     # Fail fast with a readable message when a consuming repo does not implement
@@ -128,7 +130,6 @@ runs:
         FLOW: ${{ inputs.flow }}
       run: |
         set -euo pipefail
-        export PATH="${{ runner.temp }}/premise-bin:$PATH"
         case "$FLOW" in
           setup)   required="" ;;
           feature) required="test format:check lint" ;;
@@ -148,7 +149,6 @@ runs:
       if: inputs.flow == 'feature' && env.IS_TEMPLATE_REGISTRY != 'true'
       shell: bash
       run: |
-        export PATH="${{ runner.temp }}/premise-bin:$PATH"
         mise run --jobs 1 '//...:test'
         mise run --jobs 1 '//...:format:check'
         mise run --jobs 1 '//...:lint'
@@ -160,7 +160,6 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        export PATH="${{ runner.temp }}/premise-bin:$PATH"
         pm template test
 
     # Placeholder: runs a `deploy` task when the consuming repo defines one,
@@ -173,7 +172,6 @@ runs:
         GITHUB_TOKEN: ${{ inputs.github-token }}
       run: |
         set -euo pipefail
-        export PATH="${{ runner.temp }}/premise-bin:$PATH"
         if mise run --dry-run --jobs 1 '//...:deploy' >/dev/null 2>&1; then
           mise run --jobs 1 '//...:deploy'
         else

@@ -49,7 +49,7 @@ mise run test
 mise run e2e
 ```
 
-Release automation is tracked in [issue #2](https://github.com/cloudvoyant/premise/issues/2).
+Stable releases are built and published by GoReleaser from merges to `main`; see [Infrastructure](docs/infrastructure.md) for the release pipeline.
 
 ## Documentation
 

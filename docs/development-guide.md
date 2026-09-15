@@ -85,4 +85,15 @@ go mod tidy
 
 ## Publishing
 
-Release automation is intentionally disabled while [issue #2](https://github.com/cloudvoyant/premise/issues/2) replaces the inherited semantic-release path with svu, a `pm version` command, and GoReleaser.
+Stable releases are versioned with `svu` (through the `pm version` command) and built by GoReleaser. Merges to `main` run `.github/workflows/on-merge.yml`, which computes the next stable version, creates and pushes the `vMAJOR.MINOR.PATCH` tag when one is missing, and publishes the GoReleaser release. Release candidates are not applicable to Go (prerelease installs resolve through commit hashes), so `mise run publish:rc` only echoes its skip message.
+
+`pm version` exposes the svu calculations used by the release pipeline:
+
+```bash
+pm version current                  # current stable version
+pm version next                     # next version from git history
+pm version bump patch|minor|major   # explicit bump
+pm version rc --identifier <id>     # MAJOR.MINOR.PATCH-rc.<id>
+```
+
+A `v0.0.0` stable bootstrap tag must exist before CI runs; it is created externally and is not produced by any task or workflow.

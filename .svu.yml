@@ -1,0 +1,22 @@
+# svu configuration.
+#
+# https://github.com/caarlos0/svu
+#
+# Release bootstrap: a v0.0.0 stable tag must exist before CI runs version
+# calculation. That tag is created externally (see docs/user-guide.md), not by
+# any workflow or task, so svu always has a stable base version to read.
+#
+# `tag.pattern` is a glob (not a regex). It restricts svu to stable SemVer tags
+# (vMAJOR.MINOR.PATCH), ignoring unrelated tags such as
+# `pre-squash/feature/templating`.
+verbose: false
+tag:
+  pattern: "v[0-9]*.[0-9]*.[0-9]*"
+  prefix: "v"
+  mode: all
+log:
+  directory:
+    - "."
+metadata: ""
+always: false
+v0: false

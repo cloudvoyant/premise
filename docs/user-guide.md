@@ -172,6 +172,7 @@ lint:fix
 format
 format:check
 env-pull
+publish:setup
 publish:rc
 publish
 ```
@@ -186,6 +187,43 @@ e2e
 ```
 
 Templates can define additional tasks.
+
+### Versioning
+
+Premise calculates release versions through the pinned `svu` CLI, exposed by the
+`pm version` command:
+
+```bash
+pm version current                  # current stable version (e.g. v0.1.0)
+pm version next                     # next version from git history
+pm version bump patch|minor|major   # explicit patch/minor/major bump
+pm version rc --identifier <id>     # MAJOR.MINOR.PATCH-rc.<id>
+```
+
+Each command prints exactly one version to stdout. Release-candidate identifiers
+must be valid SemVer prerelease identifiers: letters, digits, and hyphens, with
+numeric identifiers forbidding leading zeroes.
+
+Version calculation relies on a `v0.0.0` stable bootstrap tag that must exist
+before CI runs. That tag is created externally and is never produced by a task or
+workflow. `.svu.yml` restricts svu to stable SemVer tags (`vMAJOR.MINOR.PATCH`), so
+unrelated tags are ignored.
+
+### Publishing
+
+Stable releases happen on pushes to `main`. The on-merge workflow validates the
+trunk, reuses a stable tag already present at HEAD or computes the next version
+with `pm version next`, creates and pushes the `vMAJOR.MINOR.PATCH` tag when one is
+missing, then runs `mise run publish` (GoReleaser) to build and publish the GitHub
+release archives that `install.sh` downloads. If there is no release-worthy version
+change, the workflow skips cleanly. On rerun, it reuses the tag and GoReleaser
+replaces conflicting release assets.
+
+Release-candidate publication is opt-in for Go: a feature-branch push whose HEAD
+commit message contains the exact marker `[publish-rc]` runs `mise run publish:rc`,
+which succeeds and prints only `Skipping RC publish: Go supports prerelease
+installs through commit hashes.` Go needs no prerelease artifact because installs
+resolve through commit hashes, so no RC tag or release is ever created.
 
 ### Current limitations
 

@@ -16,6 +16,10 @@ node = "lts"
 shellcheck = "latest"
 shfmt = "latest"
 watchexec = "latest"
+# Release tooling: svu drives `pm version`, GoReleaser builds the stable
+# GitHub release archives consumed by install.sh.
+svu = "3.4.1"
+goreleaser = "2.18.1"
 
 [tasks.build]
 description = "Build the premise CLI"
@@ -76,6 +80,24 @@ description = "Run Go and shell static analysis"
 run = '''
 go vet ./...
 shellcheck install.sh
+'''
+
+[tasks."publish:rc"]
+description = "Opt-in RC publication for Go (no-op; Go supports prerelease installs through commit hashes)"
+run = 'echo "Skipping RC publish: Go supports prerelease installs through commit hashes."'
+
+[tasks.publish]
+description = "Run GoReleaser to build and publish the stable GitHub release"
+run = '''
+set -euo pipefail
+# Requires a stable tag (vMAJOR.MINOR.PATCH) at HEAD. The workflow creates and
+# pushes that tag before invoking this task.
+tag="$(git describe --tags --exact-match HEAD 2>/dev/null || true)"
+if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+  echo "error: publish requires a stable tag at HEAD (got \"${tag:-none}\")" >&2
+  exit 1
+fi
+goreleaser release --clean
 '''
 
 [tasks."lint:fix"]
