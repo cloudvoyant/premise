@@ -1,15 +1,18 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
+	"strings"
 	"sync"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/caarlos0/svu/v3/pkg/svu"
+	git "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
 )
-
-const stableVersionTagPattern = "v[0-9]*.[0-9]*.[0-9]*"
 
 var (
 	versionDirectoryMu  sync.Mutex
@@ -101,8 +104,12 @@ func ReleaseCandidateVersion(root, identifier string) (string, error) {
 }
 
 func calculateVersion(root string, calculate func(...svu.Option) (string, error), extra ...svu.Option) (string, error) {
+	stableTag, err := latestStableVersionTag(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve stable version baseline: %w", err)
+	}
 	options := []svu.Option{
-		svu.WithPattern(stableVersionTagPattern),
+		svu.WithPattern(stableTag),
 		svu.WithPrefix("v"),
 		svu.ForAllBranches(),
 		svu.WithDirectories("."),
@@ -128,6 +135,40 @@ func calculateVersion(root string, calculate func(...svu.Option) (string, error)
 		return "", fmt.Errorf("restore working directory %s: %w", previous, restoreErr)
 	}
 	return version, nil
+}
+
+func latestStableVersionTag(root string) (string, error) {
+	repository, err := git.PlainOpenWithOptions(root, &git.PlainOpenOptions{DetectDotGit: true})
+	if err != nil {
+		return "", fmt.Errorf("open version repository: %w", err)
+	}
+	tags, err := repository.Tags()
+	if err != nil {
+		return "", fmt.Errorf("list version tags: %w", err)
+	}
+	var latest *semver.Version
+	latestTag := ""
+	if err := tags.ForEach(func(reference *plumbing.Reference) error {
+		name := reference.Name().Short()
+		if !stableVersionPattern.MatchString(name) {
+			return nil
+		}
+		candidate, err := semver.NewVersion(strings.TrimPrefix(name, "v"))
+		if err != nil {
+			return nil
+		}
+		if latest == nil || candidate.GreaterThan(latest) {
+			latest = candidate
+			latestTag = name
+		}
+		return nil
+	}); err != nil {
+		return "", fmt.Errorf("inspect version tags: %w", err)
+	}
+	if latestTag == "" {
+		return "", errors.New("no stable vMAJOR.MINOR.PATCH tag found; create the v0.0.0 bootstrap tag")
+	}
+	return latestTag, nil
 }
 
 func isASCIIDigits(value string) bool {

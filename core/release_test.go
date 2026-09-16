@@ -320,15 +320,17 @@ func TestStableTagAtIgnoresUnrelatedTags(t *testing.T) {
 	if _, err := repository.CreateTag("pre-squash/feature/test", hash, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repository.CreateTag("v1.2.3", hash, nil); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"v1.2.3", "v1.9.0", "v1.10.0"} {
+		if _, err := repository.CreateTag(name, hash, nil); err != nil {
+			t.Fatal(err)
+		}
 	}
 	tag, err := stableTagAt(repository, hash)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tag != "v1.2.3" {
-		t.Fatalf("stableTagAt() = %q, want v1.2.3", tag)
+	if tag != "v1.10.0" {
+		t.Fatalf("stableTagAt() = %q, want v1.10.0", tag)
 	}
 }
 
@@ -343,10 +345,15 @@ func TestReleaseSubprocessCredentialBoundaries(t *testing.T) {
 	shim := `#!/bin/sh
 set -eu
 case "$*" in
+  install)
+    [ -z "${CARGO_REGISTRY_TOKEN:-}" ]
+    [ -z "${CRATES_TOKEN:-}" ]
+    printf 'install\n' >> "$CAPTURE"
+    ;;
   exec*)
     [ -z "${CARGO_REGISTRY_TOKEN:-}" ]
     [ -z "${CRATES_TOKEN:-}" ]
-    printf 'github:%s\n' "${GITHUB_TOKEN:-}" > "$CAPTURE"
+    printf 'github:%s\n' "${GITHUB_TOKEN:-}" >> "$CAPTURE"
     printf '%s\n' "$*" >> "$CAPTURE"
     ;;
   "run publish")
@@ -370,6 +377,9 @@ esac
 	t.Setenv("CRATES_TOKEN", "raw-cargo-secret")
 
 	var output bytes.Buffer
+	if err := os.WriteFile(capture, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := runGoReleaser(t.Context(), root, ReleaseProfileGo, true, &output, &output); err != nil {
 		t.Fatal(err)
 	}
@@ -402,6 +412,32 @@ esac
 		t.Fatal("GoReleaser command omitted its temporary configuration")
 	}
 
+	cargoRoot := t.TempDir()
+	cargoManifest := NewManifest("premise-cargo")
+	cargoManifest.Templates = []Template{templateFixture("premise-rust-app", "app")}
+	if err := SaveManifest(filepath.Join(cargoRoot, ManifestFilename), cargoManifest); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(cargoRoot, "templates"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(capture, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runGoReleaser(t.Context(), cargoRoot, ReleaseProfileCargo, true, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	captured, err = os.ReadFile(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := string(captured); !strings.HasPrefix(text, "install\ngithub:github-secret\n") {
+		t.Fatalf("Cargo GoReleaser capture = %q", text)
+	}
+
+	if err := os.WriteFile(capture, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := runCargoPublish(t.Context(), root, "v1.2.3", &output, &output); err != nil {
 		t.Fatal(err)
 	}

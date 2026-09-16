@@ -9,9 +9,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 
+	"github.com/Masterminds/semver/v3"
 	git "github.com/go-git/go-git/v5"
 	gitconfig "github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -313,6 +313,14 @@ release:
 }
 
 func runGoReleaser(ctx context.Context, root string, profile ReleaseProfile, snapshot bool, stdout, stderr io.Writer) error {
+	workingDirectory := root
+	if profile == ReleaseProfileCargo {
+		workingDirectory = filepath.Join(root, "templates")
+		if err := installReleaseTools(ctx, workingDirectory, stdout, stderr); err != nil {
+			return fmt.Errorf("prepare Cargo release toolchain: %w", err)
+		}
+	}
+
 	configuration, err := GoReleaserConfig(root, profile)
 	if err != nil {
 		return fmt.Errorf("generate GoReleaser configuration: %w", err)
@@ -339,15 +347,24 @@ func runGoReleaser(ctx context.Context, root string, profile ReleaseProfile, sna
 		arguments = append(arguments, "--parallelism", "1")
 	}
 	command := exec.CommandContext(ctx, "mise", arguments...)
-	command.Dir = root
-	if profile == ReleaseProfileCargo {
-		command.Dir = filepath.Join(root, "templates")
-	}
+	command.Dir = workingDirectory
 	command.Env = environmentWithout(os.Environ(), "CARGO_REGISTRY_TOKEN", "CRATES_TOKEN")
 	command.Stdout = stdout
 	command.Stderr = stderr
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("run GoReleaser: %w", err)
+	}
+	return nil
+}
+
+func installReleaseTools(ctx context.Context, workingDirectory string, stdout, stderr io.Writer) error {
+	command := exec.CommandContext(ctx, "mise", "install")
+	command.Dir = workingDirectory
+	command.Env = environmentWithout(os.Environ(), "CARGO_REGISTRY_TOKEN", "CRATES_TOKEN")
+	command.Stdout = stdout
+	command.Stderr = stderr
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("install release tools: %w", err)
 	}
 	return nil
 }
@@ -426,7 +443,8 @@ func fetchReleaseTags(ctx context.Context, repository *git.Repository, auth tran
 }
 
 func stableTagAt(repository *git.Repository, hash plumbing.Hash) (string, error) {
-	var matches []string
+	selected := ""
+	var selectedVersion *semver.Version
 	tags, err := repository.Tags()
 	if err != nil {
 		return "", fmt.Errorf("list release tags: %w", err)
@@ -440,19 +458,23 @@ func stableTagAt(repository *git.Repository, hash plumbing.Hash) (string, error)
 		if annotated, err := repository.TagObject(target); err == nil {
 			target = annotated.Target
 		}
-		if target == hash {
-			matches = append(matches, name)
+		if target != hash {
+			return nil
+		}
+		candidate, err := semver.NewVersion(strings.TrimPrefix(name, "v"))
+		if err != nil {
+			return nil
+		}
+		if selectedVersion == nil || candidate.GreaterThan(selectedVersion) {
+			selected = name
+			selectedVersion = candidate
 		}
 		return nil
 	})
 	if err != nil {
 		return "", fmt.Errorf("inspect release tags: %w", err)
 	}
-	if len(matches) == 0 {
-		return "", nil
-	}
-	sort.Strings(matches)
-	return matches[len(matches)-1], nil
+	return selected, nil
 }
 
 func releaseAuthentication() transport.AuthMethod {
