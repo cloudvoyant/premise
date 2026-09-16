@@ -50,18 +50,18 @@ func resolveSelectorArgument(ctx context.Context, args []string) (string, error)
 	if len(args) > 0 {
 		arg = args[0]
 	}
-	classified, err := core.ClassifyGenerateArgument(arg)
+	classified, err := core.ClassifyGenerateSelector(arg)
 	if err != nil {
 		return "", err
 	}
 	switch classified.Kind {
-	case core.SelectorDefault:
+	case core.GenerateSelectorDefault:
 		return core.AskDefaultTemplate(ctx)
-	case core.SelectorOfficialName:
+	case core.GenerateSelectorOfficialName:
 		return core.ResolveOfficialTemplateName(ctx, classified.Value)
-	case core.SelectorSource:
+	case core.GenerateSelectorSource:
 		return core.AskRegistryTemplate(ctx, classified.Value)
-	case core.SelectorExplicit:
+	case core.GenerateSelectorExplicit:
 		return classified.Value, nil
 	default:
 		return "", fmt.Errorf("unhandled selector kind %d", classified.Kind)

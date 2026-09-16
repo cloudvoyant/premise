@@ -2,7 +2,7 @@
 
 ## Overview
 
-`premise` is a [`mise`](https://mise.jdx.dev/)-powered project with testing and GitHub Actions CI. Stable releases are versioned with `svu` and built by GoReleaser.
+`premise` is a [`mise`](https://mise.jdx.dev/)-powered project with testing and GitHub Actions CI. The `pm release` command owns stable versioning, tagging, and publication.
 
 ## Design
 
@@ -28,14 +28,9 @@ GCP_REGISTRY_NAME       = "your-repository-name"
 
 ### GitHub Actions For CI/CD
 
-`.github/workflows/on-commit.yml` verifies pull requests and feature-branch pushes through the root `action.yml`; a feature-branch push whose HEAD commit message contains the exact marker `[publish-rc]` also runs the opt-in RC step, which only echoes the Go skip message. `.github/workflows/on-merge.yml` validates the trunk, computes the next stable version with `pm version`, creates and pushes the `vMAJOR.MINOR.PATCH` tag when missing, and runs GoReleaser to publish the GitHub release. `.github/workflows/on-deploy.yml` exposes the deploy flow.
+`.github/workflows/on-commit.yml` verifies pull requests and feature-branch pushes through the root `action.yml`; a feature-branch push whose HEAD commit message contains the exact marker `[publish-rc]` also runs the opt-in RC step, which only echoes the Go skip message. `.github/workflows/on-merge.yml` validates the trunk and calls `pm release`. Premise then reuses or creates the stable tag and publishes the GitHub release. `.github/workflows/on-deploy.yml` exposes the deploy flow.
 
-Version calculation uses `svu`, configured by `.svu.yml` to read only stable
-SemVer tags (`vMAJOR.MINOR.PATCH`) and ignore unrelated tags such as
-`pre-squash/feature/templating`. A `v0.0.0` stable bootstrap tag must exist
-before CI runs; it is created externally, never by a task or workflow. The
-release version is applied only to GoReleaser's build; calculated versions are
-never committed to source.
+Version calculation uses the svu Go SDK through `core/version.go`. Premise owns the stable-tag policy, so repositories do not carry `.svu.yml`. A `v0.0.0` stable bootstrap tag must exist before CI runs; it is created externally, never by a task or workflow. GoReleaser configuration is also generated inside Premise and written to a temporary file only while `pm release` runs. Calculated versions and generated configuration are never committed to source.
 
 The `feature` flow detects a repository-root `premise.yaml` that declares at least
 one template and runs `pm template test` as the authoritative check, so a

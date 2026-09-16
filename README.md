@@ -49,7 +49,7 @@ mise run test
 mise run e2e
 ```
 
-Stable releases are built and published by GoReleaser from merges to `main`; see [Infrastructure](docs/infrastructure.md) for the release pipeline.
+Stable releases are planned, tagged, and published by `pm release` after merges to `main`; see [Infrastructure](docs/infrastructure.md) for the release pipeline.
 
 ## Documentation
 

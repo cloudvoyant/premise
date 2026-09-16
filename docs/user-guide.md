@@ -190,7 +190,7 @@ Templates can define additional tasks.
 
 ### Versioning
 
-Premise calculates release versions through the pinned `svu` CLI, exposed by the
+Premise calculates release versions through the svu Go SDK, exposed by the
 `pm version` command:
 
 ```bash
@@ -204,20 +204,13 @@ Each command prints exactly one version to stdout. Release-candidate identifiers
 must be valid SemVer prerelease identifiers: letters, digits, and hyphens, with
 numeric identifiers forbidding leading zeroes.
 
-Version calculation relies on a `v0.0.0` stable bootstrap tag that must exist
-before CI runs. That tag is created externally and is never produced by a task or
-workflow. `.svu.yml` restricts svu to stable SemVer tags (`vMAJOR.MINOR.PATCH`), so
-unrelated tags are ignored.
+Version calculation relies on a `v0.0.0` stable bootstrap tag that must exist before CI runs. That tag is created externally and is never produced by a task or workflow. Premise configures the SDK to read only stable SemVer tags (`vMAJOR.MINOR.PATCH`), so unrelated tags are ignored. No `.svu.yml` file or svu executable is required.
 
 ### Publishing
 
-Stable releases happen on pushes to `main`. The on-merge workflow validates the
-trunk, reuses a stable tag already present at HEAD or computes the next version
-with `pm version next`, creates and pushes the `vMAJOR.MINOR.PATCH` tag when one is
-missing, then runs `mise run publish` (GoReleaser) to build and publish the GitHub
-release archives that `install.sh` downloads. If there is no release-worthy version
-change, the workflow skips cleanly. On rerun, it reuses the tag and GoReleaser
-replaces conflicting release assets.
+Stable releases happen on pushes to `main`. The on-merge workflow validates the trunk and calls `pm release`. Premise reuses a stable tag already present at HEAD or computes, creates, and pushes the next `vMAJOR.MINOR.PATCH` tag. It generates temporary GoReleaser configuration and publishes the GitHub archives that `install.sh` downloads. If there is no release-worthy change, the command skips cleanly. Reruns reuse the tag and replace conflicting release assets. Repositories do not carry `.goreleaser.yml`.
+
+Registries that publish language packages can keep credentials in separate CI steps with `pm release prepare`, `pm release github`, and `pm release packages`. `pm release snapshot` builds the complete artifact matrix without tagging or publishing.
 
 Release-candidate publication is opt-in for Go: a feature-branch push whose HEAD
 commit message contains the exact marker `[publish-rc]` runs `mise run publish:rc`,

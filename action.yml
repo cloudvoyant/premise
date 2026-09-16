@@ -18,7 +18,8 @@ inputs:
     required: false
     default: "true"
   install-premise:
-    description: Install the premise binary and put it on PATH
+    description: >-
+      Install premise; when false, an existing pm must already be on PATH
     required: false
     default: "true"
   premise-version:
@@ -41,46 +42,6 @@ runs:
       uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
       with:
         version: ${{ inputs.mise-version }}
-
-    # A template registry (for example cloudvoyant/premise-cargo) declares
-    # templates in its repository-root premise.yaml but is not a mise monorepo
-    # root, so `//...:<task>` cannot be addressed there. Detect that once and
-    # export the result through $GITHUB_ENV, because composite-action steps do
-    # not share shell state. Later steps gate on env.IS_TEMPLATE_REGISTRY.
-    #
-    # The templates check is key-order-independent (any list item under the
-    # top-level `templates:` key). The monorepo guard keeps the premise
-    # monorepo itself on the normal lifecycle path even though it also ships
-    # templates.
-    - name: Detect template registry
-      shell: bash
-      run: |
-        set -euo pipefail
-        if [[ -f premise.yaml ]] && awk '
-          /^templates:/ { in_templates = 1; next }
-          /^[^[:space:]]/ { in_templates = 0 }
-          in_templates && /^[[:space:]]+-[[:space:]]/ { found = 1; exit }
-          END { exit found ? 0 : 1 }
-        ' premise.yaml; then
-          declares_templates=true
-        else
-          declares_templates=false
-        fi
-        if [[ -f mise.toml ]] && grep -Eq \
-            '^[[:space:]]*monorepo_root[[:space:]]*=[[:space:]]*true' \
-            mise.toml; then
-          is_monorepo=true
-        else
-          is_monorepo=false
-        fi
-        if [[ "$declares_templates" == "true" \
-          && "$is_monorepo" == "false" ]]; then
-          IS_TEMPLATE_REGISTRY=true
-        else
-          IS_TEMPLATE_REGISTRY=false
-        fi
-        echo "IS_TEMPLATE_REGISTRY=$IS_TEMPLATE_REGISTRY" >> "$GITHUB_ENV"
-        echo "Template registry detected: $IS_TEMPLATE_REGISTRY"
 
     # Tasks may shell out to `pm`, so the binary has to be on PATH before any
     # `mise run`. This repository builds the checked-out source to avoid a
@@ -113,6 +74,26 @@ runs:
         # Expose the installed premise directory to later steps so they can
         # call `pm` (and `premise`) directly.
         echo "${{ runner.temp }}/premise-bin" >> "$GITHUB_PATH"
+
+    # Premise owns registry detection. Keeping manifest and Mise interpretation
+    # in the CLI avoids duplicating that policy in the action shell. Callers
+    # that disable installation must supply pm themselves.
+    - name: Detect template registry
+      shell: bash
+      run: |
+        set -euo pipefail
+        if ! command -v pm >/dev/null 2>&1; then
+          echo "::error::install-premise=false requires pm on PATH"
+          exit 1
+        fi
+        kind="$(pm template detect)"
+        if [[ "$kind" == "template-registry" ]]; then
+          IS_TEMPLATE_REGISTRY=true
+        else
+          IS_TEMPLATE_REGISTRY=false
+        fi
+        echo "IS_TEMPLATE_REGISTRY=$IS_TEMPLATE_REGISTRY" >> "$GITHUB_ENV"
+        echo "Repository lifecycle kind: $kind"
 
     - name: Install dependencies
       if: inputs.install == 'true'

@@ -1,13 +1,8 @@
 ---
 name: On Merge
 
-# Runs after a pull request merges into main. Re-validates the merged result,
-# determines the next stable version with `pm version`, creates and pushes the
-# stable tag when one is missing, then publishes the GoReleaser GitHub release.
-#
-# Rerun safety: if HEAD already carries a stable tag it is reused, and
-# GoReleaser replaces conflicting release assets. If there is no release-worthy
-# version change, the workflow skips cleanly.
+# Premise owns stable release planning, tagging, and publication. Reruns reuse a
+# stable tag already at HEAD and replace conflicting GitHub release assets.
 "on":
   push:
     branches:
@@ -37,61 +32,7 @@ jobs:
         with:
           flow: feature
 
-      - name: Determine release version
-        id: version
-        shell: bash
-        run: |
-          set -euo pipefail
-          git fetch --force --tags origin
-          tag="$(git describe --tags --exact-match HEAD 2>/dev/null || true)"
-          skip="false"
-          reuse_tag="false"
-          version=""
-          if printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "Reusing existing stable tag at HEAD: $tag"
-            version="$tag"
-            reuse_tag="true"
-          elif ! current="$(pm version current 2>/dev/null)"; then
-            echo "::error::pm version current failed;" \
-              "ensure the v0.0.0 bootstrap tag exists"
-            exit 1
-          else
-            next="$(pm version next)"
-            if [ "$current" = "$next" ]; then
-              echo "No release-worthy change (current=$current)."
-              skip="true"
-            else
-              echo "Next version: $next"
-              version="$next"
-            fi
-          fi
-          {
-            echo "version=$version"
-            echo "reuse_tag=$reuse_tag"
-            echo "skip=$skip"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Create and push stable tag
-        if: >-
-          steps.version.outputs.skip != 'true' &&
-          steps.version.outputs.reuse_tag != 'true'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          version="${{ steps.version.outputs.version }}"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "$version"
-          remote="https://x-access-token:${GH_TOKEN}@github.com"
-          git push "${remote}/${GITHUB_REPOSITORY}.git" "$version"
-
-      - name: Publish
-        if: steps.version.outputs.skip != 'true'
-        shell: bash
+      - name: Release
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          mise run publish
+        run: pm release

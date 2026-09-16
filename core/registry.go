@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -22,6 +23,99 @@ import (
 var OfficialSources = []string{
 	NativeTemplateSource,
 	"cloudvoyant/premise-cargo",
+}
+
+var monorepoRootPattern = regexp.MustCompile(`(?m)^\s*monorepo_root\s*=\s*true(?:\s*#.*)?\s*$`)
+
+// TemplateSelection is a parsed registry template selector. Source is the
+// registry identity, local path, or URL; Name is the template name; Local
+// reports whether Source refers to a filesystem path.
+type TemplateSelection struct {
+	Source string
+	Name   string
+	Local  bool
+}
+
+// ParseTemplateSelector splits a selector into its source and template name.
+func ParseTemplateSelector(selector string) (TemplateSelection, error) {
+	separator := strings.LastIndex(selector, ":")
+	if separator < 0 || separator == len(selector)-1 {
+		return TemplateSelection{}, fmt.Errorf("template selector %q must end with :<template>", selector)
+	}
+	source := selector[:separator]
+	name := selector[separator+1:]
+	if err := ValidateTemplateName(name); err != nil {
+		return TemplateSelection{}, err
+	}
+	if source == "" {
+		source = NativeTemplateSource
+	}
+	local := source == "." || filepath.IsAbs(source) || strings.HasPrefix(source, "./") || strings.HasPrefix(source, "../")
+	return TemplateSelection{Source: source, Name: name, Local: local}, nil
+}
+
+// GenerateSelectorKind classifies a generate argument for registry resolution.
+type GenerateSelectorKind int
+
+const (
+	GenerateSelectorExplicit GenerateSelectorKind = iota
+	GenerateSelectorSource
+	GenerateSelectorOfficialName
+	GenerateSelectorDefault
+)
+
+// ClassifiedGenerateSelector carries a selector strategy and its value.
+type ClassifiedGenerateSelector struct {
+	Kind  GenerateSelectorKind
+	Value string
+}
+
+// ClassifyGenerateSelector parses one generate argument for registry dispatch.
+func ClassifyGenerateSelector(argument string) (ClassifiedGenerateSelector, error) {
+	if argument == "" {
+		return ClassifiedGenerateSelector{Kind: GenerateSelectorDefault}, nil
+	}
+	if name, ok := strings.CutPrefix(argument, ":"); ok {
+		if err := ValidateTemplateName(name); err != nil {
+			return ClassifiedGenerateSelector{}, err
+		}
+		return ClassifiedGenerateSelector{Kind: GenerateSelectorOfficialName, Value: name}, nil
+	}
+	if !strings.Contains(argument, ":") {
+		return ClassifiedGenerateSelector{Kind: GenerateSelectorSource, Value: argument}, nil
+	}
+	if _, err := ParseTemplateSelector(argument); err != nil {
+		return ClassifiedGenerateSelector{}, err
+	}
+	return ClassifiedGenerateSelector{Kind: GenerateSelectorExplicit, Value: argument}, nil
+}
+
+// RegistryKind identifies how Premise should execute a repository's lifecycle.
+type RegistryKind string
+
+const (
+	RegistryKindOther    RegistryKind = "other"
+	RegistryKindMonorepo RegistryKind = "monorepo"
+	RegistryKindTemplate RegistryKind = "template-registry"
+)
+
+// DetectRegistryKind classifies a Premise repository without invoking Mise.
+func DetectRegistryKind(root string) (RegistryKind, error) {
+	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
+	if err != nil {
+		return "", err
+	}
+	mise, err := os.ReadFile(filepath.Join(root, "mise.toml"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("read mise config: %w", err)
+	}
+	if monorepoRootPattern.Match(mise) {
+		return RegistryKindMonorepo, nil
+	}
+	if len(manifest.Templates) > 0 {
+		return RegistryKindTemplate, nil
+	}
+	return RegistryKindOther, nil
 }
 
 // Registry lists templates available from one source.

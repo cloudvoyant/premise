@@ -85,9 +85,9 @@ go mod tidy
 
 ## Publishing
 
-Stable releases are versioned with `svu` (through the `pm version` command) and built by GoReleaser. Merges to `main` run `.github/workflows/on-merge.yml`, which computes the next stable version, creates and pushes the `vMAJOR.MINOR.PATCH` tag when one is missing, and publishes the GoReleaser release. Release candidates are not applicable to Go (prerelease installs resolve through commit hashes), so `mise run publish:rc` only echoes its skip message.
+Stable releases are owned by `pm release`. Merges to `main` run `.github/workflows/on-merge.yml`, which validates the repository and calls that command. Premise uses the svu Go SDK to calculate the version, creates and pushes the missing stable tag, generates temporary GoReleaser configuration, and publishes the release. Release candidates are not applicable to Go (prerelease installs resolve through commit hashes), so `mise run publish:rc` only echoes its skip message.
 
-`pm version` exposes the svu calculations used by the release pipeline:
+`pm version` exposes the same SDK calculations used by the release pipeline:
 
 ```bash
 pm version current                  # current stable version

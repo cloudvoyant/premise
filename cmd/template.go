@@ -46,6 +46,28 @@ var templateInitCmd = &cobra.Command{
 	},
 }
 
+var templateDetectCmd = &cobra.Command{
+	Use:   "detect",
+	Short: "Print the repository lifecycle kind",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("get current directory: %w", err)
+		}
+		root, _, err := core.FindManifest(cwd)
+		if err != nil {
+			return err
+		}
+		kind, err := core.DetectRegistryKind(root)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), kind)
+		return nil
+	},
+}
+
 var templateTestCmd = &cobra.Command{
 	Use:   "test",
 	Short: "Execute every template task contract",
@@ -68,5 +90,5 @@ var templateTestCmd = &cobra.Command{
 }
 
 func init() {
-	templateCmd.AddCommand(templateInitCmd, templateTestCmd)
+	templateCmd.AddCommand(templateDetectCmd, templateInitCmd, templateTestCmd)
 }

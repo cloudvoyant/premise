@@ -73,12 +73,16 @@ func AskTemplateKind() (string, error) {
 func AskDefaultTemplate(ctx context.Context) (string, error) {
 	entries, err := DefaultRegistry(ctx)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("load default template registry: %w", err)
 	}
 	if len(entries) == 0 {
 		return "", errors.New("default template registry is empty")
 	}
-	return promptPickEntry(entries)
+	selector, err := promptPickEntry(entries)
+	if err != nil {
+		return "", fmt.Errorf("choose default template: %w", err)
+	}
+	return selector, nil
 }
 
 // AskRegistryTemplate lets a user choose a template from a single registry
@@ -87,12 +91,16 @@ func AskDefaultTemplate(ctx context.Context) (string, error) {
 func AskRegistryTemplate(ctx context.Context, source string) (string, error) {
 	entries, err := loadSourceEntries(ctx, source)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("load template registry %s: %w", source, err)
 	}
 	if len(entries) == 0 {
 		return "", fmt.Errorf("registry %s declares no templates", source)
 	}
-	return promptPickEntry(entries)
+	selector, err := promptPickEntry(entries)
+	if err != nil {
+		return "", fmt.Errorf("choose template from %s: %w", source, err)
+	}
+	return selector, nil
 }
 
 // promptPickEntry opens an interactive picker over the given entries and returns

@@ -16,10 +16,10 @@ import (
 
 const NativeTemplateSource = "cloudvoyant/premise"
 
-func ResolveTemplateSource(ctx context.Context, workspaceRoot, selector string) (string, Selection, error) {
-	selection, err := ParseSelector(selector)
+func ResolveTemplateSource(ctx context.Context, workspaceRoot, selector string) (string, TemplateSelection, error) {
+	selection, err := ParseTemplateSelector(selector)
 	if err != nil {
-		return "", Selection{}, err
+		return "", TemplateSelection{}, err
 	}
 	if selection.Local {
 		if filepath.IsAbs(selection.Source) {
@@ -27,21 +27,21 @@ func ResolveTemplateSource(ctx context.Context, workspaceRoot, selector string) 
 		}
 		path, err := filepath.Abs(filepath.Join(workspaceRoot, selection.Source))
 		if err != nil {
-			return "", Selection{}, fmt.Errorf("resolve local template source: %w", err)
+			return "", TemplateSelection{}, fmt.Errorf("resolve local template source: %w", err)
 		}
 		return path, selection, nil
 	}
 
 	root, err := resolveRepository(ctx, selection.Source)
 	if err != nil {
-		return "", Selection{}, err
+		return "", TemplateSelection{}, fmt.Errorf("resolve template registry %s: %w", selection.Source, err)
 	}
 	return root, selection, nil
 }
 
 func TemplateDirectory(sourceRoot, name string) (string, error) {
 	if err := ValidateTemplateName(name); err != nil {
-		return "", err
+		return "", fmt.Errorf("validate template directory name: %w", err)
 	}
 	root, err := filepath.Abs(sourceRoot)
 	if err != nil {
@@ -108,7 +108,7 @@ func Scaffold(request ScaffoldRequest) error {
 
 	replacer := literalReplacer(request.Replacements)
 	if err := copyTree(source, stage, replacer); err != nil {
-		return err
+		return fmt.Errorf("stage scaffold: %w", err)
 	}
 	if err := os.Rename(stage, destination); err != nil {
 		return fmt.Errorf("commit scaffold: %w", err)
@@ -120,7 +120,7 @@ func Scaffold(request ScaffoldRequest) error {
 func RenderTemplateMise(kind string) (string, error) {
 	tasks, err := ContractTasks(kind)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("resolve %s template tasks: %w", kind, err)
 	}
 	name := "premise-" + kind
 	var content strings.Builder
@@ -137,13 +137,13 @@ func InitializeTemplate(root, kind string) (string, error) {
 	manifestPath := filepath.Join(root, ManifestFilename)
 	manifest, err := LoadManifest(manifestPath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("load template manifest: %w", err)
 	}
 	if _, err := manifest.FindTemplate(kind); err == nil {
 		return "", fmt.Errorf("template %q is already declared", kind)
 	}
 	if _, err := KindDirectory(kind); err != nil {
-		return "", err
+		return "", fmt.Errorf("validate template kind: %w", err)
 	}
 
 	templatePath := filepath.Join(root, "templates", kind)
@@ -164,7 +164,7 @@ func InitializeTemplate(root, kind string) (string, error) {
 
 	mise, err := RenderTemplateMise(kind)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("render template Mise config: %w", err)
 	}
 	if err := os.WriteFile(filepath.Join(templatePath, "mise.toml"), []byte(mise), 0o644); err != nil {
 		return "", fmt.Errorf("write template mise.toml: %w", err)
@@ -181,7 +181,7 @@ func InitializeTemplate(root, kind string) (string, error) {
 		Substitutions: map[string]string{"premise-" + kind: "name"},
 	})
 	if err := SaveManifest(manifestPath, manifest); err != nil {
-		return "", err
+		return "", fmt.Errorf("save template manifest: %w", err)
 	}
 	created = false
 	return templatePath, nil
@@ -215,11 +215,14 @@ func TestTemplateContracts(ctx context.Context, root string, manifest Config, st
 			}
 		}
 	}
-	return errors.Join(failures...)
+	if err := errors.Join(failures...); err != nil {
+		return fmt.Errorf("template contract failures: %w", err)
+	}
+	return nil
 }
 
 func copyTree(source, destination string, replacer *strings.Replacer) error {
-	return filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
+	err := filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -267,6 +270,10 @@ func copyTree(source, destination string, replacer *strings.Replacer) error {
 		}
 		return nil
 	})
+	if err != nil {
+		return fmt.Errorf("copy template tree: %w", err)
+	}
+	return nil
 }
 
 func literalReplacer(replacements map[string]string) *strings.Replacer {

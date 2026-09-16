@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -283,5 +284,172 @@ func TestAskRegistryTemplateScopesToSource(t *testing.T) {
 		if !strings.HasPrefix(entry, "cloudvoyant/premise-cargo:") {
 			t.Errorf("picker leaked a non-cargo entry: %q", entry)
 		}
+	}
+}
+
+func TestParseTemplateSelector(t *testing.T) {
+	tests := []struct {
+		selector string
+		source   string
+		name     string
+		local    bool
+	}{
+		{selector: ":premise-app", source: NativeTemplateSource, name: "premise-app"},
+		{selector: ":app", source: NativeTemplateSource, name: "app"},
+		{selector: ".:lib", source: ".", name: "lib", local: true},
+		{selector: "cloudvoyant/premise-template:app", source: "cloudvoyant/premise-template", name: "app"},
+		{selector: "https://github.com/cloudvoyant/premise-template.git:lib", source: "https://github.com/cloudvoyant/premise-template.git", name: "lib"},
+	}
+	for _, test := range tests {
+		selection, err := ParseTemplateSelector(test.selector)
+		if err != nil {
+			t.Fatalf("%s: %v", test.selector, err)
+		}
+		if selection.Source != test.source || selection.Name != test.name || selection.Local != test.local {
+			t.Errorf("%s: unexpected selection %#v", test.selector, selection)
+		}
+	}
+	for _, selector := range []string{"app", ":", ":../app"} {
+		if _, err := ParseTemplateSelector(selector); err == nil {
+			t.Errorf("expected %q to be rejected", selector)
+		}
+	}
+}
+
+func TestClassifyGenerateSelector(t *testing.T) {
+	tests := []struct {
+		argument string
+		kind     GenerateSelectorKind
+		value    string
+	}{
+		{argument: "", kind: GenerateSelectorDefault},
+		{argument: ":premise-rust-lib", kind: GenerateSelectorOfficialName, value: "premise-rust-lib"},
+		{argument: "cloudvoyant/premise-cargo", kind: GenerateSelectorSource, value: "cloudvoyant/premise-cargo"},
+		{argument: "cloudvoyant/premise:premise-app", kind: GenerateSelectorExplicit, value: "cloudvoyant/premise:premise-app"},
+		{argument: ".:app", kind: GenerateSelectorExplicit, value: ".:app"},
+		{argument: "../templates:lib", kind: GenerateSelectorExplicit, value: "../templates:lib"},
+		{argument: "https://github.com/cloudvoyant/premise-template.git:app", kind: GenerateSelectorExplicit, value: "https://github.com/cloudvoyant/premise-template.git:app"},
+	}
+	for _, test := range tests {
+		classified, err := ClassifyGenerateSelector(test.argument)
+		if err != nil {
+			t.Fatalf("ClassifyGenerateSelector(%q): %v", test.argument, err)
+		}
+		if classified.Kind != test.kind || classified.Value != test.value {
+			t.Errorf("ClassifyGenerateSelector(%q) = %#v, want kind %v value %q", test.argument, classified, test.kind, test.value)
+		}
+	}
+
+	for _, test := range []struct{ selector, want string }{
+		{selector: ":", want: "invalid template name"},
+		{selector: ":bad name", want: "invalid template name"},
+		{selector: "cloudvoyant/premise:", want: "must end with :<template>"},
+		{selector: "cloudvoyant/premise:bad name", want: "invalid template name"},
+	} {
+		_, err := ClassifyGenerateSelector(test.selector)
+		if err == nil || !strings.Contains(err.Error(), test.want) {
+			t.Fatalf("ClassifyGenerateSelector(%q) error = %v, want containing %q", test.selector, err, test.want)
+		}
+	}
+}
+
+func TestRegistryResolutionRecordsQualifiedProvenance(t *testing.T) {
+	goRegistry := writeRegistryFixture(t, templateFixture("premise-app", "app"))
+	cargoRegistry := writeRegistryFixture(t, templateFixture("premise-rust-lib", "lib"))
+	defer overrideResolveRepository(map[string]string{
+		"cloudvoyant/premise":       goRegistry,
+		"cloudvoyant/premise-cargo": cargoRegistry,
+	})()
+
+	tests := []struct {
+		name    string
+		resolve func(*testing.T, context.Context) string
+	}{
+		{
+			name: "bare name across official registries",
+			resolve: func(t *testing.T, ctx context.Context) string {
+				selector, err := ResolveOfficialTemplateName(ctx, "premise-rust-lib")
+				if err != nil {
+					t.Fatal(err)
+				}
+				return selector
+			},
+		},
+		{
+			name: "source-only scoped picker",
+			resolve: func(t *testing.T, ctx context.Context) string {
+				original := promptPickEntry
+				promptPickEntry = func(entries []RegistryEntry) (string, error) {
+					if len(entries) != 1 {
+						t.Fatalf("scoped picker received %d entries, want 1", len(entries))
+					}
+					return entries[0].Selector(), nil
+				}
+				defer func() { promptPickEntry = original }()
+				selector, err := AskRegistryTemplate(ctx, "cloudvoyant/premise-cargo")
+				if err != nil {
+					t.Fatal(err)
+				}
+				return selector
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			selector := test.resolve(t, context.Background())
+			workspace := filepath.Join(t.TempDir(), "workspace")
+			if _, err := InitializeWorkspace(workspace, "[tasks.build]\nrun = 'echo ok'\n"); err != nil {
+				t.Fatal(err)
+			}
+			if err := Generate(context.Background(), workspace, selector, fixedQuestionnaire{"name": "orders"}, io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			manifest, err := LoadManifest(filepath.Join(workspace, ManifestFilename))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if project := manifest.Workspace.Projects[0]; project.Template != selector {
+				t.Fatalf("recorded template = %q, want %q", project.Template, selector)
+			}
+		})
+	}
+}
+
+func TestDetectRegistryKind(t *testing.T) {
+	write := func(t *testing.T, templates []Template, mise string) string {
+		t.Helper()
+		root := t.TempDir()
+		manifest := NewManifest("fixture")
+		manifest.Templates = templates
+		if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
+			t.Fatal(err)
+		}
+		if mise != "" {
+			if err := os.WriteFile(filepath.Join(root, "mise.toml"), []byte(mise), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return root
+	}
+
+	for _, test := range []struct {
+		name string
+		root string
+		want RegistryKind
+	}{
+		{name: "template registry", root: write(t, []Template{templateFixture("app", "app")}, ""), want: RegistryKindTemplate},
+		{name: "monorepo", root: write(t, []Template{templateFixture("app", "app")}, "monorepo_root = true\n"), want: RegistryKindMonorepo},
+		{name: "ordinary project", root: write(t, nil, ""), want: RegistryKindOther},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := DetectRegistryKind(test.root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != test.want {
+				t.Fatalf("DetectRegistryKind() = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
