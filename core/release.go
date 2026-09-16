@@ -461,7 +461,7 @@ func stableTagAt(repository *git.Repository, hash plumbing.Hash) (string, error)
 		if target != hash {
 			return nil
 		}
-		candidate, err := semver.NewVersion(strings.TrimPrefix(name, "v"))
+		candidate, err := semver.StrictNewVersion(strings.TrimPrefix(name, "v"))
 		if err != nil {
 			return nil
 		}

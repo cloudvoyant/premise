@@ -68,6 +68,7 @@ func TestRepositoryVersionsUseSvuSDK(t *testing.T) {
 	runGit("tag", "pre-squash/feature/test")
 	runGit("tag", "v9.9.9-rc.1")
 	runGit("tag", "v8.8.8+build")
+	runGit("tag", "v01.99.99")
 
 	assertVersion := func(name, want string, calculate func(string) (string, error)) {
 		t.Helper()

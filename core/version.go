@@ -153,7 +153,7 @@ func latestStableVersionTag(root string) (string, error) {
 		if !stableVersionPattern.MatchString(name) {
 			return nil
 		}
-		candidate, err := semver.NewVersion(strings.TrimPrefix(name, "v"))
+		candidate, err := semver.StrictNewVersion(strings.TrimPrefix(name, "v"))
 		if err != nil {
 			return nil
 		}

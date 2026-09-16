@@ -320,7 +320,7 @@ func TestStableTagAtIgnoresUnrelatedTags(t *testing.T) {
 	if _, err := repository.CreateTag("pre-squash/feature/test", hash, nil); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"v1.2.3", "v1.9.0", "v1.10.0"} {
+	for _, name := range []string{"v1.2.3", "v1.9.0", "v1.10.0", "v01.99.99"} {
 		if _, err := repository.CreateTag(name, hash, nil); err != nil {
 			t.Fatal(err)
 		}
