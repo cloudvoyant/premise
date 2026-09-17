@@ -1,7 +1,6 @@
 package core
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	misecmd "github.com/cloudvoyant/premise/internal/mise"
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 )
@@ -63,9 +63,13 @@ func RunCIFlow(ctx context.Context, root string, flow CIFlow, environment string
 		return err
 	}
 	runner := &commandCIRunner{
-		stdout:  stdout,
-		stderr:  stderr,
-		ceiling: filepath.Dir(filepath.Clean(root)),
+		stdout: stdout,
+		stderr: stderr,
+		mise: misecmd.Runner{
+			Stdout:  stdout,
+			Stderr:  stderr,
+			Ceiling: filepath.Dir(filepath.Clean(root)),
+		},
 	}
 	return runCIFlow(ctx, filepath.Clean(root), flow, target, releaseMode, runner)
 }
@@ -78,25 +82,17 @@ type ciRunner interface {
 }
 
 type commandCIRunner struct {
-	stdout  io.Writer
-	stderr  io.Writer
-	ceiling string
+	stdout io.Writer
+	stderr io.Writer
+	mise   misecmd.Runner
 }
 
 func (runner *commandCIRunner) TaskExists(ctx context.Context, directory, task string) (bool, error) {
-	var commandError bytes.Buffer
-	command := exec.CommandContext(ctx, "mise", "task", "info", task, "--json")
-	command.Dir = directory
-	command.Env = ciCommandEnvironment(runner.ceiling, nil)
-	command.Stdout = io.Discard
-	command.Stderr = &commandError
-	if err := command.Run(); err != nil {
-		if strings.Contains(commandError.String(), "Task not found") {
-			return false, nil
-		}
-		return false, fmt.Errorf("inspect mise task %s: %w: %s", task, err, strings.TrimSpace(commandError.String()))
+	exists, err := runner.mise.TaskExists(ctx, directory, task)
+	if err != nil {
+		return false, fmt.Errorf("inspect mise task %s: %w", task, err)
 	}
-	return true, nil
+	return exists, nil
 }
 
 func (runner *commandCIRunner) ShouldPublishRC(_ context.Context, root string) (bool, error) {
@@ -151,21 +147,22 @@ func (runner *commandCIRunner) ReleaseStable(ctx context.Context, root string, m
 }
 
 func (runner *commandCIRunner) Run(ctx context.Context, directory string, environment []string, name string, arguments ...string) error {
-	var command *exec.Cmd
-	switch name {
-	case "mise":
-		command = exec.CommandContext(ctx, "mise", arguments...)
-	case "pm":
-		command = exec.CommandContext(ctx, "pm", arguments...)
-	default:
+	if name == "mise" {
+		if err := runner.mise.Run(ctx, directory, environment, arguments...); err != nil {
+			return fmt.Errorf("run mise %s: %w", strings.Join(arguments, " "), err)
+		}
+		return nil
+	}
+	if name != "pm" {
 		return fmt.Errorf("unsupported CI command %q", name)
 	}
+	command := exec.CommandContext(ctx, "pm", arguments...)
 	command.Dir = directory
-	command.Env = ciCommandEnvironment(runner.ceiling, environment)
+	command.Env = runner.mise.Environment(environment)
 	command.Stdout = runner.stdout
 	command.Stderr = runner.stderr
 	if err := command.Run(); err != nil {
-		return fmt.Errorf("run %s %s: %w", name, strings.Join(arguments, " "), err)
+		return fmt.Errorf("run pm %s: %w", strings.Join(arguments, " "), err)
 	}
 	return nil
 }
@@ -305,7 +302,7 @@ func runCIReleasePhase(ctx context.Context, root string, flow CIFlow, releaseMod
 		if err != nil {
 			return fmt.Errorf("inspect publish:rc task: %w", err)
 		}
-		environment, err := rcPublishEnvironment(root)
+		environment, err := releaseCandidateEnvironment(root)
 		if err != nil {
 			return err
 		}
@@ -335,25 +332,6 @@ func runCIReleasePhase(ctx context.Context, root string, flow CIFlow, releaseMod
 	default:
 		return fmt.Errorf("unsupported CI flow %q", flow)
 	}
-}
-
-func rcPublishEnvironment(root string) ([]string, error) {
-	cargo, err := isRegularFile(filepath.Join(root, "templates", "Cargo.toml"))
-	if err != nil {
-		return nil, fmt.Errorf("inspect Cargo RC convention: %w", err)
-	}
-	if !cargo {
-		return nil, nil
-	}
-	identifier := os.Getenv("GITHUB_RUN_NUMBER")
-	if err := ValidateRCIdentifier(identifier); err != nil {
-		return nil, fmt.Errorf("resolve Cargo RC identifier: %w", err)
-	}
-	version, err := ReleaseCandidateVersion(root, identifier)
-	if err != nil {
-		return nil, err
-	}
-	return []string{"RELEASE_VERSION=" + strings.TrimPrefix(version, "v")}, nil
 }
 
 func runCIMiseTask(ctx context.Context, runner ciRunner, directory, selector string, task ciTask) error {
@@ -392,19 +370,6 @@ func ciTasks(flow CIFlow, target string) []ciTask {
 	default:
 		return nil
 	}
-}
-
-func ciCommandEnvironment(ceiling string, additions []string) []string {
-	names := []string{"MISE_CEILING_PATHS"}
-	for _, addition := range additions {
-		name, _, ok := strings.Cut(addition, "=")
-		if ok {
-			names = append(names, name)
-		}
-	}
-	environment := environmentWithout(os.Environ(), names...)
-	environment = append(environment, "MISE_CEILING_PATHS="+ceiling)
-	return append(environment, additions...)
 }
 
 func ciTarget(flow CIFlow, environment string) (string, error) {

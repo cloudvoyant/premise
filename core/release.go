@@ -6,12 +6,13 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
+	cargocmd "github.com/cloudvoyant/premise/internal/cargo"
+	misecmd "github.com/cloudvoyant/premise/internal/mise"
 	git "github.com/go-git/go-git/v5"
 	gitconfig "github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -52,7 +53,7 @@ func DetectReleaseProfile(root string) (ReleaseProfile, error) {
 	if goModule {
 		return ReleaseProfileGo, nil
 	}
-	cargoWorkspace, err := isRegularFile(filepath.Join(root, "templates", "Cargo.toml"))
+	cargoWorkspace, err := cargocmd.IsRegistry(root)
 	if err != nil {
 		return "", fmt.Errorf("inspect Cargo release convention: %w", err)
 	}
@@ -60,6 +61,25 @@ func DetectReleaseProfile(root string) (ReleaseProfile, error) {
 		return ReleaseProfileCargo, nil
 	}
 	return "", fmt.Errorf("unsupported release repository: expected go.mod or templates/Cargo.toml at %s", root)
+}
+
+func releaseCandidateEnvironment(root string) ([]string, error) {
+	cargoRegistry, err := cargocmd.IsRegistry(root)
+	if err != nil {
+		return nil, fmt.Errorf("inspect Cargo RC convention: %w", err)
+	}
+	if !cargoRegistry {
+		return nil, nil
+	}
+	identifier := os.Getenv("GITHUB_RUN_NUMBER")
+	if err := ValidateRCIdentifier(identifier); err != nil {
+		return nil, fmt.Errorf("resolve Cargo RC identifier: %w", err)
+	}
+	version, err := ReleaseCandidateVersion(root, identifier)
+	if err != nil {
+		return nil, err
+	}
+	return []string{"RELEASE_VERSION=" + strings.TrimPrefix(version, "v")}, nil
 }
 
 // PlanStableRelease fetches stable tags and decides whether HEAD should reuse a
@@ -346,42 +366,31 @@ func runGoReleaser(ctx context.Context, root string, profile ReleaseProfile, sna
 	if profile == ReleaseProfileCargo {
 		arguments = append(arguments, "--parallelism", "1")
 	}
-	command := exec.CommandContext(ctx, "mise", arguments...)
-	command.Dir = workingDirectory
-	command.Env = environmentWithout(os.Environ(), "CARGO_REGISTRY_TOKEN", "CRATES_TOKEN")
-	command.Stdout = stdout
-	command.Stderr = stderr
-	if err := command.Run(); err != nil {
+	mise := misecmd.Runner{
+		Stdout:            stdout,
+		Stderr:            stderr,
+		RemoveEnvironment: []string{"CARGO_REGISTRY_TOKEN", "CRATES_TOKEN"},
+	}
+	if err := mise.Run(ctx, workingDirectory, nil, arguments...); err != nil {
 		return fmt.Errorf("run GoReleaser: %w", err)
 	}
 	return nil
 }
 
 func installReleaseTools(ctx context.Context, workingDirectory string, stdout, stderr io.Writer) error {
-	command := exec.CommandContext(ctx, "mise", "install")
-	command.Dir = workingDirectory
-	command.Env = environmentWithout(os.Environ(), "CARGO_REGISTRY_TOKEN", "CRATES_TOKEN")
-	command.Stdout = stdout
-	command.Stderr = stderr
-	if err := command.Run(); err != nil {
+	mise := misecmd.Runner{
+		Stdout:            stdout,
+		Stderr:            stderr,
+		RemoveEnvironment: []string{"CARGO_REGISTRY_TOKEN", "CRATES_TOKEN"},
+	}
+	if err := mise.Run(ctx, workingDirectory, nil, "install"); err != nil {
 		return fmt.Errorf("install release tools: %w", err)
 	}
 	return nil
 }
 
 func runCargoPublish(ctx context.Context, root, version string, stdout, stderr io.Writer) error {
-	command := exec.CommandContext(ctx, "mise", "run", "publish")
-	command.Dir = root
-	command.Env = append(
-		environmentWithout(os.Environ(), "GITHUB_TOKEN", "GH_TOKEN", "CRATES_TOKEN"),
-		"RELEASE_VERSION="+version,
-	)
-	command.Stdout = stdout
-	command.Stderr = stderr
-	if err := command.Run(); err != nil {
-		return fmt.Errorf("publish Cargo packages: %w", err)
-	}
-	return nil
+	return cargocmd.Publish(ctx, root, version, stdout, stderr)
 }
 
 func createAndPushReleaseTag(ctx context.Context, root, version string, auth transport.AuthMethod) (resultErr error) {
@@ -486,24 +495,6 @@ func releaseAuthentication() transport.AuthMethod {
 		return nil
 	}
 	return &githttp.BasicAuth{Username: "x-access-token", Password: token}
-}
-
-func environmentWithout(environment []string, names ...string) []string {
-	removed := make(map[string]struct{}, len(names))
-	for _, name := range names {
-		removed[name] = struct{}{}
-	}
-	filtered := make([]string, 0, len(environment))
-	for _, entry := range environment {
-		name := entry
-		if separator := strings.IndexByte(entry, '='); separator >= 0 {
-			name = entry[:separator]
-		}
-		if _, ok := removed[name]; !ok {
-			filtered = append(filtered, entry)
-		}
-	}
-	return filtered
 }
 
 func isRegularFile(path string) (bool, error) {

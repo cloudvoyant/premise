@@ -21,7 +21,9 @@ When mise is active, it prepends the repository's `bin/` directory to `PATH`. Af
 ```
 main.go               # CLI entry point (package main)
 cmd/                   # Cobra command tree
-core/                  # Public library surface
+core/                  # Public library surface and CI/release policy
+internal/mise/         # Sole Mise executable boundary
+internal/cargo/        # Cargo registry detection and publication boundary
 go.mod                # Module manifest
 mise.toml             # Task runner and tool versions
 action.yml            # Published composite action (root — use a v0 tag while premise is in alpha)

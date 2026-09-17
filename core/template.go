@@ -7,11 +7,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	misecmd "github.com/cloudvoyant/premise/internal/mise"
 )
 
 const NativeTemplateSource = "cloudvoyant/premise"
@@ -211,27 +212,18 @@ func TestTemplateContracts(ctx context.Context, root string, manifest Config, st
 			continue
 		}
 		fmt.Fprintf(stdout, "[%s] mise install\n", template.Name)
-		testEnvironment := environmentWithout(os.Environ(), "MISE_CEILING_PATHS", "PREMISE_TEMPLATE_TEST")
-		testEnvironment = append(testEnvironment,
-			"MISE_CEILING_PATHS="+filepath.Dir(filepath.Clean(root)),
-			"PREMISE_TEMPLATE_TEST=1",
-		)
-		install := exec.CommandContext(ctx, "mise", "install")
-		install.Dir = directory
-		install.Env = testEnvironment
-		install.Stdout = stdout
-		install.Stderr = stderr
-		if err := install.Run(); err != nil {
+		mise := misecmd.Runner{
+			Stdout:  stdout,
+			Stderr:  stderr,
+			Ceiling: filepath.Dir(filepath.Clean(root)),
+		}
+		testEnvironment := []string{"PREMISE_TEMPLATE_TEST=1"}
+		if err := mise.Run(ctx, directory, testEnvironment, "install"); err != nil {
 			failures = append(failures, fmt.Errorf("template %s tool install failed: %w", template.Name, err))
 		}
 		for _, task := range tasks {
 			fmt.Fprintf(stdout, "[%s] mise run %s\n", template.Name, task)
-			command := exec.CommandContext(ctx, "mise", "run", task)
-			command.Dir = directory
-			command.Env = testEnvironment
-			command.Stdout = stdout
-			command.Stderr = stderr
-			if err := command.Run(); err != nil {
+			if err := mise.Run(ctx, directory, testEnvironment, "run", task); err != nil {
 				failures = append(failures, fmt.Errorf("template %s task %s failed: %w", template.Name, task, err))
 			}
 		}

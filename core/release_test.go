@@ -449,11 +449,3 @@ esac
 		t.Fatalf("Cargo capture = %q, want %q", got, want)
 	}
 }
-
-func TestEnvironmentWithoutSecrets(t *testing.T) {
-	environment := []string{"PATH=/bin", "GITHUB_TOKEN=github", "CARGO_REGISTRY_TOKEN=cargo", "VALUE=a=b"}
-	filtered := environmentWithout(environment, "GITHUB_TOKEN", "CARGO_REGISTRY_TOKEN")
-	if got := strings.Join(filtered, "\n"); got != "PATH=/bin\nVALUE=a=b" {
-		t.Fatalf("environmentWithout() = %q", got)
-	}
-}
