@@ -1,28 +1,36 @@
 ---
 name: On Merge
 
-# Runs after a pull request merges into main. Re-validates the merged result on
-# the trunk. Release-candidate publishing will attach here once versioning
-# lands (issue #2).
+# Premise owns stable release planning, tagging, and publication. Reruns reuse a
+# stable tag already at HEAD and replace conflicting GitHub release assets.
 "on":
   push:
     branches:
       - main
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: stable-release
+  cancel-in-progress: false
 
 jobs:
-  verify:
-    name: Test, lint, and check formatting
+  release:
+    name: Validate and publish
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
         with:
+          fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
 
-      - name: Publish
+      - name: Run on-merge flow
         uses: ./
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         with:
-          flow: feature
+          flow: on-merge
+          install-premise: build

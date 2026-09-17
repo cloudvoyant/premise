@@ -26,7 +26,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Test, lint, format-check & publish rc
+      - name: Run on-commit flow
         uses: ./
         with:
-          flow: feature
+          flow: on-commit
+          install-premise: build

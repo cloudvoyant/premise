@@ -68,24 +68,57 @@ func AskTemplateKind() (string, error) {
 	return kind, nil
 }
 
-// AskDefaultTemplate lets a user choose a template from the default registry.
+// AskDefaultTemplate lets a user choose a template from the default registry
+// and returns the selected entry's fully qualified selector.
 func AskDefaultTemplate(ctx context.Context) (string, error) {
-	registry, err := DefaultRegistry(ctx)
+	entries, err := DefaultRegistry(ctx)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("load default template registry: %w", err)
 	}
-	names := registry.Names()
-	if len(names) == 0 {
+	if len(entries) == 0 {
 		return "", errors.New("default template registry is empty")
 	}
-	var name string
-	err = huh.NewSelect[string]().
+	selector, err := promptPickEntry(entries)
+	if err != nil {
+		return "", fmt.Errorf("choose default template: %w", err)
+	}
+	return selector, nil
+}
+
+// AskRegistryTemplate lets a user choose a template from a single registry
+// source. It loads that one registry and opens a picker scoped to its
+// templates, returning the selected entry's fully qualified selector.
+func AskRegistryTemplate(ctx context.Context, source string) (string, error) {
+	entries, err := loadSourceEntries(ctx, source)
+	if err != nil {
+		return "", fmt.Errorf("load template registry %s: %w", source, err)
+	}
+	if len(entries) == 0 {
+		return "", fmt.Errorf("registry %s declares no templates", source)
+	}
+	selector, err := promptPickEntry(entries)
+	if err != nil {
+		return "", fmt.Errorf("choose template from %s: %w", source, err)
+	}
+	return selector, nil
+}
+
+// promptPickEntry opens an interactive picker over the given entries and returns
+// the selected entry's selector. It is a package variable so tests can
+// substitute a deterministic selection.
+var promptPickEntry = func(entries []RegistryEntry) (string, error) {
+	options := make([]huh.Option[string], len(entries))
+	for index, entry := range entries {
+		options[index] = huh.NewOption(entry.Label, entry.Selector())
+	}
+	var selector string
+	err := huh.NewSelect[string]().
 		Title("Template:").
-		Options(huh.NewOptions(names...)...).
-		Value(&name).
+		Options(options...).
+		Value(&selector).
 		Run()
 	if err != nil {
 		return "", fmt.Errorf("choose template: %w", err)
 	}
-	return ":" + name, nil
+	return selector, nil
 }

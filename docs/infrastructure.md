@@ -2,7 +2,7 @@
 
 ## Overview
 
-`premise` is a [`mise`](https://mise.jdx.dev/)-powered project with testing and GitHub Actions CI. Release automation is tracked in [issue #2](https://github.com/cloudvoyant/premise/issues/2).
+`premise` is a [`mise`](https://mise.jdx.dev/)-powered project with testing and GitHub Actions CI. The `pm release` command owns stable versioning, tagging, and publication.
 
 ## Design
 
@@ -28,7 +28,13 @@ GCP_REGISTRY_NAME       = "your-repository-name"
 
 ### GitHub Actions For CI/CD
 
-`.github/workflows/on-commit.yml` verifies pull requests and feature-branch pushes through the root `action.yml`. `.github/workflows/on-deploy.yml` exposes the deploy flow. The incomplete semantic-release workflow was removed; issue #2 tracks its svu and GoReleaser replacement.
+`.github/workflows/on-commit.yml` verifies pull requests and feature-branch pushes through the root `action.yml`; for a feature-branch push whose HEAD commit contains `[publish-rc]`, the `on-commit` flow also invokes the opt-in RC task. For Go, that task only prints the standard skip message. `.github/workflows/on-merge.yml` delegates the complete trunk lifecycle to the `on-merge` flow, which invokes the stable release phase after validation. `.github/workflows/on-deploy.yml` exposes the deploy flow.
+
+Version calculation uses the svu Go SDK through `core/version.go`. Premise owns the stable-tag policy, so repositories do not carry `.svu.yml`. A `v0.0.0` stable bootstrap tag must exist before CI runs; it is created externally, never by a task or workflow. GoReleaser configuration is also generated inside Premise and written to a temporary file only while `pm release` runs. Calculated versions and generated configuration are never committed to source.
+
+The action delegates lifecycle and publication policy to `pm ci flow`. The supported flows are `on-commit`, `on-merge`, and `on-release`. A matching root Mise task replaces the fallback lifecycle, but the flow still owns its guarded publication phase. Otherwise, Premise runs monorepo lifecycle tasks or enters each declared template in a template registry. A Premise root cannot be both a monorepo and a template registry.
+
+The action accepts one `install-premise` mode. `pre-built` uses `install.sh`, `build` compiles the checked-out action source, and `skip` requires an existing `pm` on `PATH`. Real RC and stable publication remain in separate credential-bearing workflow steps.
 
 ### CI/CD Secrets
 

@@ -2,8 +2,6 @@
 # mise.toml - premise development environment and tasks
 # =============================================================================
 
-monorepo_root = true
-
 [env]
 _.path = ['{{config_root}}/bin', '{{config_root}}/node_modules/.bin']
 PROJECT = "premise"
@@ -19,7 +17,14 @@ watchexec = "latest"
 
 [tasks.build]
 description = "Build the premise CLI"
-sources = ["main.go", "cmd/**/*.go", "core/**/*.go", "templates/**/*.toml", "go.mod", "go.sum"]
+sources = [
+  "main.go",
+  "cmd/**/*.go",
+  "core/**/*.go",
+  "templates/**/*.toml",
+  "go.mod",
+  "go.sum",
+]
 run = '''
 go build ./...
 mkdir -p bin
@@ -78,6 +83,10 @@ go vet ./...
 shellcheck install.sh
 '''
 
+[tasks."publish:rc"]
+description = "Opt-in RC publication for Go (no-op; Go supports prerelease installs through commit hashes)"
+run = 'echo "Skipping RC publish: Go supports prerelease installs through commit hashes."'
+
 [tasks."lint:fix"]
 description = "Apply safe formatting fixes, then run static analysis"
 run = '''
@@ -87,5 +96,22 @@ go vet ./...
 shellcheck install.sh
 '''
 
-[monorepo]
-config_roots = ["apps/*", "libs/*"]
+[tasks."on-commit"]
+description = "Validate Premise and its native template registry"
+run = '''
+pm install
+mise run build
+mise run test
+mise run format:check
+mise run lint
+mise run e2e
+pm template test
+'''
+
+[tasks."on-merge"]
+description = "Validate Premise before stable publication"
+run = "mise run on-commit"
+
+[tasks."on-release"]
+description = "Report that Premise has no deployment target"
+run = 'echo "No Premise deployment target — nothing to do."'

@@ -157,7 +157,7 @@ workspace:
     tools: mise                      # future devbox
     tasks: mise                      # future tasks.dev, justfiles
     infra: pulumi                    # future opentofu
-    versioning: svu                  # packaged with GoReleaser automation
+    versioning: svu                  # accessed through the Premise SDK adapter
 
   projects:
     - name: my-tanstack-app
@@ -184,7 +184,7 @@ Premise init command would also generate github actions dir which would utilize 
 
 If used templates do not have db tasks or infra is absent, then those just get skipped. These workflows will trigger as implied by the workflow names.
 
-Version prediction and tagging will use svu, while GoReleaser will build and publish release artifacts. There will be repo wide grouped versioning, but some templates may additionally provide sub package level versioning. For example golang requires packageName/MAJOR.MINOR.PATCH tags for imports (unless I'm mistaken).
+Version prediction uses the svu Go SDK through Premise, while Premise generates temporary GoReleaser configuration for release artifacts. There will be repo wide grouped versioning, but some templates may additionally provide sub package level versioning. For example golang requires packageName/MAJOR.MINOR.PATCH tags for imports (unless I'm mistaken).
 
 There's intended to be some decoupling between infra and template code. An application or service can often be deployed in multiple ways (containers, functions, servers, k8s clusters, etc.). So an app only needs to be concerned with building, testing, linting, etc. The only real point of contact with infra is 1) e2e testing in deployed environments and 2) fetching any secrets needed to connect to remote resources. Consequently, we can say that infra as a whole can be owned by a premise repo instead of individual templates. We can simply expect all infra to live in the infra dir for now, tho it may make more sense for components to live at the top level and for app specific infra to be colocated... Needs some thought, and its own future ADR.
 

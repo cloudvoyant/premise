@@ -113,4 +113,4 @@ Follow the documentation style guide:
 
 ## Release Process
 
-Release automation is being replaced with svu and GoReleaser in [issue #2](https://github.com/cloudvoyant/premise/issues/2). Do not create a release until that workflow is complete.
+Merges to `main` run the stable release workflow. Do not create or push release tags manually; `pm release` calculates the version, creates the tag, and publishes the configured artifacts.

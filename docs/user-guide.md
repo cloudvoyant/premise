@@ -11,33 +11,30 @@ premise creates applications and libraries from live templates and records where
 
 ## Getting Started
 
-Initialize a workspace and its two conventional template kinds:
+Initialize a monorepo and generate a project from an official registry:
 
 ```bash
 pm init
+pm generate :premise-app
+```
+
+Initialize a separate template registry when you author templates:
+
+```bash
+pm init --kind template-registry
 pm template init app
 pm template init lib
+pm template ls
 pm template test
 ```
 
-Generate from the current workspace:
-
-```bash
-pm generate .:app
-pm generate .:lib
-```
-
-The short command is equivalent:
-
-```bash
-pm g :premise-app
-```
+A Premise root is either a monorepo or a template registry. It cannot be both.
 
 ## Usage
 
 ### Initialize a workspace
 
-Run `pm init` at the repository root. The command creates `premise.yaml`, a root `mise.toml`, `apps/`, and `libs/`. The root mise configuration discovers app and library projects and layers their tools and environment. If `mise.toml` already exists, Premise preserves it. The command refuses to replace an existing manifest. Generation commands return `Not a premise project` until initialization is complete.
+Run `pm init` at the repository root. The default `monorepo` kind creates `premise.yaml`, a root `mise.toml`, `apps/`, and `libs/`. The root Mise configuration discovers app and library projects and layers their tools and environment. Use `pm init --kind template-registry` to create a registry manifest and `templates/` directory without monorepo conventions. Premise preserves existing files and refuses to replace an existing manifest.
 
 Use `pm install` or `pm i` to install mise tools declared by the workspace and its generated projects. It does not install package-manager dependencies yet. Run project lifecycle tasks directly through mise's monorepo pattern:
 
@@ -46,16 +43,19 @@ mise run --jobs 1 '//...:build'
 mise run --jobs 1 '//...:test'
 ```
 
-### Initialize a template
+### Initialize and list templates
+
+Run these commands in a project initialized with `--kind template-registry`:
 
 ```bash
 pm template init app
 pm template init lib
+pm template ls
 ```
 
-Each command creates `templates/<kind>/mise.toml` and adds a matching template declaration to `premise.yaml`. Omit the kind to select it interactively.
+Each init command creates `templates/<kind>/mise.toml` and adds a matching declaration to `premise.yaml`. Omit the kind to select it interactively. `pm template ls` prints declared template names in stable alphabetical order. Premise rejects template initialization in a monorepo.
 
-The initial mise tasks echo their contract names. Replace each echo with the real implementation while keeping the task name stable.
+The initial Mise tasks echo their contract names. Replace each echo with the real implementation while keeping the task name stable.
 
 ### Test templates
 
@@ -63,16 +63,26 @@ The initial mise tasks echo their contract names. Replace each echo with the rea
 pm template test
 ```
 
-Premise enters each declared template directory and executes every required task through mise. It continues after failures and returns one combined error containing every missing or failing contract.
+Premise enters each declared template directory, installs its Mise tools, and executes every required task. It continues after failures and returns one combined error containing every missing or failing contract.
 
-### Generate from this workspace
+### Run CI flows
 
 ```bash
-pm generate .:app
-pm generate .:lib
+pm ci flow on-commit
+pm ci flow on-merge
+pm ci flow on-release --environment stage
 ```
 
-Premise asks the questions declared by the selected template and creates `apps/<name>` or `libs/<name>` according to its `kind`. It then records the project, template selector, version, path, and answers under `workspace.projects`.
+A root `on-commit`, `on-merge`, or `on-release` Mise task overrides the fallback lifecycle. The `pm ci flow` command still owns publication after that lifecycle. Template registries run fallback lifecycle tasks inside each template. App-only deploy and end-to-end tasks do not run for libraries. `on-commit` invokes `publish:rc` only for a non-main branch push whose HEAD contains `[publish-rc]`; pull requests never run it. `on-merge` invokes the stable release phase after validation.
+
+### Generate from a local registry
+
+```bash
+pm generate ../my-registry:app
+pm generate ../my-registry:lib
+```
+
+Premise asks the selected template's questions and creates `apps/<name>` or `libs/<name>` according to its kind. It records the project, source-qualified template selector, path, answers, and declared template version under `workspace.projects`.
 
 ### Choose from the default registry
 
@@ -80,15 +90,23 @@ Premise asks the questions declared by the selected template and creates `apps/<
 pm generate
 ```
 
-When the selector is omitted, Premise loads the official `cloudvoyant/premise` registry and lists `premise-app` and `premise-lib` in an interactive picker. Choosing an entry is equivalent to passing its native `:<template>` selector.
+When the selector is omitted, Premise loads every official registry — `cloudvoyant/premise` and `cloudvoyant/premise-cargo` — and lists their templates in one interactive picker: `premise-app` and `premise-lib` (Go), plus `premise-rust-lib`, `premise-rust-app`, `premise-clap-cli`, and `premise-ratatui-app` (Cargo). Choosing an entry records its fully qualified `<owner>/<repo>:<template>` selector, so a picked Cargo template resolves to `cloudvoyant/premise-cargo:<template>` and never collides with a same-named Go template.
 
-### Generate a native template
+### Generate from one registry
 
 ```bash
-pm generate :premise-app
+pm generate cloudvoyant/premise-cargo
 ```
 
-The leading colon expands to the official repository, so `:premise-app` is equivalent to `cloudvoyant/premise:premise-app`. The source manifest must declare the selected template name; shorthand expansion does not create a missing template.
+Passing an `<owner>/<repo>` with no `:<template>` loads that one registry and opens a picker scoped to its templates, returning the selected entry's fully qualified selector. This is the same picker as `pm generate` with no argument, narrowed to a single source.
+
+### Generate a bare template name
+
+```bash
+pm generate :premise-rust-lib
+```
+
+The leading-colon shorthand names a template without a source. Premise resolves it against every official registry and generates the single match, so `:premise-rust-lib` resolves to the Cargo registry even though it is not the first official source. If the name matches no official registry, or matches more than one, Premise reports the ambiguity and asks you to qualify the source. A bare name is never searched across unofficial registries; reach those with a fully qualified `<owner>/<repo>:<template>` selector.
 
 ### Generate from a remote repository
 
@@ -103,6 +121,7 @@ The remote repository must contain `premise.yaml` and `templates/<template>` for
 ```yaml
 workspace:
   name: example
+  kind: monorepo
   schema-version: "0.1"
   providers:
     ci: github
@@ -149,13 +168,14 @@ projects:
       name: orders
 ```
 
-`version` is the selected template declaration's version at generation time. If project registration or manifest saving fails after copying, Premise removes the newly created destination so output and provenance do not diverge.
+`version` records the selected template declaration's version at generation time when the registry provides one; registries with repository-level versioning can omit it. If project registration or manifest saving fails after copying, Premise removes the newly created destination so output and provenance do not diverge.
 
 ### Task contracts
 
 Applications and libraries must provide these tasks:
 
 ```text
+install
 build
 clean
 test
@@ -179,10 +199,40 @@ e2e
 
 Templates can define additional tasks.
 
+### Versioning
+
+Premise calculates release versions through the svu Go SDK, exposed by the
+`pm version` command:
+
+```bash
+pm version current                  # current stable version (e.g. v0.1.0)
+pm version next                     # next version from git history
+pm version bump patch|minor|major   # explicit patch/minor/major bump
+pm version rc --identifier <id>     # MAJOR.MINOR.PATCH-rc.<id>
+```
+
+Each command prints exactly one version to stdout. Release-candidate identifiers
+must be valid SemVer prerelease identifiers: letters, digits, and hyphens, with
+numeric identifiers forbidding leading zeroes.
+
+Version calculation relies on a `v0.0.0` stable bootstrap tag that must exist before CI runs. That tag is created externally and is never produced by a task or workflow. Premise configures the SDK to read only stable SemVer tags (`vMAJOR.MINOR.PATCH`), so unrelated tags are ignored. No `.svu.yml` file or svu executable is required.
+
+### Publishing
+
+Stable releases happen on pushes to `main`. The workflow calls `pm ci flow on-merge`, which validates the trunk and then invokes the stable release phase. Premise reuses a stable tag already present at HEAD or computes, creates, and pushes the next `vMAJOR.MINOR.PATCH` tag. It generates temporary GoReleaser configuration and publishes the GitHub archives that `install.sh` downloads. If there is no release-worthy change, the command skips cleanly. Reruns reuse the tag and replace conflicting release assets. Repositories do not carry `.goreleaser.yml`.
+
+Registries that publish language packages can keep credentials in separate CI steps with `pm release prepare`, `pm release github`, and `pm release packages`. `pm release snapshot` builds the complete artifact matrix without tagging or publishing.
+
+Release-candidate publication is opt-in for Go: a feature-branch push whose HEAD
+commit message contains the exact marker `[publish-rc]` runs `mise run publish:rc`,
+which succeeds and prints only `Skipping RC publish: Go supports prerelease
+installs through commit hashes.` Go needs no prerelease artifact because installs
+resolve through commit hashes, so no RC tag or release is ever created.
+
 ### Current limitations
 
 - Template source paths are fixed by template name, and generated roots are fixed by app/lib kind.
 - Substitution changes UTF-8 file contents but not file or directory names.
 - Remote templates use the repository's default branch.
-- Private-repository authentication, concurrent cache locking, and offline mode are not available yet.
+- Private-repository authentication, concurrent cache locking, and offline mode are not available yet. Credential delegation for private registry sources is deferred to DIFF-150; go-git performs clones today.
 - Premise refuses to merge into or replace an existing destination.

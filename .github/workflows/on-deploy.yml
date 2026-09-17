@@ -9,7 +9,7 @@ name: On Deploy
       environment:
         description: Target environment
         required: false
-        default: staging
+        default: stage
 
 permissions:
   contents: read
@@ -24,8 +24,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Deploy
+      - name: Run on-release flow
         uses: ./
         with:
-          flow: deploy
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          flow: on-release
+          environment: ${{ inputs.environment }}
+          install-premise: build

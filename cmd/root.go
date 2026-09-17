@@ -11,9 +11,9 @@ var workspaceMiseTemplate string
 
 var rootCmd = &cobra.Command{
 	Use:   "pm",
-	Short: "Opinionated monorepo lifecycle toolkit built on mise",
-	Long: `premise scaffolds monorepo projects from templates, keeps descendant
-projects converged on those templates, and wires mise tasks into CI.`,
+	Short: "Convention-driven project lifecycle toolkit built on Mise",
+	Long: `premise scaffolds monorepo projects from template registries, keeps
+projects converged on their templates, and runs lifecycle tasks in CI.`,
 	SilenceUsage: true,
 }
 
@@ -26,5 +26,5 @@ func Execute(miseTemplate string) {
 }
 
 func init() {
-	rootCmd.AddCommand(initCmd, installCmd, generateCmd, templateCmd)
+	rootCmd.AddCommand(ciCmd, initCmd, installCmd, generateCmd, templateCmd)
 }

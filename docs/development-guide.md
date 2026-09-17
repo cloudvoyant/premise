@@ -21,7 +21,12 @@ When mise is active, it prepends the repository's `bin/` directory to `PATH`. Af
 ```
 main.go               # CLI entry point (package main)
 cmd/                   # Cobra command tree
-core/                  # Public library surface
+core/                  # Public library surface, split into responsibility-focused modules
+core/misex.go          # Mise command extension and sole executable boundary
+core/cargox.go         # Cargo command extension and coordinated publication boundary
+core/ci.go             # Lifecycle selection and release-phase gating
+core/release.go        # Stable/RC release preparation and publication
+core/version.go        # Semantic version calculation and validation
 go.mod                # Module manifest
 mise.toml             # Task runner and tool versions
 action.yml            # Published composite action (root — use a v0 tag while premise is in alpha)
@@ -51,8 +56,19 @@ go get github.com/cloudvoyant/premise@vX.Y.Z
 # CI action (published from this repo's root action.yml)
 - uses: cloudvoyant/premise@v0
   with:
-    flow: feature
+    flow: on-commit
 ```
+
+The action only sets up Mise, installs Premise, and calls `pm ci flow`. Set `install-premise` to `pre-built` to install a release, `build` to build the checked-out action source, or `skip` when `pm` is already on `PATH`.
+
+```yaml
+- uses: cloudvoyant/premise@<revision>
+  with:
+    flow: on-commit
+    install-premise: build
+```
+
+Premise supports `on-commit`, `on-merge`, and `on-release` flows. A root Mise task with the same name overrides the convention-based fallback lifecycle. The flow command still owns guarded RC or stable publication after that lifecycle. Without an override, Premise detects either a monorepo or a template registry and runs the matching lifecycle. A root cannot be both kinds.
 
 ## Adding Dependencies
 
@@ -63,4 +79,15 @@ go mod tidy
 
 ## Publishing
 
-Release automation is intentionally disabled while [issue #2](https://github.com/cloudvoyant/premise/issues/2) replaces the inherited semantic-release path with svu, a `pm version` command, and GoReleaser.
+Stable releases are owned by the release phase of `pm ci flow on-merge`, which delegates to the `pm release` implementation after validation. Merges to `main` run `.github/workflows/on-merge.yml`, which invokes that complete flow. Premise uses the svu Go SDK to calculate the version, creates and pushes the missing stable tag, generates temporary GoReleaser configuration, and publishes the release. Release candidates are not applicable to Go (prerelease installs resolve through commit hashes), so `mise run publish:rc` only echoes its skip message.
+
+`pm version` exposes the same SDK calculations used by the release pipeline:
+
+```bash
+pm version current                  # current stable version
+pm version next                     # next version from git history
+pm version bump patch|minor|major   # explicit bump
+pm version rc --identifier <id>     # MAJOR.MINOR.PATCH-rc.<id>
+```
+
+A `v0.0.0` stable bootstrap tag must exist before CI runs; it is created externally and is not produced by any task or workflow.
