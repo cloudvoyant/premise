@@ -29,10 +29,6 @@ inputs:
     description: "Premise release tag for pre-built mode (defaults to latest)"
     required: false
     default: ""
-  cargo-token:
-    description: "Cargo registry token forwarded only to the CI launch step"
-    required: false
-    default: ""
 
 runs:
   using: composite
@@ -96,13 +92,8 @@ runs:
         FLOW: ${{ inputs.flow }}
         DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
         RELEASE_MODE: ${{ inputs.release }}
-        CARGO_TOKEN_INPUT: ${{ inputs.cargo-token }}
       run: |
         set -euo pipefail
-        if [[ -n "$CARGO_TOKEN_INPUT" ]]; then
-          export CARGO_REGISTRY_TOKEN="$CARGO_TOKEN_INPUT"
-        fi
-        unset CARGO_TOKEN_INPUT
         args=(ci flow "$FLOW" --release "$RELEASE_MODE")
         if [[ -n "$DEPLOY_ENVIRONMENT" ]]; then
           args+=(--environment "$DEPLOY_ENVIRONMENT")

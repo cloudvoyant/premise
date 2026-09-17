@@ -117,7 +117,7 @@ esac
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("CAPTURE", capture)
-	t.Setenv("CARGO_REGISTRY_TOKEN", "cargo-secret")
+	t.Setenv("CRATES_TOKEN", "cargo-secret")
 	var output bytes.Buffer
 	err := publishCargoPackages(t.Context(), root, "v1.2.3", "publish", &output, &output)
 	if err == nil || !strings.Contains(err.Error(), `does not match declared template "z-second"`) {
@@ -192,6 +192,7 @@ case "$*" in
     [ -z "${GITHUB_TOKEN:-}" ]
     [ -z "${CARGO_REGISTRY_TOKEN:-}" ]
     [ -z "${CARGO_TOKEN:-}" ]
+    [ -z "${CRATES_TOKEN:-}" ]
     printf 'generated lock\n' > Cargo.lock
     ;;
   "run publish")
@@ -211,9 +212,8 @@ esac
 	t.Setenv("CAPTURE", capture)
 	t.Setenv("GITHUB_TOKEN", "github-secret")
 	t.Setenv("GH_TOKEN", "gh-secret")
-	t.Setenv("CARGO_REGISTRY_TOKEN", "cargo-secret")
 	t.Setenv("CARGO_TOKEN", "raw-cargo-secret")
-	t.Setenv("CRATES_TOKEN", "legacy-raw-cargo-secret")
+	t.Setenv("CRATES_TOKEN", "cargo-secret")
 	var output bytes.Buffer
 	if err := publishCargoPackages(t.Context(), root, "v1.2.3", "publish", &output, &output); err != nil {
 		t.Fatal(err)

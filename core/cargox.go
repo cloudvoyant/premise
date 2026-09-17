@@ -111,9 +111,9 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 		return fmt.Errorf("regenerate Cargo lockfile: %w", err)
 	}
 
-	token := os.Getenv("CARGO_REGISTRY_TOKEN")
+	token := os.Getenv("CRATES_TOKEN")
 	if token == "" {
-		return errors.New("CARGO_REGISTRY_TOKEN is required for Cargo publication")
+		return errors.New("CRATES_TOKEN is required for Cargo publication")
 	}
 	client := &http.Client{Timeout: 30 * time.Second}
 	preflight := NewMiseRunner(nil, stderr, "")
@@ -170,7 +170,11 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 			continue
 		}
 		fmt.Fprintf(stdout, "%s: %s %s\n", task, publication.name, version)
-		if err := publisher.Run(ctx, publication.directory, []string{"RELEASE_VERSION=" + version}, "run", task); err != nil {
+		environment := []string{
+			"RELEASE_VERSION=" + version,
+			"CARGO_REGISTRY_TOKEN=" + token,
+		}
+		if err := publisher.Run(ctx, publication.directory, environment, "run", task); err != nil {
 			return fmt.Errorf("publish Cargo package %s: %w", publication.name, err)
 		}
 	}
