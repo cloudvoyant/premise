@@ -111,9 +111,34 @@ func TestCLIWorkspaceAndTemplateLifecycle(t *testing.T) {
 		t.Fatalf("expected overwrite refusal, got %v\n%s", err, output)
 	}
 
-	runCLI(t, binary, workspace, "template", "init", "app")
-	runCLI(t, binary, workspace, "template", "init", "lib")
-	runCLI(t, binary, workspace, "template", "test")
+	command = exec.Command(binary, "template", "init", "app")
+	command.Dir = workspace
+	if output, err := command.CombinedOutput(); err == nil || !strings.Contains(string(output), "cannot add registry templates to a monorepo project") {
+		t.Fatalf("expected hybrid-project refusal, got %v\n%s", err, output)
+	}
+	command = exec.Command(binary, "template", "ls")
+	command.Dir = workspace
+	if output, err := command.CombinedOutput(); err == nil || !strings.Contains(string(output), "template ls requires a template registry") {
+		t.Fatalf("expected template-registry requirement, got %v\n%s", err, output)
+	}
+
+	registryRoot := filepath.Join(t.TempDir(), "registry")
+	if err := os.MkdirAll(registryRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runCLI(t, binary, registryRoot, "init", "--kind", "template-registry")
+	runCLI(t, binary, registryRoot, "template", "init", "app")
+	runCLI(t, binary, registryRoot, "template", "init", "lib")
+	command = exec.Command(binary, "template", "ls")
+	command.Dir = registryRoot
+	output, err = command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("list registry templates: %v\n%s", err, output)
+	}
+	if got, want := string(output), "app\nlib\n"; got != want {
+		t.Fatalf("template ls output = %q, want %q", got, want)
+	}
+	runCLI(t, binary, registryRoot, "template", "test")
 }
 
 func repositoryRoot(t *testing.T) string {

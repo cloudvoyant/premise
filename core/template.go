@@ -134,6 +134,13 @@ func RenderTemplateMise(kind string) (string, error) {
 }
 
 func InitializeTemplate(root, kind string) (string, error) {
+	monorepo, err := hasMonorepoRoot(root)
+	if err != nil {
+		return "", fmt.Errorf("detect project kind: %w", err)
+	}
+	if monorepo {
+		return "", errors.New("cannot add registry templates to a monorepo project")
+	}
 	manifestPath := filepath.Join(root, ManifestFilename)
 	manifest, err := LoadManifest(manifestPath)
 	if err != nil {
@@ -203,11 +210,25 @@ func TestTemplateContracts(ctx context.Context, root string, manifest Config, st
 			failures = append(failures, fmt.Errorf("template %s: %w", template.Name, err))
 			continue
 		}
+		fmt.Fprintf(stdout, "[%s] mise install\n", template.Name)
+		testEnvironment := environmentWithout(os.Environ(), "MISE_CEILING_PATHS", "PREMISE_TEMPLATE_TEST")
+		testEnvironment = append(testEnvironment,
+			"MISE_CEILING_PATHS="+filepath.Dir(filepath.Clean(root)),
+			"PREMISE_TEMPLATE_TEST=1",
+		)
+		install := exec.CommandContext(ctx, "mise", "install")
+		install.Dir = directory
+		install.Env = testEnvironment
+		install.Stdout = stdout
+		install.Stderr = stderr
+		if err := install.Run(); err != nil {
+			failures = append(failures, fmt.Errorf("template %s tool install failed: %w", template.Name, err))
+		}
 		for _, task := range tasks {
 			fmt.Fprintf(stdout, "[%s] mise run %s\n", template.Name, task)
 			command := exec.CommandContext(ctx, "mise", "run", task)
 			command.Dir = directory
-			command.Env = append(os.Environ(), "PREMISE_TEMPLATE_TEST=1")
+			command.Env = testEnvironment
 			command.Stdout = stdout
 			command.Stderr = stderr
 			if err := command.Run(); err != nil {

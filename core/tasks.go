@@ -1,6 +1,7 @@
 package core
 
 var commonTasks = []string{
+	"install",
 	"build",
 	"clean",
 	"test",

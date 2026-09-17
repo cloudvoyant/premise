@@ -51,30 +51,19 @@ go get github.com/cloudvoyant/premise@vX.Y.Z
 # CI action (published from this repo's root action.yml)
 - uses: cloudvoyant/premise@v0
   with:
-    flow: feature
+    flow: on-commit
 ```
 
-A consumer that needs an unreleased Premise (for example a template registry
-being bootstrapped before a release exists) can build the action from its
-checked-out source instead of installing a published release:
+The action only sets up Mise, installs Premise, and calls `pm ci flow`. Set `install-premise` to `pre-built` to install a release, `build` to build the checked-out action source, or `skip` when `pm` is already on `PATH`.
 
 ```yaml
 - uses: cloudvoyant/premise@<revision>
   with:
-    flow: feature
-    build-premise-from-source: "true"
+    flow: on-commit
+    install-premise: build
 ```
 
-When `build-premise-from-source` is `true` the action builds `github.action_path`
-and exposes both `premise` and its `pm` alias on `PATH` for any calling
-repository. The build resolves Go through Mise from the action's own
-`mise.toml` (`mise exec -- go build`), which auto-installs the pinned Go
-version, so a consumer repository does not need Go on its own toolchain. It
-defaults to `false`, which keeps the `install.sh` release bootstrap for ordinary
-consumers. In the `feature` flow the action also
-detects a repository-root `premise.yaml` that declares at least one template and
-runs `pm template test` as the authoritative registry check; repositories without
-declared templates keep only the root lifecycle checks.
+Premise supports `on-commit`, `on-merge`, and `on-release` flows. A root Mise task with the same name overrides the convention-based fallback lifecycle. The flow command still owns guarded RC or stable publication after that lifecycle. Without an override, Premise detects either a monorepo or a template registry and runs the matching lifecycle. A root cannot be both kinds.
 
 ## Adding Dependencies
 
@@ -85,7 +74,7 @@ go mod tidy
 
 ## Publishing
 
-Stable releases are owned by `pm release`. Merges to `main` run `.github/workflows/on-merge.yml`, which validates the repository and calls that command. Premise uses the svu Go SDK to calculate the version, creates and pushes the missing stable tag, generates temporary GoReleaser configuration, and publishes the release. Release candidates are not applicable to Go (prerelease installs resolve through commit hashes), so `mise run publish:rc` only echoes its skip message.
+Stable releases are owned by the release phase of `pm ci flow on-merge`, which delegates to the `pm release` implementation after validation. Merges to `main` run `.github/workflows/on-merge.yml`, which invokes that complete flow. Premise uses the svu Go SDK to calculate the version, creates and pushes the missing stable tag, generates temporary GoReleaser configuration, and publishes the release. Release candidates are not applicable to Go (prerelease installs resolve through commit hashes), so `mise run publish:rc` only echoes its skip message.
 
 `pm version` exposes the same SDK calculations used by the release pipeline:
 

@@ -28,17 +28,13 @@ GCP_REGISTRY_NAME       = "your-repository-name"
 
 ### GitHub Actions For CI/CD
 
-`.github/workflows/on-commit.yml` verifies pull requests and feature-branch pushes through the root `action.yml`; a feature-branch push whose HEAD commit message contains the exact marker `[publish-rc]` also runs the opt-in RC step, which only echoes the Go skip message. `.github/workflows/on-merge.yml` validates the trunk and calls `pm release`. Premise then reuses or creates the stable tag and publishes the GitHub release. `.github/workflows/on-deploy.yml` exposes the deploy flow.
+`.github/workflows/on-commit.yml` verifies pull requests and feature-branch pushes through the root `action.yml`; for a feature-branch push whose HEAD commit contains `[publish-rc]`, the `on-commit` flow also invokes the opt-in RC task. For Go, that task only prints the standard skip message. `.github/workflows/on-merge.yml` delegates the complete trunk lifecycle to the `on-merge` flow, which invokes the stable release phase after validation. `.github/workflows/on-deploy.yml` exposes the deploy flow.
 
 Version calculation uses the svu Go SDK through `core/version.go`. Premise owns the stable-tag policy, so repositories do not carry `.svu.yml`. A `v0.0.0` stable bootstrap tag must exist before CI runs; it is created externally, never by a task or workflow. GoReleaser configuration is also generated inside Premise and written to a temporary file only while `pm release` runs. Calculated versions and generated configuration are never committed to source.
 
-The `feature` flow detects a repository-root `premise.yaml` that declares at least
-one template and runs `pm template test` as the authoritative check, so a
-template-registry repository (for example `cloudvoyant/premise-cargo`) fails CI
-when any declared template contract breaks. The action can also build Premise
-from the checked-out action source via the `build-premise-from-source` input,
-which is used by registries that predate a published release; ordinary consumers
-keep the `install.sh` release bootstrap.
+The action delegates lifecycle and publication policy to `pm ci flow`. The supported flows are `on-commit`, `on-merge`, and `on-release`. A matching root Mise task replaces the fallback lifecycle, but the flow still owns its guarded publication phase. Otherwise, Premise runs monorepo lifecycle tasks or enters each declared template in a template registry. A Premise root cannot be both a monorepo and a template registry.
+
+The action accepts one `install-premise` mode. `pre-built` uses `install.sh`, `build` compiles the checked-out action source, and `skip` requires an existing `pm` on `PATH`. Real RC and stable publication remain in separate credential-bearing workflow steps.
 
 ### CI/CD Secrets
 

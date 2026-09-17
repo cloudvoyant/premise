@@ -11,33 +11,30 @@ premise creates applications and libraries from live templates and records where
 
 ## Getting Started
 
-Initialize a workspace and its two conventional template kinds:
+Initialize a monorepo and generate a project from an official registry:
 
 ```bash
 pm init
+pm generate :premise-app
+```
+
+Initialize a separate template registry when you author templates:
+
+```bash
+pm init --kind template-registry
 pm template init app
 pm template init lib
+pm template ls
 pm template test
 ```
 
-Generate from the current workspace:
-
-```bash
-pm generate .:app
-pm generate .:lib
-```
-
-The short command is equivalent:
-
-```bash
-pm g :premise-app
-```
+A Premise root is either a monorepo or a template registry. It cannot be both.
 
 ## Usage
 
 ### Initialize a workspace
 
-Run `pm init` at the repository root. The command creates `premise.yaml`, a root `mise.toml`, `apps/`, and `libs/`. The root mise configuration discovers app and library projects and layers their tools and environment. If `mise.toml` already exists, Premise preserves it. The command refuses to replace an existing manifest. Generation commands return `Not a premise project` until initialization is complete.
+Run `pm init` at the repository root. The default `monorepo` kind creates `premise.yaml`, a root `mise.toml`, `apps/`, and `libs/`. The root Mise configuration discovers app and library projects and layers their tools and environment. Use `pm init --kind template-registry` to create a registry manifest and `templates/` directory without monorepo conventions. Premise preserves existing files and refuses to replace an existing manifest.
 
 Use `pm install` or `pm i` to install mise tools declared by the workspace and its generated projects. It does not install package-manager dependencies yet. Run project lifecycle tasks directly through mise's monorepo pattern:
 
@@ -46,16 +43,19 @@ mise run --jobs 1 '//...:build'
 mise run --jobs 1 '//...:test'
 ```
 
-### Initialize a template
+### Initialize and list templates
+
+Run these commands in a project initialized with `--kind template-registry`:
 
 ```bash
 pm template init app
 pm template init lib
+pm template ls
 ```
 
-Each command creates `templates/<kind>/mise.toml` and adds a matching template declaration to `premise.yaml`. Omit the kind to select it interactively.
+Each init command creates `templates/<kind>/mise.toml` and adds a matching declaration to `premise.yaml`. Omit the kind to select it interactively. `pm template ls` prints declared template names in stable alphabetical order. Premise rejects template initialization in a monorepo.
 
-The initial mise tasks echo their contract names. Replace each echo with the real implementation while keeping the task name stable.
+The initial Mise tasks echo their contract names. Replace each echo with the real implementation while keeping the task name stable.
 
 ### Test templates
 
@@ -63,16 +63,26 @@ The initial mise tasks echo their contract names. Replace each echo with the rea
 pm template test
 ```
 
-Premise enters each declared template directory and executes every required task through mise. It continues after failures and returns one combined error containing every missing or failing contract.
+Premise enters each declared template directory, installs its Mise tools, and executes every required task. It continues after failures and returns one combined error containing every missing or failing contract.
 
-### Generate from this workspace
+### Run CI flows
 
 ```bash
-pm generate .:app
-pm generate .:lib
+pm ci flow on-commit
+pm ci flow on-merge
+pm ci flow on-release --environment stage
 ```
 
-Premise asks the questions declared by the selected template and creates `apps/<name>` or `libs/<name>` according to its `kind`. It then records the project, template selector, path, answers, and the template version when one is declared under `workspace.projects`.
+A root `on-commit`, `on-merge`, or `on-release` Mise task overrides the fallback lifecycle. The `pm ci flow` command still owns publication after that lifecycle. Template registries run fallback lifecycle tasks inside each template. App-only deploy and end-to-end tasks do not run for libraries. `on-commit` invokes `publish:rc` only for a non-main branch push whose HEAD contains `[publish-rc]`; pull requests never run it. `on-merge` invokes the stable release phase after validation.
+
+### Generate from a local registry
+
+```bash
+pm generate ../my-registry:app
+pm generate ../my-registry:lib
+```
+
+Premise asks the selected template's questions and creates `apps/<name>` or `libs/<name>` according to its kind. It records the project, source-qualified template selector, path, answers, and declared template version under `workspace.projects`.
 
 ### Choose from the default registry
 
@@ -111,6 +121,7 @@ The remote repository must contain `premise.yaml` and `templates/<template>` for
 ```yaml
 workspace:
   name: example
+  kind: monorepo
   schema-version: "0.1"
   providers:
     ci: github
@@ -164,6 +175,7 @@ projects:
 Applications and libraries must provide these tasks:
 
 ```text
+install
 build
 clean
 test
@@ -208,7 +220,7 @@ Version calculation relies on a `v0.0.0` stable bootstrap tag that must exist be
 
 ### Publishing
 
-Stable releases happen on pushes to `main`. The on-merge workflow validates the trunk and calls `pm release`. Premise reuses a stable tag already present at HEAD or computes, creates, and pushes the next `vMAJOR.MINOR.PATCH` tag. It generates temporary GoReleaser configuration and publishes the GitHub archives that `install.sh` downloads. If there is no release-worthy change, the command skips cleanly. Reruns reuse the tag and replace conflicting release assets. Repositories do not carry `.goreleaser.yml`.
+Stable releases happen on pushes to `main`. The workflow calls `pm ci flow on-merge`, which validates the trunk and then invokes the stable release phase. Premise reuses a stable tag already present at HEAD or computes, creates, and pushes the next `vMAJOR.MINOR.PATCH` tag. It generates temporary GoReleaser configuration and publishes the GitHub archives that `install.sh` downloads. If there is no release-worthy change, the command skips cleanly. Reruns reuse the tag and replace conflicting release assets. Repositories do not carry `.goreleaser.yml`.
 
 Registries that publish language packages can keep credentials in separate CI steps with `pm release prepare`, `pm release github`, and `pm release packages`. `pm release snapshot` builds the complete artifact matrix without tagging or publishing.
 

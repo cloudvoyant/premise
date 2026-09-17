@@ -2,8 +2,6 @@
 # mise.toml - premise development environment and tasks
 # =============================================================================
 
-monorepo_root = true
-
 [env]
 _.path = ['{{config_root}}/bin', '{{config_root}}/node_modules/.bin']
 PROJECT = "premise"
@@ -98,5 +96,22 @@ go vet ./...
 shellcheck install.sh
 '''
 
-[monorepo]
-config_roots = ["apps/*", "libs/*"]
+[tasks."on-commit"]
+description = "Validate Premise and its native template registry"
+run = '''
+pm install
+mise run build
+mise run test
+mise run format:check
+mise run lint
+mise run e2e
+pm template test
+'''
+
+[tasks."on-merge"]
+description = "Validate Premise before stable publication"
+run = "mise run on-commit"
+
+[tasks."on-release"]
+description = "Report that Premise has no deployment target"
+run = 'echo "No Premise deployment target — nothing to do."'

@@ -8,11 +8,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 
 	git "github.com/go-git/go-git/v5"
+	"github.com/pelletier/go-toml/v2"
 )
 
 // OfficialSources is the ordered, centralized list of official Premise template
@@ -24,8 +24,6 @@ var OfficialSources = []string{
 	NativeTemplateSource,
 	"cloudvoyant/premise-cargo",
 }
-
-var monorepoRootPattern = regexp.MustCompile(`(?m)^\s*monorepo_root\s*=\s*true(?:\s*#.*)?\s*$`)
 
 // TemplateSelection is a parsed registry template selector. Source is the
 // registry identity, local path, or URL; Name is the template name; Local
@@ -90,32 +88,69 @@ func ClassifyGenerateSelector(argument string) (ClassifiedGenerateSelector, erro
 	return ClassifiedGenerateSelector{Kind: GenerateSelectorExplicit, Value: argument}, nil
 }
 
-// RegistryKind identifies how Premise should execute a repository's lifecycle.
-type RegistryKind string
+// ProjectKind identifies the one lifecycle model owned by a Premise root.
+type ProjectKind string
 
 const (
-	RegistryKindOther    RegistryKind = "other"
-	RegistryKindMonorepo RegistryKind = "monorepo"
-	RegistryKindTemplate RegistryKind = "template-registry"
+	ProjectKindMonorepo         ProjectKind = "monorepo"
+	ProjectKindTemplateRegistry ProjectKind = "template-registry"
 )
 
-// DetectRegistryKind classifies a Premise repository without invoking Mise.
-func DetectRegistryKind(root string) (RegistryKind, error) {
+// DetectProjectKind classifies a Premise root without invoking Mise. A root
+// cannot be both a monorepo and a template registry because those lifecycle
+// models require different CI behavior.
+func DetectProjectKind(root string) (ProjectKind, error) {
 	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
 	if err != nil {
 		return "", err
 	}
+	hasMonorepo, err := hasMonorepoRoot(root)
+	if err != nil {
+		return "", err
+	}
+	hasTemplates := len(manifest.Templates) > 0
+	switch manifest.Workspace.Kind {
+	case ProjectKindMonorepo:
+		if !hasMonorepo {
+			return "", errors.New("monorepo project requires top-level monorepo_root = true in mise.toml")
+		}
+		return ProjectKindMonorepo, nil
+	case ProjectKindTemplateRegistry:
+		if hasMonorepo {
+			return "", errors.New("premise project cannot be both a monorepo and a template registry")
+		}
+		return ProjectKindTemplateRegistry, nil
+	case "":
+		switch {
+		case hasMonorepo && hasTemplates:
+			return "", errors.New("premise project cannot be both a monorepo and a template registry")
+		case hasMonorepo:
+			return ProjectKindMonorepo, nil
+		case hasTemplates:
+			return ProjectKindTemplateRegistry, nil
+		default:
+			return "", errors.New("premise project must be either a monorepo or a template registry")
+		}
+	default:
+		return "", fmt.Errorf("unsupported project kind %q", manifest.Workspace.Kind)
+	}
+}
+
+func hasMonorepoRoot(root string) (bool, error) {
 	mise, err := os.ReadFile(filepath.Join(root, "mise.toml"))
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("read mise config: %w", err)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
 	}
-	if monorepoRootPattern.Match(mise) {
-		return RegistryKindMonorepo, nil
+	if err != nil {
+		return false, fmt.Errorf("read mise config: %w", err)
 	}
-	if len(manifest.Templates) > 0 {
-		return RegistryKindTemplate, nil
+	var config struct {
+		MonorepoRoot bool `toml:"monorepo_root"`
 	}
-	return RegistryKindOther, nil
+	if err := toml.Unmarshal(mise, &config); err != nil {
+		return false, fmt.Errorf("parse mise config: %w", err)
+	}
+	return config.MonorepoRoot, nil
 }
 
 // Registry lists templates available from one source.

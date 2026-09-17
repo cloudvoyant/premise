@@ -416,11 +416,12 @@ func TestRegistryResolutionRecordsQualifiedProvenance(t *testing.T) {
 	}
 }
 
-func TestDetectRegistryKind(t *testing.T) {
-	write := func(t *testing.T, templates []Template, mise string) string {
+func TestDetectProjectKind(t *testing.T) {
+	write := func(t *testing.T, kind ProjectKind, templates []Template, mise string) string {
 		t.Helper()
 		root := t.TempDir()
 		manifest := NewManifest("fixture")
+		manifest.Workspace.Kind = kind
 		manifest.Templates = templates
 		if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
 			t.Fatal(err)
@@ -434,21 +435,32 @@ func TestDetectRegistryKind(t *testing.T) {
 	}
 
 	for _, test := range []struct {
-		name string
-		root string
-		want RegistryKind
+		name    string
+		root    string
+		want    ProjectKind
+		wantErr string
 	}{
-		{name: "template registry", root: write(t, []Template{templateFixture("app", "app")}, ""), want: RegistryKindTemplate},
-		{name: "monorepo", root: write(t, []Template{templateFixture("app", "app")}, "monorepo_root = true\n"), want: RegistryKindMonorepo},
-		{name: "ordinary project", root: write(t, nil, ""), want: RegistryKindOther},
+		{name: "inferred template registry", root: write(t, "", []Template{templateFixture("app", "app")}, ""), want: ProjectKindTemplateRegistry},
+		{name: "declared empty template registry", root: write(t, ProjectKindTemplateRegistry, nil, ""), want: ProjectKindTemplateRegistry},
+		{name: "declared monorepo", root: write(t, ProjectKindMonorepo, nil, "monorepo_root = true\n"), want: ProjectKindMonorepo},
+		{name: "declared monorepo missing marker", root: write(t, ProjectKindMonorepo, nil, "[tools]\nnode = 'lts'\n"), wantErr: "requires top-level"},
+		{name: "hybrid", root: write(t, "", []Template{templateFixture("app", "app")}, "monorepo_root = true\n"), wantErr: "cannot be both"},
+		{name: "nested marker is not monorepo", root: write(t, "", nil, "[env]\nmonorepo_root = true\n"), wantErr: "must be either"},
+		{name: "unclassified", root: write(t, "", nil, ""), wantErr: "must be either"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := DetectRegistryKind(test.root)
+			got, err := DetectProjectKind(test.root)
+			if test.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+					t.Fatalf("DetectProjectKind() error = %v, want %q", err, test.wantErr)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
 			if got != test.want {
-				t.Fatalf("DetectRegistryKind() = %q, want %q", got, test.want)
+				t.Fatalf("DetectProjectKind() = %q, want %q", got, test.want)
 			}
 		})
 	}

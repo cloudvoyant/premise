@@ -30,10 +30,11 @@ type Config struct {
 }
 
 type Workspace struct {
-	Name          string    `yaml:"name"`
-	SchemaVersion string    `yaml:"schema-version"`
-	Providers     Providers `yaml:"providers"`
-	Projects      []Project `yaml:"projects"`
+	Name          string      `yaml:"name"`
+	Kind          ProjectKind `yaml:"kind,omitempty"`
+	SchemaVersion string      `yaml:"schema-version"`
+	Providers     Providers   `yaml:"providers"`
+	Projects      []Project   `yaml:"projects"`
 }
 
 type Providers struct {
@@ -161,6 +162,37 @@ func SaveManifest(path string, manifest Config) error {
 	return nil
 }
 
+// InitializeTemplateRegistry creates a Premise manifest and template directory
+// without adding monorepo conventions.
+func InitializeTemplateRegistry(root string) (string, error) {
+	manifestPath := filepath.Join(root, ManifestFilename)
+	if _, err := os.Lstat(manifestPath); err == nil {
+		return "", fmt.Errorf("%s already exists", manifestPath)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("inspect manifest: %w", err)
+	}
+	monorepo, err := hasMonorepoRoot(root)
+	if err != nil {
+		return "", fmt.Errorf("detect project kind: %w", err)
+	}
+	if monorepo {
+		return "", errors.New("cannot initialize a template registry from a monorepo root")
+	}
+	name := filepath.Base(filepath.Clean(root))
+	if err := ValidateProjectName(name); err != nil {
+		return "", fmt.Errorf("registry directory name: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "templates"), 0o755); err != nil {
+		return "", fmt.Errorf("create templates directory: %w", err)
+	}
+	manifest := NewManifest(name)
+	manifest.Workspace.Kind = ProjectKindTemplateRegistry
+	if err := SaveManifest(manifestPath, manifest); err != nil {
+		return "", err
+	}
+	return manifestPath, nil
+}
+
 func InitializeWorkspace(root, workspaceMiseTemplate string) (string, error) {
 	if strings.TrimSpace(workspaceMiseTemplate) == "" {
 		return "", errors.New("workspace mise template is empty")
@@ -184,7 +216,9 @@ func InitializeWorkspace(root, workspaceMiseTemplate string) (string, error) {
 	if err := ensureWorkspaceMise(root, workspaceMiseTemplate); err != nil {
 		return "", err
 	}
-	if err := SaveManifest(manifestPath, NewManifest(name)); err != nil {
+	manifest := NewManifest(name)
+	manifest.Workspace.Kind = ProjectKindMonorepo
+	if err := SaveManifest(manifestPath, manifest); err != nil {
 		return "", err
 	}
 	return manifestPath, nil
@@ -195,6 +229,13 @@ func ensureWorkspaceMise(root, workspaceMiseTemplate string) error {
 	if info, err := os.Stat(path); err == nil {
 		if info.IsDir() {
 			return fmt.Errorf("workspace mise config %s is a directory", path)
+		}
+		monorepo, err := hasMonorepoRoot(root)
+		if err != nil {
+			return fmt.Errorf("validate existing workspace mise config: %w", err)
+		}
+		if !monorepo {
+			return errors.New("existing mise.toml must declare top-level monorepo_root = true")
 		}
 		return nil
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -260,6 +301,20 @@ func (manifest Config) Validate() error {
 	}
 	if manifest.Workspace.SchemaVersion != SchemaVersion {
 		return fmt.Errorf("workspace.schema-version must be %q", SchemaVersion)
+	}
+	switch manifest.Workspace.Kind {
+	case "":
+		// Older manifests are classified from their conventions.
+	case ProjectKindMonorepo:
+		if len(manifest.Templates) > 0 {
+			return errors.New("monorepo manifests cannot declare registry templates")
+		}
+	case ProjectKindTemplateRegistry:
+		if len(manifest.Workspace.Projects) > 0 {
+			return errors.New("template registry manifests cannot declare generated projects")
+		}
+	default:
+		return fmt.Errorf("workspace.kind must be %q or %q", ProjectKindMonorepo, ProjectKindTemplateRegistry)
 	}
 
 	templateNames := map[string]struct{}{}

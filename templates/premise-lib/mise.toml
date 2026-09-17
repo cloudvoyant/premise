@@ -1,3 +1,7 @@
+[tasks.install]
+description = "Install project dependencies"
+run = 'echo "premise-lib: install"'
+
 [tasks.build]
 description = "Run the build contract"
 run = 'echo "premise-lib: build"'

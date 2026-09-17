@@ -27,12 +27,10 @@ jobs:
           fetch-tags: true
           persist-credentials: false
 
-      - name: Test, lint & format-check
+      - name: Run on-merge flow
         uses: ./
-        with:
-          flow: feature
-
-      - name: Release
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: pm release
+        with:
+          flow: on-merge
+          install-premise: build

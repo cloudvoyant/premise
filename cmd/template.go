@@ -51,19 +51,43 @@ var templateDetectCmd = &cobra.Command{
 	Short: "Print the repository lifecycle kind",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return fmt.Errorf("get current directory: %w", err)
-		}
-		root, _, err := core.FindManifest(cwd)
+		root, err := premiseRoot()
 		if err != nil {
 			return err
 		}
-		kind, err := core.DetectRegistryKind(root)
+		kind, err := core.DetectProjectKind(root)
 		if err != nil {
 			return err
 		}
 		fmt.Fprintln(cmd.OutOrStdout(), kind)
+		return nil
+	},
+}
+
+var templateListCmd = &cobra.Command{
+	Use:     "ls",
+	Aliases: []string{"list"},
+	Short:   "List templates declared by this registry",
+	Args:    cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		root, err := premiseRoot()
+		if err != nil {
+			return err
+		}
+		kind, err := core.DetectProjectKind(root)
+		if err != nil {
+			return err
+		}
+		if kind != core.ProjectKindTemplateRegistry {
+			return fmt.Errorf("template ls requires a template registry, got %s", kind)
+		}
+		registry, err := core.LoadRegistry(root)
+		if err != nil {
+			return err
+		}
+		for _, name := range registry.Names() {
+			fmt.Fprintln(cmd.OutOrStdout(), name)
+		}
 		return nil
 	},
 }
@@ -89,6 +113,15 @@ var templateTestCmd = &cobra.Command{
 	},
 }
 
+func premiseRoot() (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("get current directory: %w", err)
+	}
+	root, _, err := core.FindManifest(cwd)
+	return root, err
+}
+
 func init() {
-	templateCmd.AddCommand(templateDetectCmd, templateInitCmd, templateTestCmd)
+	templateCmd.AddCommand(templateDetectCmd, templateInitCmd, templateListCmd, templateTestCmd)
 }

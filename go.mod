@@ -7,6 +7,7 @@ require (
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/caarlos0/svu/v3 v3.4.1
 	github.com/go-git/go-git/v5 v5.19.2
+	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/spf13/cobra v1.10.2
 	go.yaml.in/yaml/v3 v3.0.5
 )

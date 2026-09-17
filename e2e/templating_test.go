@@ -34,8 +34,15 @@ func workspaceMiseTemplate(t *testing.T) string {
 }
 
 func TestWorkspaceTemplateAndGenerationWorkflow(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "example")
-	if err := os.MkdirAll(root, 0o755); err != nil {
+	base := t.TempDir()
+	root := filepath.Join(base, "example")
+	registryRoot := filepath.Join(base, "registry")
+	for _, directory := range []string{root, registryRoot} {
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := core.SaveManifest(filepath.Join(registryRoot, core.ManifestFilename), core.NewManifest("registry")); err != nil {
 		t.Fatal(err)
 	}
 	workspaceTemplate := workspaceMiseTemplate(t)
@@ -53,7 +60,7 @@ func TestWorkspaceTemplateAndGenerationWorkflow(t *testing.T) {
 	if _, err := core.InitializeWorkspace(root, workspaceTemplate); err == nil {
 		t.Fatal("expected existing manifest error")
 	}
-	templatePath, err := core.InitializeTemplate(root, "app")
+	templatePath, err := core.InitializeTemplate(registryRoot, "app")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +73,7 @@ func TestWorkspaceTemplateAndGenerationWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	registry, err := core.LoadRegistry(root)
+	registry, err := core.LoadRegistry(registryRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,14 +81,14 @@ func TestWorkspaceTemplateAndGenerationWorkflow(t *testing.T) {
 		t.Fatalf("unexpected registry names: %v", names)
 	}
 	var output bytes.Buffer
-	if err := core.Generate(context.Background(), root, ".:app", fixedQuestionnaire{"name": "orders"}, &output); err != nil {
+	if err := core.Generate(context.Background(), root, "../registry:app", fixedQuestionnaire{"name": "orders"}, &output); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(output.String(), "Generated app orders") {
 		t.Fatalf("unexpected generation output: %s", output.String())
 	}
 	destination := filepath.Join(root, "apps", "orders")
-	source, err := core.TemplateDirectory(root, "app")
+	source, err := core.TemplateDirectory(registryRoot, "app")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,9 +127,8 @@ func TestWorkspaceTemplateAndGenerationWorkflow(t *testing.T) {
 	}
 }
 
-// cargoRegistryFixture writes a minimal second (non-native) template registry to
-// the given path, mirroring the shape of cloudvoyant/premise-cargo without any
-// network access.
+// cargoRegistryFixture writes a minimal Cargo template registry to the given
+// path, mirroring cloudvoyant/premise-cargo without network access.
 func cargoRegistryFixture(t *testing.T, root string) {
 	t.Helper()
 	if err := os.MkdirAll(root, 0o755); err != nil {
@@ -152,7 +158,7 @@ func cargoRegistryFixture(t *testing.T, root string) {
 	}
 }
 
-func TestGenerateFromSecondRegistry(t *testing.T) {
+func TestGenerateFromCargoRegistry(t *testing.T) {
 	base := t.TempDir()
 	workspace := filepath.Join(base, "workspace")
 	if _, err := core.InitializeWorkspace(workspace, workspaceMiseTemplate(t)); err != nil {
@@ -218,7 +224,7 @@ func TestInitializeWorkspacePreservesExistingMiseConfig(t *testing.T) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	const existing = "[tools]\nnode = \"lts\"\n"
+	const existing = "monorepo_root = true\n\n[tools]\nnode = \"lts\"\n"
 	misePath := filepath.Join(root, "mise.toml")
 	if err := os.WriteFile(misePath, []byte(existing), 0o644); err != nil {
 		t.Fatal(err)
@@ -232,6 +238,19 @@ func TestInitializeWorkspacePreservesExistingMiseConfig(t *testing.T) {
 	}
 	if string(content) != existing {
 		t.Fatalf("existing mise.toml changed:\n%s", content)
+	}
+}
+
+func TestInitializeWorkspaceRejectsExistingMiseWithoutMonorepoMarker(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "example")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "mise.toml"), []byte("[tools]\nnode = \"lts\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.InitializeWorkspace(root, workspaceMiseTemplate(t)); err == nil || !strings.Contains(err.Error(), "top-level monorepo_root = true") {
+		t.Fatalf("expected monorepo marker error, got %v", err)
 	}
 }
 
