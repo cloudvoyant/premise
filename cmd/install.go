@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 
 	core "github.com/cloudvoyant/premise/core"
-	misecmd "github.com/cloudvoyant/premise/internal/mise"
 	"github.com/spf13/cobra"
 )
 
@@ -43,11 +42,11 @@ var installCmd = &cobra.Command{
 		if info.IsDir() {
 			return fmt.Errorf("workspace mise configuration is a directory: %s", miseConfig)
 		}
-		mise := misecmd.Runner{
-			Stdout:  cmd.OutOrStdout(),
-			Stderr:  cmd.ErrOrStderr(),
-			Ceiling: filepath.Dir(workspaceRoot),
-		}
+		mise := core.NewMiseRunner(
+			cmd.OutOrStdout(),
+			cmd.ErrOrStderr(),
+			filepath.Dir(workspaceRoot),
+		)
 		runMise := func(args ...string) error {
 			if err := mise.Run(cmd.Context(), workspaceRoot, nil, args...); err != nil {
 				return fmt.Errorf("mise %s: %w", args[0], err)

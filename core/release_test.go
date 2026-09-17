@@ -346,21 +346,20 @@ func TestReleaseSubprocessCredentialBoundaries(t *testing.T) {
 set -eu
 case "$*" in
   install)
+    [ -z "${GITHUB_TOKEN:-}" ]
+    [ -z "${GH_TOKEN:-}" ]
     [ -z "${CARGO_REGISTRY_TOKEN:-}" ]
+    [ -z "${CARGO_TOKEN:-}" ]
     [ -z "${CRATES_TOKEN:-}" ]
     printf 'install\n' >> "$CAPTURE"
     ;;
   exec*)
-    [ -z "${CARGO_REGISTRY_TOKEN:-}" ]
-    [ -z "${CRATES_TOKEN:-}" ]
-    printf 'github:%s\n' "${GITHUB_TOKEN:-}" >> "$CAPTURE"
-    printf '%s\n' "$*" >> "$CAPTURE"
-    ;;
-  "run publish")
     [ -z "${GITHUB_TOKEN:-}" ]
     [ -z "${GH_TOKEN:-}" ]
+    [ -z "${CARGO_REGISTRY_TOKEN:-}" ]
+    [ -z "${CARGO_TOKEN:-}" ]
     [ -z "${CRATES_TOKEN:-}" ]
-    printf 'cargo:%s\nversion:%s\n' "${CARGO_REGISTRY_TOKEN:-}" "${RELEASE_VERSION:-}" > "$CAPTURE"
+    /usr/bin/env -0
     ;;
   *) exit 9 ;;
 esac
@@ -369,12 +368,24 @@ esac
 	if err := os.WriteFile(mise, []byte(shim), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	goreleaserShim := `#!/bin/sh
+set -eu
+[ -z "${CARGO_REGISTRY_TOKEN:-}" ]
+[ -z "${CARGO_TOKEN:-}" ]
+[ -z "${CRATES_TOKEN:-}" ]
+printf 'github:%s\n' "${GITHUB_TOKEN:-}" >> "$CAPTURE"
+printf '%s\n' "$*" >> "$CAPTURE"
+`
+	if err := os.WriteFile(filepath.Join(bin, "goreleaser"), []byte(goreleaserShim), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("CAPTURE", capture)
 	t.Setenv("GITHUB_TOKEN", "github-secret")
 	t.Setenv("GH_TOKEN", "gh-secret")
 	t.Setenv("CARGO_REGISTRY_TOKEN", "cargo-secret")
-	t.Setenv("CRATES_TOKEN", "raw-cargo-secret")
+	t.Setenv("CARGO_TOKEN", "raw-cargo-secret")
+	t.Setenv("CRATES_TOKEN", "legacy-raw-cargo-secret")
 
 	var output bytes.Buffer
 	if err := os.WriteFile(capture, nil, 0o600); err != nil {
@@ -388,7 +399,7 @@ esac
 		t.Fatal(err)
 	}
 	text := string(captured)
-	if !strings.Contains(text, "github:github-secret") || !strings.Contains(text, "goreleaser@"+goreleaserVersion) {
+	if !strings.Contains(text, "github:github-secret") || !strings.Contains(text, "release --clean") {
 		t.Fatalf("GoReleaser capture = %q", text)
 	}
 	fields := strings.Fields(text)
@@ -435,17 +446,4 @@ esac
 		t.Fatalf("Cargo GoReleaser capture = %q", text)
 	}
 
-	if err := os.WriteFile(capture, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := runCargoPublish(t.Context(), root, "v1.2.3", &output, &output); err != nil {
-		t.Fatal(err)
-	}
-	captured, err = os.ReadFile(capture)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := string(captured), "cargo:cargo-secret\nversion:v1.2.3\n"; got != want {
-		t.Fatalf("Cargo capture = %q, want %q", got, want)
-	}
 }

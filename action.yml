@@ -35,12 +35,23 @@ runs:
   steps:
     - name: Setup mise
       uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+      env:
+        GITHUB_TOKEN: ""
+        GH_TOKEN: ""
+        CARGO_REGISTRY_TOKEN: ""
+        CARGO_TOKEN: ""
+        CRATES_TOKEN: ""
       with:
         version: ${{ inputs.mise-version }}
 
     - name: Install premise
       shell: bash
       env:
+        GITHUB_TOKEN: ""
+        GH_TOKEN: ""
+        CARGO_REGISTRY_TOKEN: ""
+        CARGO_TOKEN: ""
+        CRATES_TOKEN: ""
         MODE: ${{ inputs.install-premise }}
         VERSION: ${{ inputs.premise-version }}
         INSTALL_DIR: ${{ runner.temp }}/premise-bin

@@ -22,13 +22,14 @@ type ciCall struct {
 }
 
 type fakeCIRunner struct {
-	tasks        map[string]bool
-	taskErrs     map[string]error
-	failures     map[string]error
-	publishRC    bool
-	publishRCErr error
-	releaseModes []CIReleaseMode
-	calls        []ciCall
+	tasks                 map[string]bool
+	taskErrs              map[string]error
+	failures              map[string]error
+	publishRC             bool
+	publishRCErr          error
+	releaseCandidateKinds []ProjectKind
+	releaseModes          []CIReleaseMode
+	calls                 []ciCall
 }
 
 func (runner *fakeCIRunner) TaskExists(_ context.Context, directory, task string) (bool, error) {
@@ -41,6 +42,11 @@ func (runner *fakeCIRunner) TaskExists(_ context.Context, directory, task string
 
 func (runner *fakeCIRunner) ShouldPublishRC(_ context.Context, _ string) (bool, error) {
 	return runner.publishRC, runner.publishRCErr
+}
+
+func (runner *fakeCIRunner) PublishReleaseCandidate(_ context.Context, _ string, kind ProjectKind) error {
+	runner.releaseCandidateKinds = append(runner.releaseCandidateKinds, kind)
+	return nil
 }
 
 func (runner *fakeCIRunner) ReleaseStable(_ context.Context, _ string, mode CIReleaseMode) error {
@@ -177,7 +183,6 @@ func TestMonorepoCIFlowUsesLifecycleOrderAndPublishesMarkedRC(t *testing.T) {
 	root := writeCIProject(t, nil, true)
 	runner := newFakeCIRunner()
 	runner.publishRC = true
-	runner.tasks[root+"|publish:rc"] = true
 
 	if err := runCIFlow(context.Background(), root, CIFlowOnCommit, "preview", CIReleaseAuto, runner); err != nil {
 		t.Fatal(err)
@@ -196,10 +201,12 @@ func TestMonorepoCIFlowUsesLifecycleOrderAndPublishesMarkedRC(t *testing.T) {
 		"mise run --jobs 1 //...:test",
 		"mise run --jobs 1 //...:format",
 		"mise run --jobs 1 //...:lint",
-		"mise run publish:rc",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("monorepo calls = %#v, want %#v", got, want)
+	}
+	if !reflect.DeepEqual(runner.releaseCandidateKinds, []ProjectKind{ProjectKindMonorepo}) {
+		t.Fatalf("RC project kinds = %#v, want monorepo", runner.releaseCandidateKinds)
 	}
 }
 

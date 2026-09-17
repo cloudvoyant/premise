@@ -184,7 +184,6 @@ lint:fix
 format
 format:check
 env-pull
-publish:setup
 publish:rc
 publish
 ```

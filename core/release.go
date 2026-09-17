@@ -1,18 +1,23 @@
 package core
 
+// Release module responsibilities:
+//   - plan and prepare strict stable repository tags;
+//   - coordinate release candidates and stable publication;
+//   - generate temporary GoReleaser policy;
+//   - preserve credential boundaries between GitHub and package registries.
+
 import (
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
-	cargocmd "github.com/cloudvoyant/premise/internal/cargo"
-	misecmd "github.com/cloudvoyant/premise/internal/mise"
 	git "github.com/go-git/go-git/v5"
 	gitconfig "github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -53,7 +58,7 @@ func DetectReleaseProfile(root string) (ReleaseProfile, error) {
 	if goModule {
 		return ReleaseProfileGo, nil
 	}
-	cargoWorkspace, err := cargocmd.IsRegistry(root)
+	cargoWorkspace, err := isCargoRegistry(root)
 	if err != nil {
 		return "", fmt.Errorf("inspect Cargo release convention: %w", err)
 	}
@@ -63,23 +68,47 @@ func DetectReleaseProfile(root string) (ReleaseProfile, error) {
 	return "", fmt.Errorf("unsupported release repository: expected go.mod or templates/Cargo.toml at %s", root)
 }
 
-func releaseCandidateEnvironment(root string) ([]string, error) {
-	cargoRegistry, err := cargocmd.IsRegistry(root)
+func publishReleaseCandidate(ctx context.Context, root string, kind ProjectKind, stdout, stderr io.Writer) error {
+	cargoRegistry, err := isCargoRegistry(root)
 	if err != nil {
-		return nil, fmt.Errorf("inspect Cargo RC convention: %w", err)
+		return fmt.Errorf("inspect Cargo RC convention: %w", err)
 	}
-	if !cargoRegistry {
-		return nil, nil
+	if cargoRegistry {
+		identifier := os.Getenv("GITHUB_RUN_NUMBER")
+		if err := ValidateRCIdentifier(identifier); err != nil {
+			return fmt.Errorf("resolve Cargo RC identifier: %w", err)
+		}
+		version, err := ReleaseCandidateVersion(root, identifier)
+		if err != nil {
+			return err
+		}
+		return publishCargoPackages(ctx, root, version, "publish:rc", stdout, stderr)
 	}
-	identifier := os.Getenv("GITHUB_RUN_NUMBER")
-	if err := ValidateRCIdentifier(identifier); err != nil {
-		return nil, fmt.Errorf("resolve Cargo RC identifier: %w", err)
+
+	if kind == "" {
+		kind, err = DetectProjectKind(root)
+		if err != nil {
+			return fmt.Errorf("detect RC project kind: %w", err)
+		}
 	}
-	version, err := ReleaseCandidateVersion(root, identifier)
+	mise := NewMiseRunner(stdout, stderr, filepath.Dir(filepath.Clean(root)))
+	exists, err := mise.TaskExists(ctx, root, "publish:rc")
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("inspect publish:rc task: %w", err)
 	}
-	return []string{"RELEASE_VERSION=" + strings.TrimPrefix(version, "v")}, nil
+	if exists {
+		if err := mise.Run(ctx, root, nil, "run", "publish:rc"); err != nil {
+			return fmt.Errorf("publish RC: %w", err)
+		}
+		return nil
+	}
+	if kind != ProjectKindMonorepo {
+		return errors.New("marked RC push requires a root publish:rc task")
+	}
+	if err := mise.Run(ctx, root, nil, "run", "--jobs", "1", "//...:publish:rc"); err != nil {
+		return fmt.Errorf("publish monorepo RC: %w", err)
+	}
+	return nil
 }
 
 // PlanStableRelease fetches stable tags and decides whether HEAD should reuse a
@@ -359,38 +388,68 @@ func runGoReleaser(ctx context.Context, root string, profile ReleaseProfile, sna
 		return fmt.Errorf("close temporary GoReleaser config: %w", err)
 	}
 
-	arguments := []string{"exec", "goreleaser@" + goreleaserVersion, "--", "goreleaser", "release", "--clean", "-f", path}
+	arguments := []string{"release", "--clean", "-f", path}
 	if snapshot {
 		arguments = append(arguments, "--snapshot")
 	}
 	if profile == ReleaseProfileCargo {
 		arguments = append(arguments, "--parallelism", "1")
 	}
-	mise := misecmd.Runner{
-		Stdout:            stdout,
-		Stderr:            stderr,
-		RemoveEnvironment: []string{"CARGO_REGISTRY_TOKEN", "CRATES_TOKEN"},
+	mise := NewMiseRunner(nil, stderr, "")
+	toolEnvironment, err := mise.ToolEnvironment(ctx, workingDirectory, "goreleaser@"+goreleaserVersion)
+	if err != nil {
+		return fmt.Errorf("resolve GoReleaser environment: %w", err)
 	}
-	if err := mise.Run(ctx, workingDirectory, nil, arguments...); err != nil {
+	goreleaser, err := executableFromEnvironment("goreleaser", toolEnvironment)
+	if err != nil {
+		return err
+	}
+	releaseEnvironment := withoutEnvironment(toolEnvironment, publicationCredentialEnvironment...)
+	for _, name := range []string{"GITHUB_TOKEN", "GH_TOKEN"} {
+		if value, ok := os.LookupEnv(name); ok {
+			releaseEnvironment = append(releaseEnvironment, name+"="+value)
+		}
+	}
+	command := exec.CommandContext(ctx, goreleaser, arguments...)
+	command.Dir = workingDirectory
+	command.Env = releaseEnvironment
+	command.Stdout = stdout
+	command.Stderr = stderr
+	if err := command.Run(); err != nil {
 		return fmt.Errorf("run GoReleaser: %w", err)
 	}
 	return nil
 }
 
 func installReleaseTools(ctx context.Context, workingDirectory string, stdout, stderr io.Writer) error {
-	mise := misecmd.Runner{
-		Stdout:            stdout,
-		Stderr:            stderr,
-		RemoveEnvironment: []string{"CARGO_REGISTRY_TOKEN", "CRATES_TOKEN"},
-	}
+	mise := NewMiseRunner(stdout, stderr, "")
 	if err := mise.Run(ctx, workingDirectory, nil, "install"); err != nil {
 		return fmt.Errorf("install release tools: %w", err)
 	}
 	return nil
 }
 
+func executableFromEnvironment(name string, environment []string) (string, error) {
+	var pathValue string
+	for _, entry := range environment {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok && key == "PATH" {
+			pathValue = value
+			break
+		}
+	}
+	for _, directory := range filepath.SplitList(pathValue) {
+		candidate := filepath.Join(directory, name)
+		info, err := os.Stat(candidate)
+		if err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0 {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("resolve %s executable from Mise tool environment", name)
+}
+
 func runCargoPublish(ctx context.Context, root, version string, stdout, stderr io.Writer) error {
-	return cargocmd.Publish(ctx, root, version, stdout, stderr)
+	return publishCargoPackages(ctx, root, version, "publish", stdout, stderr)
 }
 
 func createAndPushReleaseTag(ctx context.Context, root, version string, auth transport.AuthMethod) (resultErr error) {

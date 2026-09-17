@@ -11,8 +11,6 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
-
-	misecmd "github.com/cloudvoyant/premise/internal/mise"
 )
 
 const NativeTemplateSource = "cloudvoyant/premise"
@@ -212,11 +210,7 @@ func TestTemplateContracts(ctx context.Context, root string, manifest Config, st
 			continue
 		}
 		fmt.Fprintf(stdout, "[%s] mise install\n", template.Name)
-		mise := misecmd.Runner{
-			Stdout:  stdout,
-			Stderr:  stderr,
-			Ceiling: filepath.Dir(filepath.Clean(root)),
-		}
+		mise := NewMiseRunner(stdout, stderr, filepath.Dir(filepath.Clean(root)))
 		testEnvironment := []string{"PREMISE_TEMPLATE_TEST=1"}
 		if err := mise.Run(ctx, directory, testEnvironment, "install"); err != nil {
 			failures = append(failures, fmt.Errorf("template %s tool install failed: %w", template.Name, err))

@@ -320,7 +320,7 @@ func TestTemplateContractsCollectAllFailures(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected contract failures")
 	}
-	for _, expected := range []string{"template app task build failed", "template app task e2e failed", "template lib task publish:setup failed", "template lib task publish:rc failed", "template lib task publish failed"} {
+	for _, expected := range []string{"template app task build failed", "template app task e2e failed", "template lib task publish:rc failed", "template lib task publish failed"} {
 		if !strings.Contains(err.Error(), expected) {
 			t.Errorf("combined error does not contain %q: %v", expected, err)
 		}

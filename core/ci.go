@@ -1,5 +1,10 @@
 package core
 
+// CI module responsibilities:
+//   - select root overrides or project-kind lifecycle fallbacks;
+//   - preserve task ordering and per-template failure isolation;
+//   - gate release phases without implementing release or tool policy.
+
 import (
 	"context"
 	"errors"
@@ -10,12 +15,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	misecmd "github.com/cloudvoyant/premise/internal/mise"
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 )
 
-// CIFlow names one convention-driven CI lifecycle.
+// CIFlow names one convention-driven CI lifecycle. Go has no enum keyword;
+// a named string type with typed constants keeps CLI values readable while
+// preventing accidental use of unrelated strings inside the API.
 type CIFlow string
 
 const (
@@ -65,11 +71,7 @@ func RunCIFlow(ctx context.Context, root string, flow CIFlow, environment string
 	runner := &commandCIRunner{
 		stdout: stdout,
 		stderr: stderr,
-		mise: misecmd.Runner{
-			Stdout:  stdout,
-			Stderr:  stderr,
-			Ceiling: filepath.Dir(filepath.Clean(root)),
-		},
+		mise:   NewMiseRunner(stdout, stderr, filepath.Dir(filepath.Clean(root))),
 	}
 	return runCIFlow(ctx, filepath.Clean(root), flow, target, releaseMode, runner)
 }
@@ -77,14 +79,17 @@ func RunCIFlow(ctx context.Context, root string, flow CIFlow, environment string
 type ciRunner interface {
 	TaskExists(context.Context, string, string) (bool, error)
 	ShouldPublishRC(context.Context, string) (bool, error)
+	PublishReleaseCandidate(context.Context, string, ProjectKind) error
 	ReleaseStable(context.Context, string, CIReleaseMode) error
 	Run(context.Context, string, []string, string, ...string) error
 }
 
+// commandCIRunner is private because it is the production adapter behind the
+// testable ciRunner interface, not part of Premise's public API.
 type commandCIRunner struct {
 	stdout io.Writer
 	stderr io.Writer
-	mise   misecmd.Runner
+	mise   MiseRunner
 }
 
 func (runner *commandCIRunner) TaskExists(ctx context.Context, directory, task string) (bool, error) {
@@ -122,6 +127,10 @@ func (runner *commandCIRunner) ShouldPublishRC(_ context.Context, root string) (
 		return false, fmt.Errorf("read HEAD commit for RC decision: %w", err)
 	}
 	return strings.Contains(commit.Message, "[publish-rc]"), nil
+}
+
+func (runner *commandCIRunner) PublishReleaseCandidate(ctx context.Context, root string, kind ProjectKind) error {
+	return publishReleaseCandidate(ctx, root, kind, runner.stdout, runner.stderr)
 }
 
 func (runner *commandCIRunner) ReleaseStable(ctx context.Context, root string, mode CIReleaseMode) error {
@@ -298,30 +307,7 @@ func runCIReleasePhase(ctx context.Context, root string, flow CIFlow, releaseMod
 		if !publish {
 			return nil
 		}
-		exists, err := runner.TaskExists(ctx, root, "publish:rc")
-		if err != nil {
-			return fmt.Errorf("inspect publish:rc task: %w", err)
-		}
-		environment, err := releaseCandidateEnvironment(root)
-		if err != nil {
-			return err
-		}
-		if exists {
-			if err := runner.Run(ctx, root, environment, "mise", "run", "publish:rc"); err != nil {
-				return fmt.Errorf("publish RC: %w", err)
-			}
-			return nil
-		}
-		if kind == "" {
-			kind, err = DetectProjectKind(root)
-			if err != nil {
-				return fmt.Errorf("detect RC project kind: %w", err)
-			}
-		}
-		if kind != ProjectKindMonorepo {
-			return errors.New("marked RC push requires a root publish:rc task")
-		}
-		return runner.Run(ctx, root, environment, "mise", "run", "--jobs", "1", "//...:publish:rc")
+		return runner.PublishReleaseCandidate(ctx, root, kind)
 	case CIFlowOnMerge:
 		return runner.ReleaseStable(ctx, root, releaseMode)
 	case CIFlowOnRelease:

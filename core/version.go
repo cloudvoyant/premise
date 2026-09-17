@@ -1,5 +1,10 @@
 package core
 
+// Version module responsibilities:
+//   - calculate current and next stable versions through the svu Go SDK;
+//   - validate explicit semantic-version bumps and RC identifiers;
+//   - restrict repository baselines to strict stable vMAJOR.MINOR.PATCH tags.
+
 import (
 	"errors"
 	"fmt"
