@@ -19,9 +19,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 )
 
-// CIFlow names one convention-driven CI lifecycle. Go has no enum keyword;
-// a named string type with typed constants keeps CLI values readable while
-// preventing accidental use of unrelated strings inside the API.
+// CIFlow names one convention-driven CI lifecycle.
 type CIFlow string
 
 const (
