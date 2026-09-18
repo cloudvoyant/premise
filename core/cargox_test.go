@@ -27,45 +27,6 @@ func TestIsRegistry(t *testing.T) {
 	}
 }
 
-func TestCargoExistingVersionRequiresAuthenticatedOwnership(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.Header.Get("Authorization") != "cargo-secret" {
-			t.Errorf("Authorization = %q, want cargo-secret", request.Header.Get("Authorization"))
-		}
-		switch request.URL.Path {
-		case "/me":
-			_, _ = response.Write([]byte(`{"user":{"id":42}}`))
-		case "/crates/owned-crate/owners":
-			_, _ = response.Write([]byte(`{"users":[{"id":42}]}`))
-		case "/crates/other-crate/owners":
-			_, _ = response.Write([]byte(`{"users":[{"id":7}]}`))
-		default:
-			response.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer server.Close()
-	originalAPI := cratesAPIBaseURL
-	cratesAPIBaseURL = server.URL
-	defer func() { cratesAPIBaseURL = originalAPI }()
-
-	client := server.Client()
-	userID, err := authenticatedCargoUserID(t.Context(), client, "cargo-secret")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if userID != 42 {
-		t.Fatalf("authenticatedCargoUserID() = %d, want 42", userID)
-	}
-	owned, err := cargoCrateOwnedBy(t.Context(), client, "cargo-secret", "owned-crate", userID)
-	if err != nil || !owned {
-		t.Fatalf("cargoCrateOwnedBy(owned-crate) = %v, %v; want true", owned, err)
-	}
-	owned, err = cargoCrateOwnedBy(t.Context(), client, "cargo-secret", "other-crate", userID)
-	if err != nil || owned {
-		t.Fatalf("cargoCrateOwnedBy(other-crate) = %v, %v; want false", owned, err)
-	}
-}
-
 func TestCargoPublicationPreflightsEveryPackageBeforePublishing(t *testing.T) {
 	root := t.TempDir()
 	manifest := NewManifest("cargo-fixture")
@@ -117,7 +78,7 @@ esac
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("CAPTURE", capture)
-	t.Setenv("CARGO_REGISTRY_TOKEN", "cargo-secret")
+	t.Setenv("CRATES_TOKEN", "cargo-secret")
 	var output bytes.Buffer
 	err := publishCargoPackages(t.Context(), root, "v1.2.3", "publish", &output, &output)
 	if err == nil || !strings.Contains(err.Error(), `does not match declared template "z-second"`) {
@@ -182,22 +143,16 @@ func TestPublishUsesCargoCredentialsAndRestoresVersions(t *testing.T) {
 set -eu
 case "$*" in
   "task info publish --json")
-    [ -z "${GITHUB_TOKEN:-}" ]
-    [ -z "${GH_TOKEN:-}" ]
-    [ -z "${CARGO_REGISTRY_TOKEN:-}" ]
-    [ -z "${CARGO_TOKEN:-}" ]
     [ -z "${CRATES_TOKEN:-}" ]
+    [ -z "${CARGO_REGISTRY_TOKEN:-}" ]
     ;;
   "exec -- cargo generate-lockfile")
-    [ -z "${GITHUB_TOKEN:-}" ]
+    [ -z "${CRATES_TOKEN:-}" ]
     [ -z "${CARGO_REGISTRY_TOKEN:-}" ]
-    [ -z "${CARGO_TOKEN:-}" ]
     printf 'generated lock\n' > Cargo.lock
     ;;
   "run publish")
     [ -z "${GITHUB_TOKEN:-}" ]
-    [ -z "${GH_TOKEN:-}" ]
-    [ -z "${CARGO_TOKEN:-}" ]
     [ -z "${CRATES_TOKEN:-}" ]
     printf 'cargo:%s\nversion:%s\n' "${CARGO_REGISTRY_TOKEN:-}" "${RELEASE_VERSION:-}" > "$CAPTURE"
     ;;
@@ -211,9 +166,8 @@ esac
 	t.Setenv("CAPTURE", capture)
 	t.Setenv("GITHUB_TOKEN", "github-secret")
 	t.Setenv("GH_TOKEN", "gh-secret")
-	t.Setenv("CARGO_REGISTRY_TOKEN", "cargo-secret")
 	t.Setenv("CARGO_TOKEN", "raw-cargo-secret")
-	t.Setenv("CRATES_TOKEN", "legacy-raw-cargo-secret")
+	t.Setenv("CRATES_TOKEN", "cargo-secret")
 	var output bytes.Buffer
 	if err := publishCargoPackages(t.Context(), root, "v1.2.3", "publish", &output, &output); err != nil {
 		t.Fatal(err)

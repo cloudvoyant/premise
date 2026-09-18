@@ -26,5 +26,5 @@ func Execute(miseTemplate string) {
 }
 
 func init() {
-	rootCmd.AddCommand(ciCmd, initCmd, installCmd, generateCmd, templateCmd)
+	rootCmd.AddCommand(ciCmd, initCmd, installCmd, generateCmd, runCmd, templateCmd)
 }

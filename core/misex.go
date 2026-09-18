@@ -23,39 +23,29 @@ var publicationCredentialEnvironment = []string{
 	"CRATES_TOKEN",
 }
 
-// NewMiseRunner returns a runner that never forwards publication credentials to Mise.
-func NewMiseRunner(stdout, stderr io.Writer, ceiling string) MiseRunner {
-	return MiseRunner{
-		Stdout:            stdout,
-		Stderr:            stderr,
-		Ceiling:           ceiling,
-		RemoveEnvironment: publicationCredentialEnvironment,
-	}
-}
-
-// MiseRunner executes Mise commands with a controlled working directory and environment.
-type MiseRunner struct {
+// miseRunner executes Mise commands with a controlled working directory and environment.
+type miseRunner struct {
 	Stdout            io.Writer
 	Stderr            io.Writer
 	Ceiling           string
 	RemoveEnvironment []string
 }
 
-// Run executes one Mise command.
-func (runner MiseRunner) Run(ctx context.Context, directory string, additions []string, arguments ...string) error {
+// run executes one Mise command.
+func (runner miseRunner) run(ctx context.Context, directory string, additions []string, arguments ...string) error {
 	command := exec.CommandContext(ctx, "mise", arguments...)
 	command.Dir = directory
-	command.Env = runner.Environment(additions)
+	command.Env = runner.environment(additions)
 	command.Stdout = runner.Stdout
 	command.Stderr = runner.Stderr
 	return command.Run()
 }
 
-// TaskExists reports whether a Mise task selector resolves in directory.
-func (runner MiseRunner) TaskExists(ctx context.Context, directory, task string) (bool, error) {
+// taskExists reports whether a Mise task selector resolves in directory.
+func (runner miseRunner) taskExists(ctx context.Context, directory, task string) (bool, error) {
 	command := exec.CommandContext(ctx, "mise", "task", "info", task, "--json")
 	command.Dir = directory
-	command.Env = runner.Environment(nil)
+	command.Env = runner.environment(nil)
 	var commandError bytes.Buffer
 	command.Stdout = io.Discard
 	command.Stderr = &commandError
@@ -73,15 +63,15 @@ func (runner MiseRunner) TaskExists(ctx context.Context, directory, task string)
 	return true, nil
 }
 
-// ToolEnvironment resolves an environment containing explicitly selected Mise tools.
+// toolEnvironment resolves an environment containing explicitly selected Mise tools.
 // Mise itself runs with the runner's sanitized environment; the returned environment
 // can then be used to launch the intended tool without exposing credentials to Mise.
-func (runner MiseRunner) ToolEnvironment(ctx context.Context, directory string, tools ...string) ([]string, error) {
+func (runner miseRunner) toolEnvironment(ctx context.Context, directory string, tools ...string) ([]string, error) {
 	arguments := append([]string{"exec"}, tools...)
 	arguments = append(arguments, "--", "env", "-0")
 	command := exec.CommandContext(ctx, "mise", arguments...)
 	command.Dir = directory
-	command.Env = runner.Environment(nil)
+	command.Env = runner.environment(nil)
 	var output bytes.Buffer
 	command.Stdout = &output
 	command.Stderr = runner.Stderr
@@ -95,9 +85,10 @@ func (runner MiseRunner) ToolEnvironment(ctx context.Context, directory string, 
 	return entries, nil
 }
 
-// Environment returns the process environment used for Mise-aware commands.
-func (runner MiseRunner) Environment(additions []string) []string {
-	removed := append([]string(nil), runner.RemoveEnvironment...)
+// environment returns the process environment used for Mise-aware commands.
+func (runner miseRunner) environment(additions []string) []string {
+	removed := append([]string(nil), publicationCredentialEnvironment...)
+	removed = append(removed, runner.RemoveEnvironment...)
 	if runner.Ceiling != "" {
 		removed = append(removed, "MISE_CEILING_PATHS")
 	}

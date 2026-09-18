@@ -210,14 +210,18 @@ func TestTemplateContracts(ctx context.Context, root string, manifest Config, st
 			continue
 		}
 		fmt.Fprintf(stdout, "[%s] mise install\n", template.Name)
-		mise := NewMiseRunner(stdout, stderr, filepath.Dir(filepath.Clean(root)))
+		mise := miseRunner{
+			Stdout:  stdout,
+			Stderr:  stderr,
+			Ceiling: filepath.Dir(filepath.Clean(root)),
+		}
 		testEnvironment := []string{"PREMISE_TEMPLATE_TEST=1"}
-		if err := mise.Run(ctx, directory, testEnvironment, "install"); err != nil {
+		if err := mise.run(ctx, directory, testEnvironment, "install"); err != nil {
 			failures = append(failures, fmt.Errorf("template %s tool install failed: %w", template.Name, err))
 		}
 		for _, task := range tasks {
 			fmt.Fprintf(stdout, "[%s] mise run %s\n", template.Name, task)
-			if err := mise.Run(ctx, directory, testEnvironment, "run", task); err != nil {
+			if err := mise.run(ctx, directory, testEnvironment, "run", task); err != nil {
 				failures = append(failures, fmt.Errorf("template %s task %s failed: %w", template.Name, task, err))
 			}
 		}
