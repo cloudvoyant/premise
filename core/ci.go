@@ -69,7 +69,11 @@ func RunCIFlow(ctx context.Context, root string, flow CIFlow, environment string
 	runner := &commandCIRunner{
 		stdout: stdout,
 		stderr: stderr,
-		mise:   NewMiseRunner(stdout, stderr, filepath.Dir(filepath.Clean(root))),
+		mise: miseRunner{
+			Stdout:  stdout,
+			Stderr:  stderr,
+			Ceiling: filepath.Dir(filepath.Clean(root)),
+		},
 	}
 	return runCIFlow(ctx, filepath.Clean(root), flow, target, releaseMode, runner)
 }
@@ -87,11 +91,11 @@ type ciRunner interface {
 type commandCIRunner struct {
 	stdout io.Writer
 	stderr io.Writer
-	mise   MiseRunner
+	mise   miseRunner
 }
 
 func (runner *commandCIRunner) TaskExists(ctx context.Context, directory, task string) (bool, error) {
-	exists, err := runner.mise.TaskExists(ctx, directory, task)
+	exists, err := runner.mise.taskExists(ctx, directory, task)
 	if err != nil {
 		return false, fmt.Errorf("inspect mise task %s: %w", task, err)
 	}
@@ -155,7 +159,7 @@ func (runner *commandCIRunner) ReleaseStable(ctx context.Context, root string, m
 
 func (runner *commandCIRunner) Run(ctx context.Context, directory string, environment []string, name string, arguments ...string) error {
 	if name == "mise" {
-		if err := runner.mise.Run(ctx, directory, environment, arguments...); err != nil {
+		if err := runner.mise.run(ctx, directory, environment, arguments...); err != nil {
 			return fmt.Errorf("run mise %s: %w", strings.Join(arguments, " "), err)
 		}
 		return nil
@@ -165,7 +169,7 @@ func (runner *commandCIRunner) Run(ctx context.Context, directory string, enviro
 	}
 	command := exec.CommandContext(ctx, "pm", arguments...)
 	command.Dir = directory
-	command.Env = runner.mise.Environment(environment)
+	command.Env = runner.mise.environment(environment)
 	command.Stdout = runner.stdout
 	command.Stderr = runner.stderr
 	if err := command.Run(); err != nil {

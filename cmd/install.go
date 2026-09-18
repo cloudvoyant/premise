@@ -42,28 +42,6 @@ var installCmd = &cobra.Command{
 		if info.IsDir() {
 			return fmt.Errorf("workspace mise configuration is a directory: %s", miseConfig)
 		}
-		mise := core.NewMiseRunner(
-			cmd.OutOrStdout(),
-			cmd.ErrOrStderr(),
-			filepath.Dir(workspaceRoot),
-		)
-		runMise := func(args ...string) error {
-			if err := mise.Run(cmd.Context(), workspaceRoot, nil, args...); err != nil {
-				return fmt.Errorf("mise %s: %w", args[0], err)
-			}
-			return nil
-		}
-		if err := runMise("install"); err != nil {
-			return err
-		}
-		hasProjectConfigs, err := core.HasProjectMiseConfigs(workspaceRoot)
-		if err != nil {
-			return err
-		}
-		if !hasProjectConfigs {
-			fmt.Fprintln(cmd.OutOrStdout(), "No project mise.toml files found; installed the active workspace and global mise tools.")
-			return nil
-		}
-		return runMise("install", "--monorepo")
+		return core.InstallWorkspace(cmd.Context(), workspaceRoot, cmd.OutOrStdout(), cmd.ErrOrStderr())
 	},
 }

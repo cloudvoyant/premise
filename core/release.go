@@ -91,13 +91,17 @@ func publishReleaseCandidate(ctx context.Context, root string, kind ProjectKind,
 			return fmt.Errorf("detect RC project kind: %w", err)
 		}
 	}
-	mise := NewMiseRunner(stdout, stderr, filepath.Dir(filepath.Clean(root)))
-	exists, err := mise.TaskExists(ctx, root, "publish:rc")
+	mise := miseRunner{
+		Stdout:  stdout,
+		Stderr:  stderr,
+		Ceiling: filepath.Dir(filepath.Clean(root)),
+	}
+	exists, err := mise.taskExists(ctx, root, "publish:rc")
 	if err != nil {
 		return fmt.Errorf("inspect publish:rc task: %w", err)
 	}
 	if exists {
-		if err := mise.Run(ctx, root, nil, "run", "publish:rc"); err != nil {
+		if err := mise.run(ctx, root, nil, "run", "publish:rc"); err != nil {
 			return fmt.Errorf("publish RC: %w", err)
 		}
 		return nil
@@ -105,7 +109,7 @@ func publishReleaseCandidate(ctx context.Context, root string, kind ProjectKind,
 	if kind != ProjectKindMonorepo {
 		return errors.New("marked RC push requires a root publish:rc task")
 	}
-	if err := mise.Run(ctx, root, nil, "run", "--jobs", "1", "//...:publish:rc"); err != nil {
+	if err := mise.run(ctx, root, nil, "run", "--jobs", "1", "//...:publish:rc"); err != nil {
 		return fmt.Errorf("publish monorepo RC: %w", err)
 	}
 	return nil
@@ -395,8 +399,8 @@ func runGoReleaser(ctx context.Context, root string, profile ReleaseProfile, sna
 	if profile == ReleaseProfileCargo {
 		arguments = append(arguments, "--parallelism", "1")
 	}
-	mise := NewMiseRunner(nil, stderr, "")
-	toolEnvironment, err := mise.ToolEnvironment(ctx, workingDirectory, "goreleaser@"+goreleaserVersion)
+	mise := miseRunner{Stderr: stderr}
+	toolEnvironment, err := mise.toolEnvironment(ctx, workingDirectory, "goreleaser@"+goreleaserVersion)
 	if err != nil {
 		return fmt.Errorf("resolve GoReleaser environment: %w", err)
 	}
@@ -422,8 +426,8 @@ func runGoReleaser(ctx context.Context, root string, profile ReleaseProfile, sna
 }
 
 func installReleaseTools(ctx context.Context, workingDirectory string, stdout, stderr io.Writer) error {
-	mise := NewMiseRunner(stdout, stderr, "")
-	if err := mise.Run(ctx, workingDirectory, nil, "install"); err != nil {
+	mise := miseRunner{Stdout: stdout, Stderr: stderr}
+	if err := mise.run(ctx, workingDirectory, nil, "install"); err != nil {
 		return fmt.Errorf("install release tools: %w", err)
 	}
 	return nil

@@ -105,9 +105,9 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 			return err
 		}
 	}
-	lockRunner := NewMiseRunner(stdout, stderr, "")
+	lockRunner := miseRunner{Stdout: stdout, Stderr: stderr}
 	templatesRoot := filepath.Join(root, "templates")
-	if err := lockRunner.Run(ctx, templatesRoot, nil, "exec", "--", "cargo", "generate-lockfile"); err != nil {
+	if err := lockRunner.run(ctx, templatesRoot, nil, "exec", "--", "cargo", "generate-lockfile"); err != nil {
 		return fmt.Errorf("regenerate Cargo lockfile: %w", err)
 	}
 
@@ -116,8 +116,8 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 		return errors.New("CRATES_TOKEN is required for Cargo publication")
 	}
 	client := &http.Client{Timeout: 30 * time.Second}
-	preflight := NewMiseRunner(nil, stderr, "")
-	publisher := MiseRunner{Stdout: stdout, Stderr: stderr, RemoveEnvironment: []string{"GITHUB_TOKEN", "GH_TOKEN", "CARGO_TOKEN", "CRATES_TOKEN"}}
+	preflight := miseRunner{Stderr: stderr}
+	publisher := miseRunner{Stdout: stdout, Stderr: stderr}
 	publications := make([]cargoPublication, 0, len(manifest.Templates))
 	userID := uint64(0)
 	for _, template := range manifest.Templates {
@@ -129,7 +129,7 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 		if name != template.Name {
 			return fmt.Errorf("Cargo package %q does not match declared template %q", name, template.Name)
 		}
-		taskExists, err := preflight.TaskExists(ctx, directory, task)
+		taskExists, err := preflight.taskExists(ctx, directory, task)
 		if err != nil {
 			return fmt.Errorf("inspect Cargo package %s task %s: %w", name, task, err)
 		}
@@ -174,7 +174,7 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 			"RELEASE_VERSION=" + version,
 			"CARGO_REGISTRY_TOKEN=" + token,
 		}
-		if err := publisher.Run(ctx, publication.directory, environment, "run", task); err != nil {
+		if err := publisher.run(ctx, publication.directory, environment, "run", task); err != nil {
 			return fmt.Errorf("publish Cargo package %s: %w", publication.name, err)
 		}
 	}

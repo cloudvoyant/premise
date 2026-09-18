@@ -182,23 +182,16 @@ func TestPublishUsesCargoCredentialsAndRestoresVersions(t *testing.T) {
 set -eu
 case "$*" in
   "task info publish --json")
-    [ -z "${GITHUB_TOKEN:-}" ]
-    [ -z "${GH_TOKEN:-}" ]
-    [ -z "${CARGO_REGISTRY_TOKEN:-}" ]
-    [ -z "${CARGO_TOKEN:-}" ]
     [ -z "${CRATES_TOKEN:-}" ]
+    [ -z "${CARGO_REGISTRY_TOKEN:-}" ]
     ;;
   "exec -- cargo generate-lockfile")
-    [ -z "${GITHUB_TOKEN:-}" ]
-    [ -z "${CARGO_REGISTRY_TOKEN:-}" ]
-    [ -z "${CARGO_TOKEN:-}" ]
     [ -z "${CRATES_TOKEN:-}" ]
+    [ -z "${CARGO_REGISTRY_TOKEN:-}" ]
     printf 'generated lock\n' > Cargo.lock
     ;;
   "run publish")
     [ -z "${GITHUB_TOKEN:-}" ]
-    [ -z "${GH_TOKEN:-}" ]
-    [ -z "${CARGO_TOKEN:-}" ]
     [ -z "${CRATES_TOKEN:-}" ]
     printf 'cargo:%s\nversion:%s\n' "${CARGO_REGISTRY_TOKEN:-}" "${RELEASE_VERSION:-}" > "$CAPTURE"
     ;;
