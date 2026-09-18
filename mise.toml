@@ -15,6 +15,10 @@ shellcheck = "latest"
 shfmt = "latest"
 watchexec = "latest"
 
+[tasks.install]
+description = "Install the premise CLI"
+run = "go install"
+
 [tasks.build]
 description = "Build the premise CLI"
 sources = [

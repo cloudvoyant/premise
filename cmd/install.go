@@ -42,6 +42,9 @@ var installCmd = &cobra.Command{
 		if info.IsDir() {
 			return fmt.Errorf("workspace mise configuration is a directory: %s", miseConfig)
 		}
-		return core.InstallWorkspace(cmd.Context(), workspaceRoot, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		if err := core.InstallDevTools(cmd.Context(), workspaceRoot, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
+			return err
+		}
+		return core.RunRootTask(cmd.Context(), workspaceRoot, "install", cmd.OutOrStdout(), cmd.ErrOrStderr())
 	},
 }
