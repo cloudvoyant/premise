@@ -8,7 +8,6 @@ package core
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -119,7 +118,6 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 	preflight := miseRunner{Stderr: stderr}
 	publisher := miseRunner{Stdout: stdout, Stderr: stderr}
 	publications := make([]cargoPublication, 0, len(manifest.Templates))
-	userID := uint64(0)
 	for _, template := range manifest.Templates {
 		directory := filepath.Join(root, "templates", template.Name)
 		name, err := cargoPackageName(filepath.Join(directory, "Cargo.toml"))
@@ -136,31 +134,9 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 		if !taskExists {
 			return fmt.Errorf("Cargo package %s does not define task %s", name, task)
 		}
-		crateExists, err := cargoCrateExists(ctx, client, name)
-		if err != nil {
-			return err
-		}
 		versionExists, err := cargoVersionExists(ctx, client, name, version)
 		if err != nil {
 			return err
-		}
-		if versionExists && !crateExists {
-			return fmt.Errorf("crates.io reported version %s for missing crate %s", version, name)
-		}
-		if crateExists {
-			if userID == 0 {
-				userID, err = authenticatedCargoUserID(ctx, client, token)
-				if err != nil {
-					return err
-				}
-			}
-			owned, err := cargoCrateOwnedBy(ctx, client, token, name, userID)
-			if err != nil {
-				return err
-			}
-			if !owned {
-				return fmt.Errorf("crate %s exists but the authenticated crates.io user is not an owner", name)
-			}
 		}
 		publications = append(publications, cargoPublication{directory: directory, name: name, exists: versionExists})
 	}
@@ -262,10 +238,6 @@ func cargoPackageName(path string) (string, error) {
 	return "", fmt.Errorf("Cargo manifest %s has no [package] name", path)
 }
 
-func cargoCrateExists(ctx context.Context, client *http.Client, name string) (bool, error) {
-	return cargoResourceExists(ctx, client, cratesAPIBaseURL+"/crates/"+name, "crate "+name)
-}
-
 func cargoVersionExists(ctx context.Context, client *http.Client, name, version string) (bool, error) {
 	return cargoResourceExists(ctx, client, cratesAPIBaseURL+"/crates/"+name+"/"+version, "crate version "+name+" "+version)
 }
@@ -289,57 +261,4 @@ func cargoResourceExists(ctx context.Context, client *http.Client, resourceURL, 
 	default:
 		return false, fmt.Errorf("check crates.io %s: HTTP %d", description, response.StatusCode)
 	}
-}
-
-func authenticatedCargoUserID(ctx context.Context, client *http.Client, token string) (uint64, error) {
-	var payload struct {
-		User struct {
-			ID uint64 `json:"id"`
-		} `json:"user"`
-	}
-	if err := cargoAPIJSON(ctx, client, token, "/me", &payload); err != nil {
-		return 0, fmt.Errorf("read authenticated crates.io user: %w", err)
-	}
-	if payload.User.ID == 0 {
-		return 0, errors.New("crates.io user response omitted an id")
-	}
-	return payload.User.ID, nil
-}
-
-func cargoCrateOwnedBy(ctx context.Context, client *http.Client, token, name string, userID uint64) (bool, error) {
-	var payload struct {
-		Users []struct {
-			ID uint64 `json:"id"`
-		} `json:"users"`
-	}
-	if err := cargoAPIJSON(ctx, client, token, "/crates/"+name+"/owners", &payload); err != nil {
-		return false, fmt.Errorf("read crates.io owners for %s: %w", name, err)
-	}
-	for _, user := range payload.Users {
-		if user.ID == userID {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-func cargoAPIJSON(ctx context.Context, client *http.Client, token, path string, target any) error {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, cratesAPIBaseURL+path, nil)
-	if err != nil {
-		return err
-	}
-	request.Header.Set("Authorization", token)
-	request.Header.Set("User-Agent", "premise-release-check")
-	response, err := client.Do(request)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP %d", response.StatusCode)
-	}
-	if err := json.NewDecoder(response.Body).Decode(target); err != nil {
-		return fmt.Errorf("decode response: %w", err)
-	}
-	return nil
 }
