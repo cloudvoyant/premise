@@ -62,6 +62,7 @@ func TemplateDirectory(sourceRoot, name string) (string, error) {
 }
 
 type ScaffoldRequest struct {
+	SharedSource string
 	Source       string
 	Destination  string
 	Replacements map[string]string
@@ -84,6 +85,20 @@ func Scaffold(request ScaffoldRequest) error {
 	} else if !info.IsDir() {
 		return fmt.Errorf("scaffold source %s is not a directory", source)
 	}
+
+	var sharedSource string
+	if request.SharedSource != "" {
+		sharedSource, err = filepath.Abs(request.SharedSource)
+		if err != nil {
+			return fmt.Errorf("resolve shared scaffold source: %w", err)
+		}
+		if info, err := os.Stat(sharedSource); err != nil {
+			return fmt.Errorf("inspect shared scaffold source: %w", err)
+		} else if !info.IsDir() {
+			return fmt.Errorf("shared scaffold source %s is not a directory", sharedSource)
+		}
+	}
+
 	if _, err := os.Lstat(destination); err == nil {
 		return fmt.Errorf("destination %s already exists", destination)
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -106,6 +121,11 @@ func Scaffold(request ScaffoldRequest) error {
 	}()
 
 	replacer := literalReplacer(request.Replacements)
+	if sharedSource != "" {
+		if err := copyRootFiles(sharedSource, stage, replacer); err != nil {
+			return fmt.Errorf("stage shared scaffold files: %w", err)
+		}
+	}
 	if err := copyTree(source, stage, replacer); err != nil {
 		return fmt.Errorf("stage scaffold: %w", err)
 	}
@@ -113,6 +133,45 @@ func Scaffold(request ScaffoldRequest) error {
 		return fmt.Errorf("commit scaffold: %w", err)
 	}
 	committed = true
+	return nil
+}
+
+func copyRootFiles(source, destination string, replacer *strings.Replacer) error {
+	entries, err := os.ReadDir(source)
+	if err != nil {
+		return fmt.Errorf("read shared scaffold source: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("inspect shared scaffold entry %s: %w", entry.Name(), err)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("unsupported shared scaffold entry %s", entry.Name())
+		}
+
+		path := filepath.Join(source, entry.Name())
+		target := filepath.Join(destination, entry.Name())
+		if !inside(destination, target) {
+			return fmt.Errorf("shared destination entry escapes scaffold root: %s", target)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read shared scaffold file %s: %w", entry.Name(), err)
+		}
+		if replacer != nil && isText(data) {
+			data = []byte(replacer.Replace(string(data)))
+		}
+		if err := os.WriteFile(target, data, info.Mode().Perm()); err != nil {
+			return fmt.Errorf("write shared scaffold file %s: %w", entry.Name(), err)
+		}
+		if err := os.Chmod(target, info.Mode().Perm()); err != nil {
+			return fmt.Errorf("preserve shared scaffold file permissions %s: %w", entry.Name(), err)
+		}
+	}
 	return nil
 }
 

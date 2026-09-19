@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -67,21 +68,28 @@ func TestRegistryEntrySelector(t *testing.T) {
 	}
 }
 
+func TestOfficialSourcesIncludesBunRegistry(t *testing.T) {
+	const bunSource = "cloudvoyant/premise-bun"
+	if !slices.Contains(OfficialSources, bunSource) {
+		t.Fatalf("OfficialSources does not include %q", bunSource)
+	}
+}
+
 func TestDefaultRegistryMergesOfficialSources(t *testing.T) {
-	goRegistry := writeRegistryFixture(t,
-		templateFixture("premise-app", "app"),
-		templateFixture("premise-lib", "lib"),
-	)
-	cargoRegistry := writeRegistryFixture(t,
-		templateFixture("premise-rust-lib", "lib"),
-		templateFixture("premise-rust-app", "app"),
-		templateFixture("premise-clap-cli", "app"),
-		templateFixture("premise-ratatui-app", "app"),
-	)
-	defer overrideResolveRepository(map[string]string{
-		"cloudvoyant/premise":       goRegistry,
-		"cloudvoyant/premise-cargo": cargoRegistry,
-	})()
+	fixtures := make(map[string]string, len(OfficialSources))
+	var wantSelectors []string
+	for _, source := range OfficialSources {
+		prefix := "fixture-" + strings.ReplaceAll(source, "/", "-")
+		fixtures[source] = writeRegistryFixture(t,
+			templateFixture(prefix+"-z", "app"),
+			templateFixture(prefix+"-a", "app"),
+		)
+		wantSelectors = append(wantSelectors,
+			source+":"+prefix+"-a",
+			source+":"+prefix+"-z",
+		)
+	}
+	defer overrideResolveRepository(fixtures)()
 
 	entries, err := DefaultRegistry(context.Background())
 	if err != nil {
@@ -89,14 +97,6 @@ func TestDefaultRegistryMergesOfficialSources(t *testing.T) {
 	}
 
 	// Deterministic order: official source order, then template-name order.
-	wantSelectors := []string{
-		"cloudvoyant/premise:premise-app",
-		"cloudvoyant/premise:premise-lib",
-		"cloudvoyant/premise-cargo:premise-clap-cli",
-		"cloudvoyant/premise-cargo:premise-ratatui-app",
-		"cloudvoyant/premise-cargo:premise-rust-app",
-		"cloudvoyant/premise-cargo:premise-rust-lib",
-	}
 	if len(entries) != len(wantSelectors) {
 		t.Fatalf("DefaultRegistry returned %d entries, want %d", len(entries), len(wantSelectors))
 	}
@@ -116,9 +116,11 @@ func TestDefaultRegistryMergesOfficialSources(t *testing.T) {
 func TestDefaultRegistryDisambiguatesDuplicateNames(t *testing.T) {
 	first := writeRegistryFixture(t, templateFixture("premise-app", "app"))
 	second := writeRegistryFixture(t, templateFixture("premise-app", "app"))
+	bunRegistry := writeRegistryFixture(t)
 	defer overrideResolveRepository(map[string]string{
 		"cloudvoyant/premise":       first,
 		"cloudvoyant/premise-cargo": second,
+		"cloudvoyant/premise-bun":   bunRegistry,
 	})()
 
 	entries, err := DefaultRegistry(context.Background())
@@ -145,8 +147,10 @@ func TestDefaultRegistryDisambiguatesDuplicateNames(t *testing.T) {
 
 func TestDefaultRegistryAggregatesLoadErrors(t *testing.T) {
 	first := writeRegistryFixture(t, templateFixture("premise-app", "app"))
+	bunRegistry := writeRegistryFixture(t)
 	defer overrideResolveRepository(map[string]string{
-		"cloudvoyant/premise": first,
+		"cloudvoyant/premise":     first,
+		"cloudvoyant/premise-bun": bunRegistry,
 		// premise-cargo intentionally missing so loading fails.
 	})()
 
@@ -167,9 +171,13 @@ func TestResolveOfficialTemplateName(t *testing.T) {
 	cargoRegistry := writeRegistryFixture(t,
 		templateFixture("premise-rust-lib", "lib"),
 	)
+	bunRegistry := writeRegistryFixture(t,
+		templateFixture("premise-commander-cli", "app"),
+	)
 	defer overrideResolveRepository(map[string]string{
 		"cloudvoyant/premise":       goRegistry,
 		"cloudvoyant/premise-cargo": cargoRegistry,
+		"cloudvoyant/premise-bun":   bunRegistry,
 	})()
 
 	tests := []struct {
@@ -179,6 +187,7 @@ func TestResolveOfficialTemplateName(t *testing.T) {
 	}{
 		{name: "premise-app", want: "cloudvoyant/premise:premise-app"},
 		{name: "premise-rust-lib", want: "cloudvoyant/premise-cargo:premise-rust-lib"},
+		{name: "premise-commander-cli", want: "cloudvoyant/premise-bun:premise-commander-cli"},
 		{name: "missing", wantErr: "not declared by any official registry"},
 		{name: "..", wantErr: "invalid template name"},
 	}
@@ -203,9 +212,11 @@ func TestResolveOfficialTemplateName(t *testing.T) {
 func TestResolveOfficialTemplateNameAmbiguous(t *testing.T) {
 	first := writeRegistryFixture(t, templateFixture("premise-app", "app"))
 	second := writeRegistryFixture(t, templateFixture("premise-app", "app"))
+	bunRegistry := writeRegistryFixture(t)
 	defer overrideResolveRepository(map[string]string{
 		"cloudvoyant/premise":       first,
 		"cloudvoyant/premise-cargo": second,
+		"cloudvoyant/premise-bun":   bunRegistry,
 	})()
 
 	_, err := ResolveOfficialTemplateName(context.Background(), "premise-app")
@@ -220,20 +231,33 @@ func TestResolveOfficialTemplateNameAmbiguous(t *testing.T) {
 }
 
 func TestAskDefaultTemplateReturnsSelectedSelector(t *testing.T) {
-	goRegistry := writeRegistryFixture(t, templateFixture("premise-app", "app"))
-	cargoRegistry := writeRegistryFixture(t, templateFixture("premise-rust-lib", "lib"))
-	defer overrideResolveRepository(map[string]string{
-		"cloudvoyant/premise":       goRegistry,
-		"cloudvoyant/premise-cargo": cargoRegistry,
-	})()
+	fixtures := make(map[string]string, len(OfficialSources))
+	for _, source := range OfficialSources {
+		name := "fixture-" + strings.ReplaceAll(source, "/", "-")
+		fixtures[source] = writeRegistryFixture(t, templateFixture(name, "app"))
+	}
+	defer overrideResolveRepository(fixtures)()
 
 	var presented []string
+	var selected string
+	shuffleCalled := false
+	originalShuffle := shuffleRegistryEntries
+	shuffleRegistryEntries = func(entries []RegistryEntry) {
+		shuffleCalled = true
+		slices.Reverse(entries)
+	}
+	defer func() { shuffleRegistryEntries = originalShuffle }()
+
 	originalPicker := promptPickEntry
 	promptPickEntry = func(entries []RegistryEntry) (string, error) {
+		if len(entries) == 0 {
+			return "", fmt.Errorf("picker received no entries")
+		}
 		for _, entry := range entries {
 			presented = append(presented, entry.Selector())
 		}
-		return entries[1].Selector(), nil
+		selected = entries[len(entries)-1].Selector()
+		return selected, nil
 	}
 	defer func() { promptPickEntry = originalPicker }()
 
@@ -241,11 +265,19 @@ func TestAskDefaultTemplateReturnsSelectedSelector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if selector != "cloudvoyant/premise-cargo:premise-rust-lib" {
-		t.Fatalf("AskDefaultTemplate returned %q", selector)
+	if !shuffleCalled {
+		t.Fatal("AskDefaultTemplate did not shuffle the combined registry")
 	}
-	if len(presented) != 2 {
-		t.Fatalf("picker enumerated %d entries, want 2", len(presented))
+	if selector != selected {
+		t.Fatalf("AskDefaultTemplate returned %q, want %q", selector, selected)
+	}
+	if len(presented) != len(OfficialSources) {
+		t.Fatalf("picker enumerated %d entries, want %d", len(presented), len(OfficialSources))
+	}
+	lastSource := OfficialSources[len(OfficialSources)-1]
+	wantFirst := lastSource + ":fixture-" + strings.ReplaceAll(lastSource, "/", "-")
+	if presented[0] != wantFirst {
+		t.Fatalf("first picker entry = %q, want shuffled entry %q", presented[0], wantFirst)
 	}
 }
 
@@ -356,9 +388,11 @@ func TestClassifyGenerateSelector(t *testing.T) {
 func TestRegistryResolutionRecordsQualifiedProvenance(t *testing.T) {
 	goRegistry := writeRegistryFixture(t, templateFixture("premise-app", "app"))
 	cargoRegistry := writeRegistryFixture(t, templateFixture("premise-rust-lib", "lib"))
+	bunRegistry := writeRegistryFixture(t)
 	defer overrideResolveRepository(map[string]string{
 		"cloudvoyant/premise":       goRegistry,
 		"cloudvoyant/premise-cargo": cargoRegistry,
+		"cloudvoyant/premise-bun":   bunRegistry,
 	})()
 
 	tests := []struct {

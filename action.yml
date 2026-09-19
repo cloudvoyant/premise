@@ -41,6 +41,8 @@ runs:
         CARGO_REGISTRY_TOKEN: ""
         CARGO_TOKEN: ""
         CRATES_TOKEN: ""
+        NODE_AUTH_TOKEN: ""
+        NPM_TOKEN: ""
       with:
         version: ${{ inputs.mise-version }}
 
@@ -52,6 +54,8 @@ runs:
         CARGO_REGISTRY_TOKEN: ""
         CARGO_TOKEN: ""
         CRATES_TOKEN: ""
+        NODE_AUTH_TOKEN: ""
+        NPM_TOKEN: ""
         MODE: ${{ inputs.install-premise }}
         VERSION: ${{ inputs.premise-version }}
         INSTALL_DIR: ${{ runner.temp }}/premise-bin

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"strings"
 
 	"charm.land/huh/v2"
@@ -68,6 +69,14 @@ func AskTemplateKind() (string, error) {
 	return kind, nil
 }
 
+// shuffleRegistryEntries randomizes the combined official template picker so
+// no registry or language receives a stable first position.
+var shuffleRegistryEntries = func(entries []RegistryEntry) {
+	rand.Shuffle(len(entries), func(i, j int) {
+		entries[i], entries[j] = entries[j], entries[i]
+	})
+}
+
 // AskDefaultTemplate lets a user choose a template from the default registry
 // and returns the selected entry's fully qualified selector.
 func AskDefaultTemplate(ctx context.Context) (string, error) {
@@ -78,6 +87,7 @@ func AskDefaultTemplate(ctx context.Context) (string, error) {
 	if len(entries) == 0 {
 		return "", errors.New("default template registry is empty")
 	}
+	shuffleRegistryEntries(entries)
 	selector, err := promptPickEntry(entries)
 	if err != nil {
 		return "", fmt.Errorf("choose default template: %w", err)

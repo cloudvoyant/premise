@@ -11,6 +11,7 @@ import (
 func TestResolveSelectorArgumentRoutesExplicitSelectorPassthrough(t *testing.T) {
 	cases := []string{
 		"cloudvoyant/premise-cargo:premise-rust-lib",
+		"cloudvoyant/premise-bun:premise-hono-api",
 		"cloudvoyant/premise:premise-app",
 		".:app",
 		"../templates:lib",
