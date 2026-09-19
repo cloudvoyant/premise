@@ -20,8 +20,9 @@ With no selector, premise lists every official registry in an interactive
 picker and records the selected entry's fully qualified selector.
 Pass <owner>/<repo> to pick from one registry, or <owner>/<repo>:<template>
 to name a template non-interactively. A bare :<template> shorthand resolves
-the unique official match. Use .:app to select a template from the current
-workspace.`,
+the unique official match. For example, pass cloudvoyant/premise-bun to pick
+from the Bun registry or :premise-hono-api to resolve that official template.
+Use .:app to select a template from the current workspace.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cwd, err := os.Getwd()

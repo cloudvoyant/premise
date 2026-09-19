@@ -158,6 +158,39 @@ func cargoRegistryFixture(t *testing.T, root string) {
 	}
 }
 
+// bunRegistryFixture writes a minimal Bun template registry without network
+// access so generation exercises the generic source and substitution path used
+// by cloudvoyant/premise-bun.
+func bunRegistryFixture(t *testing.T, root string) {
+	t.Helper()
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := core.NewManifest("bun")
+	manifest.Templates = []core.Template{{
+		Name:    "premise-hono-api",
+		Kind:    "app",
+		Version: "0.1.0",
+		Questions: []core.Question{{
+			Prompt:   "API name:",
+			Type:     "string",
+			Populate: "name",
+		}},
+		Substitutions: map[string]string{"premise-hono-api": "name"},
+	}}
+	if err := core.SaveManifest(filepath.Join(root, core.ManifestFilename), manifest); err != nil {
+		t.Fatal(err)
+	}
+	templateDir := filepath.Join(root, "templates", "premise-hono-api")
+	if err := os.MkdirAll(templateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	packageJSON := []byte("{\n  \"name\": \"premise-hono-api\",\n  \"private\": true\n}\n")
+	if err := os.WriteFile(filepath.Join(templateDir, "package.json"), packageJSON, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestGenerateFromCargoRegistry(t *testing.T) {
 	base := t.TempDir()
 	workspace := filepath.Join(base, "workspace")
@@ -192,6 +225,44 @@ func TestGenerateFromCargoRegistry(t *testing.T) {
 		t.Fatalf("unexpected projects: %#v", reloaded.Workspace.Projects)
 	}
 	if project := reloaded.Workspace.Projects[0]; project.Template != selector || project.Path != "libs/orders" {
+		t.Fatalf("unexpected provenance: %#v", project)
+	}
+}
+
+func TestGenerateFromBunRegistry(t *testing.T) {
+	base := t.TempDir()
+	workspace := filepath.Join(base, "workspace")
+	if _, err := core.InitializeWorkspace(workspace, workspaceMiseTemplate(t)); err != nil {
+		t.Fatal(err)
+	}
+	bunRegistry := filepath.Join(base, "bun-fixture")
+	bunRegistryFixture(t, bunRegistry)
+
+	const selector = "../bun-fixture:premise-hono-api"
+	var output bytes.Buffer
+	if err := core.Generate(context.Background(), workspace, selector, fixedQuestionnaire{"name": "orders-api"}, &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "Generated app orders-api") {
+		t.Fatalf("unexpected generation output: %s", output.String())
+	}
+
+	generated, err := os.ReadFile(filepath.Join(workspace, "apps", "orders-api", "package.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(generated), `"name": "orders-api"`) || strings.Contains(string(generated), "premise-hono-api") {
+		t.Fatalf("unexpected generated package.json:\n%s", generated)
+	}
+
+	reloaded, err := core.LoadManifest(filepath.Join(workspace, core.ManifestFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reloaded.Workspace.Projects) != 1 {
+		t.Fatalf("unexpected projects: %#v", reloaded.Workspace.Projects)
+	}
+	if project := reloaded.Workspace.Projects[0]; project.Template != selector || project.Path != "apps/orders-api" {
 		t.Fatalf("unexpected provenance: %#v", project)
 	}
 }

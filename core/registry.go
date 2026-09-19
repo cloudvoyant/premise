@@ -23,6 +23,7 @@ import (
 var OfficialSources = []string{
 	NativeTemplateSource,
 	"cloudvoyant/premise-cargo",
+	"cloudvoyant/premise-bun",
 }
 
 // TemplateSelection is a parsed registry template selector. Source is the
