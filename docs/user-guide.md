@@ -55,6 +55,8 @@ pm template ls
 
 Each init command creates `templates/<kind>/mise.toml` and adds a matching declaration to `premise.yaml`. Omit the kind to select it interactively. `pm template ls` prints declared template names in stable alphabetical order. Premise rejects template initialization in a monorepo.
 
+Files placed directly under `templates/` are shared scaffold files. Generation copies those root files first, then overlays the selected `templates/<name>/` directory. A template file replaces a same-named shared file; Premise does not merge conflicting file contents. Directories under `templates/` are template sources and are not copied as shared content.
+
 The initial Mise tasks echo their contract names. Replace each echo with the real implementation while keeping the task name stable.
 
 ### Test templates
@@ -82,7 +84,7 @@ pm generate ../my-registry:app
 pm generate ../my-registry:lib
 ```
 
-Premise asks the selected template's questions and creates `apps/<name>` or `libs/<name>` according to its kind. It records the project, source-qualified template selector, path, answers, and declared template version under `workspace.projects`.
+Premise asks the selected template's questions and creates `apps/<name>` or `libs/<name>` according to its kind. The generated project contains the registry's shared root files overlaid by the selected template files. Premise records the project, source-qualified template selector, path, answers, and declared template version under `workspace.projects`.
 
 ### Choose from the default registry
 
@@ -90,12 +92,13 @@ Premise asks the selected template's questions and creates `apps/<name>` or `lib
 pm generate
 ```
 
-When the selector is omitted, Premise loads every official registry — `cloudvoyant/premise` and `cloudvoyant/premise-cargo` — and lists their templates in one interactive picker: `premise-app` and `premise-lib` (Go), plus `premise-rust-lib`, `premise-rust-app`, `premise-clap-cli`, and `premise-ratatui-app` (Cargo). Choosing an entry records its fully qualified `<owner>/<repo>:<template>` selector, so a picked Cargo template resolves to `cloudvoyant/premise-cargo:<template>` and never collides with a same-named Go template.
+When the selector is omitted, Premise loads every official registry — `cloudvoyant/premise`, `cloudvoyant/premise-cargo`, and `cloudvoyant/premise-bun` — and lists their templates in one interactive picker. The Bun entries are `premise-commander-cli`, `premise-hono-api`, `premise-opentui-cli`, `premise-sveltekit-app`, and `premise-tanstack-start-app`. Choosing an entry records its fully qualified `<owner>/<repo>:<template>` selector, so a Bun template resolves to `cloudvoyant/premise-bun:<template>` and never collides with a same-named template from another source.
 
 ### Generate from one registry
 
 ```bash
 pm generate cloudvoyant/premise-cargo
+pm generate cloudvoyant/premise-bun
 ```
 
 Passing an `<owner>/<repo>` with no `:<template>` loads that one registry and opens a picker scoped to its templates, returning the selected entry's fully qualified selector. This is the same picker as `pm generate` with no argument, narrowed to a single source.
@@ -104,9 +107,10 @@ Passing an `<owner>/<repo>` with no `:<template>` loads that one registry and op
 
 ```bash
 pm generate :premise-rust-lib
+pm generate :premise-hono-api
 ```
 
-The leading-colon shorthand names a template without a source. Premise resolves it against every official registry and generates the single match, so `:premise-rust-lib` resolves to the Cargo registry even though it is not the first official source. If the name matches no official registry, or matches more than one, Premise reports the ambiguity and asks you to qualify the source. A bare name is never searched across unofficial registries; reach those with a fully qualified `<owner>/<repo>:<template>` selector.
+The leading-colon shorthand names a template without a source. Premise resolves it against every official registry and generates the single match, so `:premise-rust-lib` resolves to Cargo and `:premise-hono-api` resolves to Bun. If the name matches no official registry, or matches more than one, Premise reports the ambiguity and asks you to qualify the source. A bare name is never searched across unofficial registries; reach those with a fully qualified `<owner>/<repo>:<template>` selector.
 
 ### Generate from a remote repository
 
@@ -115,6 +119,8 @@ pm generate cloudvoyant/premise-template:app
 ```
 
 The remote repository must contain `premise.yaml` and `templates/<template>` for the selected manifest entry. Premise clones it through go-git and caches it below `~/.premise/templates`; later runs refresh that cache. Selectors accept `owner/repository:<template>`, HTTPS Git URLs such as `https://github.com/cloudvoyant/premise-template.git:app`, and SSH Git URLs followed by `:<template>`.
+
+Remote selectors follow the repository's default branch and do not accept a branch, tag, or commit. During registry development, use an absolute local selector such as `/path/to/premise-bun:premise-hono-api` to test an unmerged branch.
 
 ### Manifest
 

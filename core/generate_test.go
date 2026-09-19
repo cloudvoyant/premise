@@ -52,3 +52,50 @@ func TestGenerateRecordsQualifiedSelector(t *testing.T) {
 		t.Fatalf("generated destination missing: %v", err)
 	}
 }
+
+func TestGenerateCopiesSharedFilesBeforeTemplateOverlay(t *testing.T) {
+	template := templateFixture("premise-rust-lib", "lib")
+	template.Substitutions = map[string]string{"shared-placeholder": "name"}
+	cargoRegistry := writeRegistryFixture(t, template)
+	templatesRoot := filepath.Join(cargoRegistry, "templates")
+	if err := os.WriteFile(filepath.Join(templatesRoot, ".shared-config"), []byte("name=shared-placeholder\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(templatesRoot, "mise.toml"), []byte("[tasks.build]\nrun = 'echo shared'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	defer overrideResolveRepository(map[string]string{
+		"cloudvoyant/premise-cargo": cargoRegistry,
+	})()
+
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	if _, err := InitializeWorkspace(workspace, "[tasks.build]\nrun = 'echo ok'\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	const selector = "cloudvoyant/premise-cargo:premise-rust-lib"
+	if err := Generate(context.Background(), workspace, selector, fixedQuestionnaire{"name": "orders"}, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+
+	destination := filepath.Join(workspace, "libs", "orders")
+	shared, err := os.ReadFile(filepath.Join(destination, ".shared-config"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(shared), "name=orders\n"; got != want {
+		t.Fatalf("shared file = %q, want %q", got, want)
+	}
+	overlay, err := os.ReadFile(filepath.Join(destination, "mise.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(overlay), "[tasks.build]\nrun = 'echo ok'\n"; got != want {
+		t.Fatalf("overlaid file = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(destination, "premise-rust-lib")); err == nil {
+		t.Fatal("template directory was copied as shared content")
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("inspect unexpected shared directory: %v", err)
+	}
+}

@@ -64,7 +64,12 @@ func Generate(ctx context.Context, cwd, selector string, prompts Questionnaire, 
 	if err != nil {
 		return err
 	}
-	if err := Scaffold(ScaffoldRequest{Source: source, Destination: destination, Replacements: replacements}); err != nil {
+	if err := Scaffold(ScaffoldRequest{
+		SharedSource: filepath.Join(sourceRoot, "templates"),
+		Source:       source,
+		Destination:  destination,
+		Replacements: replacements,
+	}); err != nil {
 		return err
 	}
 
