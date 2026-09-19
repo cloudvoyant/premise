@@ -92,7 +92,7 @@ Premise asks the selected template's questions and creates `apps/<name>` or `lib
 pm generate
 ```
 
-When the selector is omitted, Premise loads every official registry — `cloudvoyant/premise`, `cloudvoyant/premise-cargo`, and `cloudvoyant/premise-bun` — and lists their templates in one interactive picker. The Bun entries are `premise-commander-cli`, `premise-hono-api`, `premise-opentui-cli`, `premise-sveltekit-app`, and `premise-tanstack-start-app`. Choosing an entry records its fully qualified `<owner>/<repo>:<template>` selector, so a Bun template resolves to `cloudvoyant/premise-bun:<template>` and never collides with a same-named template from another source.
+When the selector is omitted, Premise loads every official registry — `cloudvoyant/premise`, `cloudvoyant/premise-cargo`, and `cloudvoyant/premise-bun` — and lists their templates in one interactive picker. The combined entries are randomized for each prompt so no registry or language keeps the first position. The Bun entries are `premise-commander-cli`, `premise-hono-api`, `premise-opentui-cli`, `premise-sveltekit-app`, and `premise-tanstack-start-app`. Choosing an entry records its fully qualified `<owner>/<repo>:<template>` selector, so a Bun template resolves to `cloudvoyant/premise-bun:<template>` and never collides with a same-named template from another source.
 
 ### Generate from one registry
 

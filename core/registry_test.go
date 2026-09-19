@@ -240,6 +240,14 @@ func TestAskDefaultTemplateReturnsSelectedSelector(t *testing.T) {
 
 	var presented []string
 	var selected string
+	shuffleCalled := false
+	originalShuffle := shuffleRegistryEntries
+	shuffleRegistryEntries = func(entries []RegistryEntry) {
+		shuffleCalled = true
+		slices.Reverse(entries)
+	}
+	defer func() { shuffleRegistryEntries = originalShuffle }()
+
 	originalPicker := promptPickEntry
 	promptPickEntry = func(entries []RegistryEntry) (string, error) {
 		if len(entries) == 0 {
@@ -257,11 +265,19 @@ func TestAskDefaultTemplateReturnsSelectedSelector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !shuffleCalled {
+		t.Fatal("AskDefaultTemplate did not shuffle the combined registry")
+	}
 	if selector != selected {
 		t.Fatalf("AskDefaultTemplate returned %q, want %q", selector, selected)
 	}
 	if len(presented) != len(OfficialSources) {
 		t.Fatalf("picker enumerated %d entries, want %d", len(presented), len(OfficialSources))
+	}
+	lastSource := OfficialSources[len(OfficialSources)-1]
+	wantFirst := lastSource + ":fixture-" + strings.ReplaceAll(lastSource, "/", "-")
+	if presented[0] != wantFirst {
+		t.Fatalf("first picker entry = %q, want shuffled entry %q", presented[0], wantFirst)
 	}
 }
 

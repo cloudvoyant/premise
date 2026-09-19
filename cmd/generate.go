@@ -16,8 +16,8 @@ var generateCmd = &cobra.Command{
 	Short:   "Generate a monorepo project from a template",
 	Long: `Generates a monorepo project from a template, driven by a questionnaire.
 
-With no selector, premise lists every official registry in an interactive
-picker and records the selected entry's fully qualified selector.
+With no selector, premise combines every official registry, randomizes the
+interactive picker order, and records the selected entry's qualified selector.
 Pass <owner>/<repo> to pick from one registry, or <owner>/<repo>:<template>
 to name a template non-interactively. A bare :<template> shorthand resolves
 the unique official match. For example, pass cloudvoyant/premise-bun to pick
