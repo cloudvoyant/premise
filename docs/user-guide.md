@@ -55,6 +55,8 @@ pm template ls
 
 Each init command creates `templates/<kind>/mise.toml` and adds a matching declaration to `premise.yaml`. Omit the kind to select it interactively. `pm template ls` prints declared template names in stable alphabetical order. Premise rejects template initialization in a monorepo.
 
+Files placed directly under `templates/` are shared scaffold files. Generation copies those root files first, then overlays the selected `templates/<name>/` directory. A template file replaces a same-named shared file; Premise does not merge conflicting file contents. Directories under `templates/` are template sources and are not copied as shared content.
+
 The initial Mise tasks echo their contract names. Replace each echo with the real implementation while keeping the task name stable.
 
 ### Test templates
@@ -82,7 +84,7 @@ pm generate ../my-registry:app
 pm generate ../my-registry:lib
 ```
 
-Premise asks the selected template's questions and creates `apps/<name>` or `libs/<name>` according to its kind. It records the project, source-qualified template selector, path, answers, and declared template version under `workspace.projects`.
+Premise asks the selected template's questions and creates `apps/<name>` or `libs/<name>` according to its kind. The generated project contains the registry's shared root files overlaid by the selected template files. Premise records the project, source-qualified template selector, path, answers, and declared template version under `workspace.projects`.
 
 ### Choose from the default registry
 
