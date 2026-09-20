@@ -75,15 +75,16 @@ func Generate(ctx context.Context, cwd, selector string, options GenerateOptions
 	if err != nil {
 		return err
 	}
-	plan, err := BuildMergePlan(MergeRequest{
-		SharedRegistryRoot:   filepath.Join(sourceRoot, "templates"),
-		SelectedTemplateRoot: source,
-		Destination:          destination,
-		Substitutions:        replacements,
-		SelectedIdentity:     selector,
-		TemplateKind:         template.Kind,
-		RegistryIdentity:     selection.Source,
-		ResolveConflict:      options.ConflictResolver,
+	plan, err := BuildMergePlan(TemplateGeneration{
+		RegistryTemplatesRoot: filepath.Join(sourceRoot, "templates"),
+		TemplateRoot:          source,
+		ClientRepoRoot:        workspaceRoot,
+		ProjectPath:           relativeDestination,
+		Substitutions:         replacements,
+		TemplateIdentity:      selector,
+		TemplateKind:          template.Kind,
+		RegistryIdentity:      selection.Source,
+		ResolveConflict:       options.ConflictResolver,
 	})
 	if err != nil {
 		return err

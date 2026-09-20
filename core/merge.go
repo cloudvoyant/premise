@@ -73,16 +73,27 @@ type MergeEntry struct {
 	Strategy MergeStrategy
 }
 
-// MergeRequest contains roots which have already been resolved by generation.
-type MergeRequest struct {
-	SharedRegistryRoot   string
-	SelectedTemplateRoot string
-	Destination          string
-	Substitutions        map[string]string
-	TemplateKind         string
-	RegistryIdentity     string
-	SelectedIdentity     string
-	ResolveConflict      MergeConflictResolver
+// TemplateGeneration contains roots and choices resolved for one generated project.
+type TemplateGeneration struct {
+	RegistryTemplatesRoot string
+	TemplateRoot          string
+	ClientRepoRoot        string
+	ProjectPath           string
+	Substitutions         map[string]string
+	TemplateKind          string
+	RegistryIdentity      string
+	TemplateIdentity      string
+	ResolveConflict       MergeConflictResolver
+}
+
+type mergeSources struct {
+	registryTemplatesRoot string
+	templateRoot          string
+}
+
+type mergeStages struct {
+	stage         string
+	selectedStage string
 }
 
 // MergePlan is the complete, prepared merge. Its staging paths are private so
@@ -99,69 +110,24 @@ type MergePlan struct {
 	templateKind  string
 }
 
-// BuildMergePlan validates and prepares a merge without creating Destination.
-// The returned plan owns temporary staging directories until ExecuteMergePlan.
-func BuildMergePlan(request MergeRequest) (*MergePlan, error) {
-	if request.Destination == "" {
-		return nil, errors.New("merge destination is required")
-	}
-	selectedRoot, err := filepath.Abs(request.SelectedTemplateRoot)
+// BuildMergePlan validates and prepares a merge without creating the project
+// destination. The returned plan owns temporary staging directories until
+// ExecuteMergePlan.
+func BuildMergePlan(request TemplateGeneration) (*MergePlan, error) {
+	destination, err := validateMergeTarget(request)
 	if err != nil {
-		return nil, fmt.Errorf("resolve selected template root: %w", err)
+		return nil, err
 	}
-	if request.SelectedTemplateRoot == "" {
-		return nil, errors.New("selected template root is required")
-	}
-	if info, err := os.Stat(selectedRoot); err != nil {
-		return nil, fmt.Errorf("inspect selected template root: %w", err)
-	} else if !info.IsDir() {
-		return nil, fmt.Errorf("selected template root %s is not a directory", selectedRoot)
-	}
-
-	sharedRoot := ""
-	if request.SharedRegistryRoot != "" {
-		sharedRoot, err = filepath.Abs(request.SharedRegistryRoot)
-		if err != nil {
-			return nil, fmt.Errorf("resolve shared registry root: %w", err)
-		}
-		if info, err := os.Stat(sharedRoot); err != nil {
-			return nil, fmt.Errorf("inspect shared registry root: %w", err)
-		} else if !info.IsDir() {
-			return nil, fmt.Errorf("shared registry root %s is not a directory", sharedRoot)
-		}
-	}
-	destination, err := filepath.Abs(request.Destination)
+	sources, err := validateMergeSources(request, destination)
 	if err != nil {
-		return nil, fmt.Errorf("resolve merge destination: %w", err)
+		return nil, err
 	}
-	if selectedRoot == destination || (sharedRoot != "" && sharedRoot == destination) {
-		return nil, errors.New("merge source and destination must differ")
-	}
-	if _, err := os.Lstat(destination); err == nil {
-		return nil, fmt.Errorf("destination %s already exists", destination)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("inspect merge destination: %w", err)
-	}
-	for _, source := range []string{selectedRoot, sharedRoot} {
-		if source != "" && source != destination && inside(source, destination) {
-			return nil, fmt.Errorf("merge destination %s is inside source %s", destination, source)
-		}
-	}
-
-	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
-		return nil, fmt.Errorf("create merge destination parent: %w", err)
-	}
-	stage, err := os.MkdirTemp(filepath.Dir(destination), ".premise-stage-*")
+	stages, err := createMergeStages(destination)
 	if err != nil {
-		return nil, fmt.Errorf("create merge staging directory: %w", err)
-	}
-	selectedStage, err := os.MkdirTemp("", "premise-selected-*")
-	if err != nil {
-		_ = os.RemoveAll(stage)
-		return nil, fmt.Errorf("create selected template staging directory: %w", err)
+		return nil, err
 	}
 	plan := &MergePlan{
-		destination: destination, stage: stage, selectedStage: selectedStage,
+		destination: destination, stage: stages.stage, selectedStage: stages.selectedStage,
 		templateKind: request.TemplateKind,
 	}
 	keepStages := false
@@ -171,25 +137,164 @@ func BuildMergePlan(request MergeRequest) (*MergePlan, error) {
 		}
 	}()
 
-	if err = copyTree(selectedRoot, selectedStage, literalReplacer(request.Substitutions)); err != nil {
+	if err := copyTree(sources.templateRoot, plan.selectedStage, literalReplacer(request.Substitutions)); err != nil {
 		return nil, fmt.Errorf("stage selected template: %w", err)
 	}
-	shared, err := readSharedValues(sharedRoot, literalReplacer(request.Substitutions))
-	if err != nil {
+	if err := buildMergeEntries(plan, sources, request); err != nil {
 		return nil, err
 	}
-	selected, rootMode, err := readTreeValues(selectedStage, nil)
+	keepStages = true
+	return plan, nil
+}
+
+func validateMergeTarget(request TemplateGeneration) (string, error) {
+	if request.ClientRepoRoot == "" {
+		return "", errors.New("client repository root is required")
+	}
+	clientRoot, err := filepath.Abs(request.ClientRepoRoot)
 	if err != nil {
-		return nil, err
+		return "", fmt.Errorf("resolve client repository root: %w", err)
+	}
+	if info, err := os.Stat(clientRoot); err != nil {
+		return "", fmt.Errorf("inspect client repository root: %w", err)
+	} else if !info.IsDir() {
+		return "", fmt.Errorf("client repository root %s is not a directory", clientRoot)
+	}
+	clientRoot, err = filepath.EvalSymlinks(clientRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolve client repository root: %w", err)
+	}
+	if request.ProjectPath == "" {
+		return "", errors.New("project path is required")
+	}
+	if filepath.IsAbs(request.ProjectPath) {
+		return "", errors.New("project path must be relative")
+	}
+	destination := filepath.Join(clientRoot, request.ProjectPath)
+	if !inside(clientRoot, destination) {
+		return "", fmt.Errorf("project path %q escapes client repository root", request.ProjectPath)
+	}
+	if _, err := os.Lstat(destination); err == nil {
+		return "", fmt.Errorf("destination %s already exists", destination)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("inspect merge destination: %w", err)
+	}
+	resolvedDestination, err := resolveFuturePath(destination)
+	if err != nil {
+		return "", fmt.Errorf("resolve merge destination: %w", err)
+	}
+	if !inside(clientRoot, resolvedDestination) {
+		return "", fmt.Errorf("project path %q escapes client repository root", request.ProjectPath)
+	}
+	return resolvedDestination, nil
+}
+
+func validateMergeSources(request TemplateGeneration, destination string) (mergeSources, error) {
+	if request.TemplateRoot == "" {
+		return mergeSources{}, errors.New("template root is required")
+	}
+	templateRoot, err := filepath.Abs(request.TemplateRoot)
+	if err != nil {
+		return mergeSources{}, fmt.Errorf("resolve template root: %w", err)
+	}
+	if info, err := os.Stat(templateRoot); err != nil {
+		return mergeSources{}, fmt.Errorf("inspect template root: %w", err)
+	} else if !info.IsDir() {
+		return mergeSources{}, fmt.Errorf("template root %s is not a directory", templateRoot)
+	}
+	templateRoot, err = filepath.EvalSymlinks(templateRoot)
+	if err != nil {
+		return mergeSources{}, fmt.Errorf("resolve template root: %w", err)
+	}
+
+	sources := mergeSources{templateRoot: templateRoot}
+	if request.RegistryTemplatesRoot != "" {
+		sources.registryTemplatesRoot, err = filepath.Abs(request.RegistryTemplatesRoot)
+		if err != nil {
+			return mergeSources{}, fmt.Errorf("resolve registry templates root: %w", err)
+		}
+		if info, err := os.Stat(sources.registryTemplatesRoot); err != nil {
+			return mergeSources{}, fmt.Errorf("inspect registry templates root: %w", err)
+		} else if !info.IsDir() {
+			return mergeSources{}, fmt.Errorf("registry templates root %s is not a directory", sources.registryTemplatesRoot)
+		}
+		sources.registryTemplatesRoot, err = filepath.EvalSymlinks(sources.registryTemplatesRoot)
+		if err != nil {
+			return mergeSources{}, fmt.Errorf("resolve registry templates root: %w", err)
+		}
+	}
+	for _, source := range []string{sources.templateRoot, sources.registryTemplatesRoot} {
+		if source != "" && inside(source, destination) {
+			return mergeSources{}, fmt.Errorf("merge destination %s is inside source %s", destination, source)
+		}
+	}
+	return sources, nil
+}
+
+func createMergeStages(destination string) (mergeStages, error) {
+	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+		return mergeStages{}, fmt.Errorf("create merge destination parent: %w", err)
+	}
+	stage, err := os.MkdirTemp(filepath.Dir(destination), ".premise-stage-*")
+	if err != nil {
+		return mergeStages{}, fmt.Errorf("create merge staging directory: %w", err)
+	}
+	selectedStage, err := os.MkdirTemp("", "premise-selected-*")
+	if err != nil {
+		_ = os.RemoveAll(stage)
+		return mergeStages{}, fmt.Errorf("create selected template staging directory: %w", err)
+	}
+	return mergeStages{stage: stage, selectedStage: selectedStage}, nil
+}
+
+// resolveFuturePath resolves symlinks in the existing portion of a path while
+// preserving the not-yet-created suffix. This keeps a project path inside the
+// client repository even when one of its parent directories is a symlink.
+func resolveFuturePath(path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	var suffix []string
+	probe := absolute
+	for {
+		if _, err := os.Lstat(probe); err == nil {
+			resolved, err := filepath.EvalSymlinks(probe)
+			if err != nil {
+				return "", err
+			}
+			for index := len(suffix) - 1; index >= 0; index-- {
+				resolved = filepath.Join(resolved, suffix[index])
+			}
+			return resolved, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(probe)
+		if parent == probe {
+			return "", errors.New("no existing parent directory")
+		}
+		suffix = append(suffix, filepath.Base(probe))
+		probe = parent
+	}
+}
+
+func buildMergeEntries(plan *MergePlan, sources mergeSources, request TemplateGeneration) error {
+	shared, err := readSharedValues(sources.registryTemplatesRoot, literalReplacer(request.Substitutions))
+	if err != nil {
+		return err
+	}
+	selected, rootMode, err := readTreeValues(plan.selectedStage, nil)
+	if err != nil {
+		return err
 	}
 	plan.Root = PathValue{Present: true, Kind: "dir", Mode: rootMode}
-	resolver := request.ResolveConflict
 	registryIdentity := request.RegistryIdentity
 	if registryIdentity == "" {
-		registryIdentity = request.SelectedIdentity
+		registryIdentity = request.TemplateIdentity
 	}
 	if registryIdentity == "" {
-		registryIdentity = filepath.Base(selectedRoot)
+		registryIdentity = filepath.Base(sources.templateRoot)
 	}
 	paths := unionPathKeys(shared, selected)
 	for _, path := range paths {
@@ -208,25 +313,25 @@ func BuildMergePlan(request MergeRequest) (*MergePlan, error) {
 		default:
 			conflict := MergeConflict{Path: path, Key: path, Kind: pathKind(sharedValue, selectedValue), Shared: describePathValue(sharedValue), Selected: describePathValue(selectedValue)}
 			plan.Collisions = append(plan.Collisions, conflict)
-			if path == "mise.toml" && sharedValue.Kind == "file" && selectedValue.Kind == "file" {
-				if err = mergeTierOneMise(plan, &entry, sharedValue, selectedValue, request.TemplateKind, registryIdentity, resolver); err != nil {
-					return nil, err
+			switch {
+			case path == "mise.toml" && sharedValue.Kind == "file" && selectedValue.Kind == "file":
+				if err := mergeTierOneMise(plan, &entry, sharedValue, selectedValue, request.TemplateKind, registryIdentity, request.ResolveConflict); err != nil {
+					return err
 				}
-			} else if isOrderedMergePath(path) && sharedValue.Kind == "file" && selectedValue.Kind == "file" {
-				if err = mergeTierTwoLines(&entry, sharedValue, selectedValue, resolver); err != nil {
-					return nil, err
+			case isOrderedMergePath(path) && sharedValue.Kind == "file" && selectedValue.Kind == "file":
+				if err := mergeTierTwoLines(&entry, sharedValue, selectedValue, request.ResolveConflict); err != nil {
+					return err
 				}
-			} else {
-				if err = mergeTierThreeWholeFile(&entry, conflict, resolver); err != nil {
-					return nil, err
+			default:
+				if err := mergeTierThreeWholeFile(&entry, conflict, request.ResolveConflict); err != nil {
+					return err
 				}
 			}
 		}
 		plan.Entries = append(plan.Entries, entry)
 	}
 	plan.Entries = pruneOutputFileDescendants(plan.Entries)
-	keepStages = true
-	return plan, nil
+	return nil
 }
 
 // ExecuteMergePlan validates a prepared merge and publishes it with a final

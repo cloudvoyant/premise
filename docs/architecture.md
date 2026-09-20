@@ -2,70 +2,62 @@
 
 ## Overview
 
-Premise is a create-only monorepo project generator and lifecycle command-line interface (CLI). The Go packages under `core/` own manifests, registry discovery, generation, Mise execution, and release behavior. The design keeps project creation deterministic and tests generated candidates before they enter a workspace.
+Premise is a Git-native platform engineering toolkit. It uses Git repositories, Mise, monorepo conventions, task contracts, templates, and CI workflows to make development and delivery consistent across projects.
 
-## Components
+Premise includes project generation today, but the whole product is not permanently create-only. Generation currently creates new projects without overwriting destinations; template migration and other lifecycle capabilities are planned as separate workflows.
 
-| Component          | Responsibility                                                                                                                                                                                   |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `cmd/`             | Parse CLI commands, resolve selectors, and construct interactive dependencies.                                                                                                                   |
-| `core/registry.go` | Resolve local and remote registries and select one declared template.                                                                                                                            |
-| `core/generate.go` | Resolve the registry, ask questionnaire questions, invoke the merge plan, and persist the project manifest entry.                                                                                |
-| `core/merge.go`    | Build comparison and decisions with `BuildMergePlan`; let `ExecuteMergePlan` own private staging, dependency preflights, materialization, complete-candidate validation, and destination rename. |
-| `core/misex.go`    | Provide the Mise process boundary and consolidated typed `mise.toml` extraction and composition, including tool, environment, and task rules.                                                    |
-| `core/template.go` | Resolve template directories, apply substitutions while copying trees, and run template contracts.                                                                                               |
-| `core/config.go`   | Load, validate, and save `premise.yaml`.                                                                                                                                                         |
+## Requirements
 
-## Generation flow
+- Manage development environments, including tool versions, environment values, and installation through `pm install` and Mise.
+- Provide a lightweight, package-manager-forward monorepo model that does not replace the package manager's dependency and workspace responsibilities.
+- Provide a task runner through `pm run`, layered over Mise tasks and monorepo conventions.
+- Derive automatic CI from task contracts so projects expose stable lifecycle names instead of provider-specific task glue.
+- Scaffold projects and generate them from local or remote templates.
+- Support future template migration for existing projects without changing the create-only generation workflow.
+- Establish future standardized infrastructure and secret management without making those planned systems appear implemented today.
+
+## Design
+
+The architecture has four cooperating components:
+
+| Component                                                 | Responsibility                                                                                                                                                                                                                    |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Development Environment (`pm install` / Mise)**         | Mise owns declared tools, versions, environment resolution, and installation. Premise provides the workspace entry point and conventions around that environment.                                                                 |
+| **Monorepo and Task Runner (`pm run` layered over Mise)** | Premise discovers the workspace and its projects, applies `apps/` and `libs/` conventions, and routes root or project task requests to Mise. Package managers remain responsible for package dependencies and workspace behavior. |
+| **Scaffolding and Template Management**                   | Registries declare templates in `premise.yaml`; generation resolves a template, applies answers, and creates a project using the expected monorepo structure. Template migration is planned separately.                           |
+| **Automatic CI (GitHub Action and task contracts)**       | The GitHub Action installs the required environment and invokes `pm ci flow`. Contract task names give the CI flow a stable interface while each project owns the task implementation.                                            |
 
 ```mermaid
-flowchart TD
-  A[Resolve or pull registry] --> B[Ask template questions]
-  B --> C[Apply substitutions]
-  C --> D[BuildMergePlan: compare roots and resolve decisions]
-  D --> E[Print comparison and namespace notices]
-  E --> F[ExecuteMergePlan: run dependency preflights]
-  F --> G[Materialize private stage]
-  G --> H[Validate complete candidate]
-  H --> I[Rename stage to destination]
-  I --> J[Add project and save premise.yaml]
-  J -->|save fails| K[Remove new destination]
+flowchart LR
+  Git[Git repository] --> PM[Premise pm commands]
+  PM --> Mise[Mise: tools, environment, tasks]
+  PM --> Mono[Monorepo conventions]
+  Registry[Local or remote template registry] --> Scaffold[Scaffolding and template management]
+  Scaffold --> Mono
+  Action[GitHub Action] --> CI[Automatic CI]
+  CI --> Contracts[Task contracts]
+  Contracts --> Mise
 ```
 
-The comparison covers regular files directly under the registry `templates/` root and every entry in the selected template tree. Sibling template directories never become shared content. Collisions are shown in path order, while one-sided paths are copied without a decision.
+Premise currently implements environment setup, monorepo task routing, scaffolding, template-root merging, and contract-driven CI. Template migration, standardized secret management, and standardized infrastructure are planned rather than implemented. Infrastructure providers and ownership boundaries remain future design work.
 
-## Root merge policies
+## Implementation
 
-### Tier 1: root `mise.toml`
+Mise owns tools, environments, and task execution. Premise manages monorepo conventions on top of Mise and uses task contracts for CI.
 
-The root `mise.toml` is decoded as typed data. Tool selectors use Mise-specific semantic rules: compatible version selectors within one major version choose the greater version, incompatible major versions fail, and other conflicts use an explicit choice. Environment conflicts can keep shared, use selected, rename the selected key with selected references updated, or abort.
+Generation relies on the expected monorepo structure, including the workspace manifest and project locations, when it selects a destination and records provenance.
 
-Contract task collisions retain selected metadata and compose commands in shared-first, selected-second order. Root contract tasks are expected to be argument-free. Non-contract task collisions keep the shared task name, copy the selected task under `<registry-prefix>:<task>`, and print a notice naming the namespace.
+Premise imposes conventions around secret management and artifact publishing. These conventions protect credentials and provide consistent release interfaces, but they do not yet constitute a complete standardized secret-management or infrastructure platform.
 
-### Tier 2: `.gitignore` and `.gitattributes`
+Infrastructure ownership is future work. Provider-specific infrastructure, provisioning, and long-term ownership rules must be defined by a later architecture and are not part of the current implementation.
 
-These files use ordered line handling with shared lines first and selected lines second. Premise normalizes CRLF and terminal newline differences and removes only adjacent duplicate lines because line order has meaning for Git policy.
-
-### Tier 3: other differing root files
-
-All other differing root files use a complete-file decision: keep shared, use selected, or abort. Equal files need no decision. Premise does not apply semantic merges to editor configuration, Prettier files, package manifests, or arbitrary ignore files.
-
-## Validation boundaries
-
-`BuildMergePlan` prepares the comparison, resolves collisions, and records the typed Mise result without creating the destination. `ExecuteMergePlan` first runs a dependency preflight for each selected-template tool version changed by the shared configuration; each preflight uses a disposable copy, `mise install`, and every required template contract.
-
-After materialization, `ExecuteMergePlan` copies the complete stage to another disposable directory and runs `mise install` plus every required contract there. Mise artifacts stay out of the stage that becomes the destination, and the destination is renamed only after complete validation succeeds.
-
-After the rename, generation registers the project and saves `premise.yaml`; if either operation fails, it removes the new destination. Crash-consistent updates across the destination and manifest are out of scope.
-
-## Extension rules
-
-Add a smart-file handler only when the file format has defined ordering, override, comment, and normalization semantics with tests. Do not route arbitrary configuration files through the ordered-line or typed Mise handlers. Existing-project template upgrades require a separate design.
+The detailed create-only generation and template-root merge design is documented in [Generation Architecture](generation.md). The focused merge policy remains in [ADR 0003](../adr/0003-template-root-merging.md).
 
 ## References
 
 - [User Guide](user-guide.md)
+- [Generation Architecture](generation.md)
+- [Infrastructure](infrastructure.md)
 - [ADR 0003: Focused template-root merge policies](../adr/0003-template-root-merging.md)
 - [Mise configuration](https://mise.jdx.dev/configuration.html)
-- [Git attributes](https://git-scm.com/docs/gitattributes)
-- [Git ignore](https://git-scm.com/docs/gitignore)
+- [GitHub Actions](https://docs.github.com/en/actions)

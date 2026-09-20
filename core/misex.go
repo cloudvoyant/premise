@@ -23,20 +23,133 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
+// Types -----------------------------------------------------------------------
+
+type miseRunner struct {
+	Stdout            io.Writer
+	Stderr            io.Writer
+	Ceiling           string
+	RemoveEnvironment []string
+}
+
+type MiseTool struct {
+	Raw            any
+	Selector       string
+	StringSelector bool
+}
+
+type MiseTask struct {
+	Raw       map[string]any
+	Run       []string
+	Shorthand bool
+}
+
+type MiseConfig struct {
+	Root  map[string]any
+	Tools map[string]MiseTool
+	Tasks map[string]MiseTask
+	Env   map[string]any
+}
+
+type ToolChange struct {
+	Name string
+	From any
+	To   any
+}
+
+type MiseMergeResult struct {
+	Config      MiseConfig
+	Bytes       []byte
+	ToolChanges []ToolChange
+	Notices     []string
+}
+
+// API -------------------------------------------------------------------------
+
+// ExtractMiseConfig parses and normalizes a Mise configuration.
+func ExtractMiseConfig(label string, data []byte) (MiseConfig, error) {
+	var root map[string]any
+	if err := toml.Unmarshal(data, &root); err != nil {
+		return MiseConfig{}, fmt.Errorf("decode %s mise.toml: %w", label, err)
+	}
+	return extractMiseRoot(label, root)
+}
+
+// MergeMiseConfigs combines typed shared and selected Mise configurations.
+func MergeMiseConfigs(shared, selected MiseConfig, templateKind, registryIdentity string, resolver MergeConflictResolver) (MiseMergeResult, error) {
+	selectedRoot, environment, err := mergeMiseEnvironment(shared, selected, registryIdentity, resolver)
+	if err != nil {
+		return MiseMergeResult{}, err
+	}
+	selected, err = extractMiseRoot(registryIdentity, selectedRoot)
+	if err != nil {
+		return MiseMergeResult{}, err
+	}
+
+	root := make(map[string]any)
+	keys := sortedUnionKeys(shared.Root, selected.Root)
+	for _, key := range keys {
+		if key == "tools" || key == "tasks" || key == "env" {
+			continue
+		}
+		left, leftOK := shared.Root[key]
+		right, rightOK := selected.Root[key]
+		value, ok, err := mergeMiseValue(key, left, leftOK, right, rightOK, resolver)
+		if err != nil {
+			return MiseMergeResult{}, err
+		}
+		if ok {
+			root[key] = value
+		}
+	}
+
+	tools, err := mergeMiseTools(shared.Tools, selected.Tools, resolver)
+	if err != nil {
+		return MiseMergeResult{}, err
+	}
+	if len(tools) > 0 {
+		root["tools"] = tools
+	}
+	tasks, notices, err := mergeMiseTasks(shared.Tasks, selected.Tasks, templateKind, registryIdentity)
+	if err != nil {
+		return MiseMergeResult{}, err
+	}
+	if len(tasks) > 0 {
+		root["tasks"] = tasks
+	}
+	if len(environment) > 0 {
+		root["env"] = environment
+	}
+
+	config, err := extractMiseRoot("merged", root)
+	if err != nil {
+		return MiseMergeResult{}, err
+	}
+	data, err := encodeMiseConfig(config)
+	if err != nil {
+		return MiseMergeResult{}, err
+	}
+	changes := make([]ToolChange, 0)
+	for name, selectedTool := range selected.Tools {
+		mergedTool, ok := config.Tools[name]
+		if !ok || anyEqual(selectedTool.Raw, mergedTool.Raw) {
+			continue
+		}
+		changes = append(changes, ToolChange{Name: name, From: cloneAny(selectedTool.Raw), To: cloneAny(mergedTool.Raw)})
+	}
+	sort.Slice(changes, func(i, j int) bool { return changes[i].Name < changes[j].Name })
+	sort.Strings(notices)
+	return MiseMergeResult{Config: config, Bytes: data, ToolChanges: changes, Notices: notices}, nil
+}
+
+// Utils -----------------------------------------------------------------------
+
 var publicationCredentialEnvironment = []string{
 	"GITHUB_TOKEN",
 	"GH_TOKEN",
 	"CARGO_REGISTRY_TOKEN",
 	"CARGO_TOKEN",
 	"CRATES_TOKEN",
-}
-
-// miseRunner executes Mise commands with a controlled working directory and environment.
-type miseRunner struct {
-	Stdout            io.Writer
-	Stderr            io.Writer
-	Ceiling           string
-	RemoveEnvironment []string
 }
 
 // run executes one Mise command.
@@ -127,46 +240,6 @@ func withoutEnvironment(environment []string, names ...string) []string {
 		filtered = append(filtered, entry)
 	}
 	return filtered
-}
-
-type MiseTool struct {
-	Raw            any
-	Selector       string
-	StringSelector bool
-}
-
-type MiseTask struct {
-	Raw       map[string]any
-	Run       []string
-	Shorthand bool
-}
-
-type MiseConfig struct {
-	Root  map[string]any
-	Tools map[string]MiseTool
-	Tasks map[string]MiseTask
-	Env   map[string]any
-}
-
-type ToolChange struct {
-	Name string
-	From any
-	To   any
-}
-
-type MiseMergeResult struct {
-	Config      MiseConfig
-	Bytes       []byte
-	ToolChanges []ToolChange
-	Notices     []string
-}
-
-func ExtractMiseConfig(label string, data []byte) (MiseConfig, error) {
-	var root map[string]any
-	if err := toml.Unmarshal(data, &root); err != nil {
-		return MiseConfig{}, fmt.Errorf("decode %s mise.toml: %w", label, err)
-	}
-	return extractMiseRoot(label, root)
 }
 
 func extractMiseRoot(label string, input map[string]any) (MiseConfig, error) {
@@ -323,6 +396,7 @@ func cloneAny(value any) any {
 func anyEqual(left, right any) bool {
 	return reflect.DeepEqual(left, right)
 }
+
 func composeMise(shared, selected []byte, templateKind, registryIdentity string, resolver MergeConflictResolver) (MiseMergeResult, error) {
 	sharedConfig, err := ExtractMiseConfig("shared", shared)
 	if err != nil {
@@ -332,73 +406,7 @@ func composeMise(shared, selected []byte, templateKind, registryIdentity string,
 	if err != nil {
 		return MiseMergeResult{}, err
 	}
-	return mergeMiseConfigs(sharedConfig, selectedConfig, templateKind, registryIdentity, resolver)
-}
-
-func mergeMiseConfigs(shared, selected MiseConfig, templateKind, registryIdentity string, resolver MergeConflictResolver) (MiseMergeResult, error) {
-	selectedRoot, environment, err := mergeMiseEnvironment(shared, selected, registryIdentity, resolver)
-	if err != nil {
-		return MiseMergeResult{}, err
-	}
-	selected, err = extractMiseRoot(registryIdentity, selectedRoot)
-	if err != nil {
-		return MiseMergeResult{}, err
-	}
-
-	root := make(map[string]any)
-	keys := sortedUnionKeys(shared.Root, selected.Root)
-	for _, key := range keys {
-		if key == "tools" || key == "tasks" || key == "env" {
-			continue
-		}
-		left, leftOK := shared.Root[key]
-		right, rightOK := selected.Root[key]
-		value, ok, err := mergeMiseValue(key, left, leftOK, right, rightOK, resolver)
-		if err != nil {
-			return MiseMergeResult{}, err
-		}
-		if ok {
-			root[key] = value
-		}
-	}
-
-	tools, err := mergeMiseTools(shared.Tools, selected.Tools, resolver)
-	if err != nil {
-		return MiseMergeResult{}, err
-	}
-	if len(tools) > 0 {
-		root["tools"] = tools
-	}
-	tasks, notices, err := mergeMiseTasks(shared.Tasks, selected.Tasks, templateKind, registryIdentity)
-	if err != nil {
-		return MiseMergeResult{}, err
-	}
-	if len(tasks) > 0 {
-		root["tasks"] = tasks
-	}
-	if len(environment) > 0 {
-		root["env"] = environment
-	}
-
-	config, err := extractMiseRoot("merged", root)
-	if err != nil {
-		return MiseMergeResult{}, err
-	}
-	data, err := encodeMiseConfig(config)
-	if err != nil {
-		return MiseMergeResult{}, err
-	}
-	changes := make([]ToolChange, 0)
-	for name, selectedTool := range selected.Tools {
-		mergedTool, ok := config.Tools[name]
-		if !ok || anyEqual(selectedTool.Raw, mergedTool.Raw) {
-			continue
-		}
-		changes = append(changes, ToolChange{Name: name, From: cloneAny(selectedTool.Raw), To: cloneAny(mergedTool.Raw)})
-	}
-	sort.Slice(changes, func(i, j int) bool { return changes[i].Name < changes[j].Name })
-	sort.Strings(notices)
-	return MiseMergeResult{Config: config, Bytes: data, ToolChanges: changes, Notices: notices}, nil
+	return MergeMiseConfigs(sharedConfig, selectedConfig, templateKind, registryIdentity, resolver)
 }
 
 func mergeMiseTools(shared, selected map[string]MiseTool, resolver MergeConflictResolver) (map[string]any, error) {

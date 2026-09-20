@@ -169,7 +169,7 @@ func TestWorkspaceTemplateAndGenerationWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := core.BuildMergePlan(core.MergeRequest{SelectedTemplateRoot: source, Destination: destination}); err == nil {
+	if _, err := core.BuildMergePlan(core.TemplateGeneration{TemplateRoot: source, ClientRepoRoot: root, ProjectPath: filepath.Join("apps", "orders")}); err == nil {
 		t.Fatal("expected existing destination error")
 	}
 
