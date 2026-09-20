@@ -40,10 +40,8 @@ Use .:app to select a template from the current workspace.`,
 		if err != nil {
 			return err
 		}
-		interaction := core.InteractiveQuestionnaire{}
 		return core.Generate(cmd.Context(), cwd, selector, core.GenerateOptions{
-			Questionnaire: interaction,
-			Resolver:      interaction,
+			Questionnaire: core.InteractiveQuestionnaire{},
 		}, cmd.OutOrStdout())
 	},
 }

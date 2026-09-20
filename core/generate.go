@@ -15,16 +15,16 @@ type Questionnaire interface {
 }
 
 type GenerateOptions struct {
-	Questionnaire Questionnaire
-	Resolver      MergeResolver
+	Questionnaire    Questionnaire
+	ConflictResolver MergeConflictResolver
 }
 
 func Generate(ctx context.Context, cwd, selector string, options GenerateOptions, output io.Writer) error {
+	if output == nil {
+		output = io.Discard
+	}
 	if options.Questionnaire == nil {
 		return errors.New("generate questionnaire is required")
-	}
-	if options.Resolver == nil {
-		return errors.New("generate merge resolver is required")
 	}
 	workspaceRoot, workspaceManifestPath, err := FindManifest(cwd)
 	if err != nil {
@@ -75,30 +75,24 @@ func Generate(ctx context.Context, cwd, selector string, options GenerateOptions
 	if err != nil {
 		return err
 	}
-	prepared, err := PrepareScaffold(ScaffoldRequest{
-		SharedSource:     filepath.Join(sourceRoot, "templates"),
-		Source:           source,
-		Destination:      destination,
-		Replacements:     replacements,
-		SelectedIdentity: selector,
-		Resolver:         options.Resolver,
+	plan, err := BuildMergePlan(MergeRequest{
+		SharedRegistryRoot:   filepath.Join(sourceRoot, "templates"),
+		SelectedTemplateRoot: source,
+		Destination:          destination,
+		Substitutions:        replacements,
+		SelectedIdentity:     selector,
+		TemplateKind:         template.Kind,
+		RegistryIdentity:     selection.Source,
+		ResolveConflict:      options.ConflictResolver,
 	})
 	if err != nil {
 		return err
 	}
-	defer prepared.Close()
-
-	printTemplateComparison(output, prepared.Plan)
-	if err := ValidateToolChanges(ctx, prepared.SelectedStage, template.Kind, prepared.Mise.ToolChanges, output); err != nil {
-		return err
+	printTemplateComparison(output, plan)
+	for _, notice := range plan.Mise.Notices {
+		fmt.Fprintf(output, "- %s\n", notice)
 	}
-	if err := prepared.Materialize(); err != nil {
-		return err
-	}
-	if err := ValidateGeneratedCandidate(ctx, prepared.Stage, template.Kind, output); err != nil {
-		return err
-	}
-	if err := prepared.Commit(); err != nil {
+	if err := ExecuteMergePlan(ctx, plan, output); err != nil {
 		return err
 	}
 
@@ -121,7 +115,10 @@ func Generate(ctx context.Context, cwd, selector string, options GenerateOptions
 	return nil
 }
 
-func printTemplateComparison(output io.Writer, plan TemplateMergePlan) {
+func printTemplateComparison(output io.Writer, plan *MergePlan) {
+	if output == nil {
+		output = io.Discard
+	}
 	fmt.Fprintln(output, "Template root comparison:")
 	if len(plan.Collisions) == 0 {
 		fmt.Fprintln(output, "- no collisions")
@@ -137,14 +134,16 @@ func printTemplateComparison(output io.Writer, plan TemplateMergePlan) {
 
 func mergeStrategyLabel(entry MergeEntry) string {
 	switch entry.Strategy {
+	case MergeStrategyCopy:
+		return "one-sided copy"
 	case MergeStrategyEqual:
-		return "equal"
+		return "equal coalescing"
 	case MergeStrategyOrderedLines:
-		return "smart line merge"
+		return "tier-two ordered-line merge"
 	case MergeStrategyMise:
-		return "semantic Mise merge"
+		return "tier-one typed Mise merge"
 	case MergeStrategyWholeFile:
-		return "whole-file decision"
+		return "tier-three whole-file selection"
 	default:
 		return string(entry.Strategy)
 	}

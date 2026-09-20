@@ -27,12 +27,12 @@ func TestMergeOrderedPolicyPreservesPrecedenceAndAdjacentDuplicates(t *testing.T
 	shared := []byte("# shared\r\ncache/\r\ncache/\r\n!cache/keep\r\nrepeat\r\n")
 	selected := []byte("repeat\n# selected\nrepeat\n")
 	want := "# shared\ncache/\n!cache/keep\nrepeat\n# selected\nrepeat\n"
-	if got := string(MergeOrderedPolicy(shared, selected)); got != want {
-		t.Fatalf("MergeOrderedPolicy() = %q, want %q", got, want)
+	if got := string(mergeOrderedLines(shared, selected)); got != want {
+		t.Fatalf("mergeOrderedLines() = %q, want %q", got, want)
 	}
 }
 
-func TestBuildTemplateMergePlanSortsAndResolvesFocusedCollisions(t *testing.T) {
+func TestBuildMergePlanSortsAndResolvesFocusedCollisions(t *testing.T) {
 	root := t.TempDir()
 	shared := filepath.Join(root, "templates")
 	selected := filepath.Join(shared, "app")
@@ -46,8 +46,9 @@ func TestBuildTemplateMergePlanSortsAndResolvesFocusedCollisions(t *testing.T) {
 	writeTestFile(t, filepath.Join(selected, "main.txt"), "hello shared-placeholder\n", 0o644)
 	writeTestFile(t, filepath.Join(shared, "sibling", "ignored.txt"), "ignored\n", 0o644)
 	resolver := &mapMergeResolver{Decisions: map[string]MergeDecision{"NOTICE": {Choice: MergeChoiceKeepShared}}}
+	destination := filepath.Join(root, "output")
 
-	plan, err := BuildTemplateMergePlan(shared, selected, map[string]string{"shared-placeholder": "orders"}, "app", resolver)
+	plan, err := BuildMergePlan(MergeRequest{SharedRegistryRoot: shared, SelectedTemplateRoot: selected, Destination: destination, Substitutions: map[string]string{"shared-placeholder": "orders"}, TemplateKind: "app", SelectedIdentity: "app", ResolveConflict: resolver.ResolveMergeConflict})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,8 +70,7 @@ func TestBuildTemplateMergePlanSortsAndResolvesFocusedCollisions(t *testing.T) {
 		t.Fatalf("NOTICE output = %q mode %o", got, plan.Entries[1].Output.Mode.Perm())
 	}
 
-	destination := filepath.Join(root, "output")
-	if err := MaterializeTemplateMerge(plan, destination); err != nil {
+	if err := materializeMergePlan(plan, destination); err != nil {
 		t.Fatal(err)
 	}
 	content, err := os.ReadFile(filepath.Join(destination, "main.txt"))
@@ -85,7 +85,7 @@ func TestBuildTemplateMergePlanSortsAndResolvesFocusedCollisions(t *testing.T) {
 	}
 }
 
-func TestBuildTemplateMergePlanPrunesSelectedDirectoryWhenSharedFileWins(t *testing.T) {
+func TestBuildMergePlanPrunesSelectedDirectoryWhenSharedFileWins(t *testing.T) {
 	root := t.TempDir()
 	shared := filepath.Join(root, "shared")
 	selected := filepath.Join(root, "selected")
@@ -94,8 +94,9 @@ func TestBuildTemplateMergePlanPrunesSelectedDirectoryWhenSharedFileWins(t *test
 	resolver := &mapMergeResolver{Decisions: map[string]MergeDecision{
 		"config": {Choice: MergeChoiceKeepShared},
 	}}
+	destination := filepath.Join(root, "output")
 
-	plan, err := BuildTemplateMergePlan(shared, selected, nil, "selected", resolver)
+	plan, err := BuildMergePlan(MergeRequest{SharedRegistryRoot: shared, SelectedTemplateRoot: selected, Destination: destination, SelectedIdentity: "selected", ResolveConflict: resolver.ResolveMergeConflict})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,8 +107,7 @@ func TestBuildTemplateMergePlanPrunesSelectedDirectoryWhenSharedFileWins(t *test
 		t.Fatalf("config entry = %#v", entry)
 	}
 
-	destination := filepath.Join(root, "output")
-	if err := MaterializeTemplateMerge(plan, destination); err != nil {
+	if err := materializeMergePlan(plan, destination); err != nil {
 		t.Fatal(err)
 	}
 	content, err := os.ReadFile(filepath.Join(destination, "config"))
@@ -119,7 +119,7 @@ func TestBuildTemplateMergePlanPrunesSelectedDirectoryWhenSharedFileWins(t *test
 	}
 }
 
-func TestBuildTemplateMergePlanDoesNotCoalesceEqualBytesWithDifferentModes(t *testing.T) {
+func TestBuildMergePlanDoesNotCoalesceEqualBytesWithDifferentModes(t *testing.T) {
 	root := t.TempDir()
 	shared := filepath.Join(root, "shared")
 	selected := filepath.Join(root, "selected")
@@ -132,7 +132,8 @@ func TestBuildTemplateMergePlanDoesNotCoalesceEqualBytesWithDifferentModes(t *te
 	writeTestFile(t, filepath.Join(shared, "same"), "same\n", 0o600)
 	writeTestFile(t, filepath.Join(selected, "same"), "same\n", 0o644)
 	resolver := &mapMergeResolver{Decisions: map[string]MergeDecision{"same": {Choice: MergeChoiceUseSelected}}}
-	plan, err := BuildTemplateMergePlan(shared, selected, nil, "selected", resolver)
+	destination := filepath.Join(root, "output")
+	plan, err := BuildMergePlan(MergeRequest{SharedRegistryRoot: shared, SelectedTemplateRoot: selected, Destination: destination, SelectedIdentity: "selected", ResolveConflict: resolver.ResolveMergeConflict})
 	if err != nil {
 		t.Fatal(err)
 	}

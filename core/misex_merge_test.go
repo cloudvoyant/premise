@@ -45,7 +45,7 @@ color = "green"
 		"DATABASE":       {Choice: MergeChoiceRenameSelected, Rename: "SELECTED_DATABASE"},
 		"settings.color": {Choice: MergeChoiceUseSelected},
 	}}
-	result, err := MergeMiseConfigs(shared, selected, "selected", resolver)
+	result, err := mergeMiseConfigs(shared, selected, "lib", "selected", resolver.ResolveMergeConflict)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ run = "echo $A $Z"
 	resolver := &mapMergeResolver{Decisions: map[string]MergeDecision{
 		"Z": {Choice: MergeChoiceRenameSelected, Rename: "SELECTED_Z"},
 	}}
-	result, err := MergeMiseConfigs(shared, selected, "selected", resolver)
+	result, err := mergeMiseConfigs(shared, selected, "lib", "selected", resolver.ResolveMergeConflict)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ node = { version = "20", os = ["linux"] }
 	resolver := &mapMergeResolver{Decisions: map[string]MergeDecision{
 		"tools.node": {Choice: MergeChoiceKeepShared},
 	}}
-	result, err := MergeMiseConfigs(shared, selected, "selected", resolver)
+	result, err := mergeMiseConfigs(shared, selected, "lib", "selected", resolver.ResolveMergeConflict)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,6 +151,94 @@ node = { version = "20", os = ["linux"] }
 	}
 }
 
+func TestMergeMiseConfigsPreservesSelectedContractMetadata(t *testing.T) {
+	shared, err := ExtractMiseConfig("shared", []byte(`[tasks.build]
+run = ["echo shared"]
+args = ["shared"]
+flags = ["--shared"]
+env = { SIDE = "shared" }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := ExtractMiseConfig("selected", []byte(`[tasks.build]
+run = "echo selected"
+description = "selected description"
+args = ["selected"]
+flags = ["--selected"]
+env = { SIDE = "selected" }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := mergeMiseConfigs(shared, selected, "lib", "owner/repo", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := result.Config.Tasks["build"]
+	if got, want := task.Run, []string{"echo shared", "echo selected"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("build run = %#v, want %#v", got, want)
+	}
+	if task.Raw["description"] != "selected description" || !reflect.DeepEqual(task.Raw["args"], []any{"selected"}) || !reflect.DeepEqual(task.Raw["flags"], []any{"--selected"}) {
+		t.Fatalf("selected task metadata was not preserved: %#v", task.Raw)
+	}
+	if _, exists := task.Raw["env"].(map[string]any); !exists {
+		t.Fatalf("selected task env missing: %#v", task.Raw)
+	}
+}
+
+func TestMergeMiseConfigsNamespacesNonContractTasks(t *testing.T) {
+	shared, err := ExtractMiseConfig("shared", []byte(`[tasks.custom]
+run = "echo shared"
+description = "shared"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := ExtractMiseConfig("selected", []byte(`[tasks.custom]
+run = ["echo selected"]
+description = "selected"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := mergeMiseConfigs(shared, selected, "lib", "owner/repo.git", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := result.Config.Tasks["custom"].Raw["description"]; got != "shared" {
+		t.Fatalf("shared task = %#v, want shared definition", result.Config.Tasks["custom"].Raw)
+	}
+	if got := result.Config.Tasks["repo:custom"].Raw["description"]; got != "selected" {
+		t.Fatalf("selected task = %#v, want namespaced definition", result.Config.Tasks["repo:custom"].Raw)
+	}
+	wantNotice := `Mise task "custom" was namespaced as "repo:custom" to preserve the shared task`
+	if !reflect.DeepEqual(result.Notices, []string{wantNotice}) {
+		t.Fatalf("notices = %#v, want %#v", result.Notices, []string{wantNotice})
+	}
+}
+
+func TestMergeMiseConfigsRejectsNamespacedTaskCollision(t *testing.T) {
+	shared, err := ExtractMiseConfig("shared", []byte(`[tasks.custom]
+run = "echo shared"
+[tasks."repo:custom"]
+run = "echo collision"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := ExtractMiseConfig("selected", []byte(`[tasks.custom]
+run = "echo selected"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = mergeMiseConfigs(shared, selected, "lib", "owner/repo", nil)
+	if err == nil || !strings.Contains(err.Error(), `task name already exists`) {
+		t.Fatalf("error = %v, want namespaced collision", err)
+	}
+}
+
 func TestMergeMiseConfigsRejectsDifferentToolMajors(t *testing.T) {
 	shared, err := ExtractMiseConfig("shared", []byte("[tools]\nnode = '22'\n"))
 	if err != nil {
@@ -160,7 +248,7 @@ func TestMergeMiseConfigsRejectsDifferentToolMajors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = MergeMiseConfigs(shared, selected, "selected", nil)
+	_, err = mergeMiseConfigs(shared, selected, "lib", "selected", nil)
 	if err == nil || !strings.Contains(err.Error(), "incompatible major versions 22 and 20") {
 		t.Fatalf("error = %v", err)
 	}
@@ -176,7 +264,7 @@ func TestMergeMiseConfigsAsksForIncomparableToolSelectors(t *testing.T) {
 		t.Fatal(err)
 	}
 	resolver := &mapMergeResolver{Decisions: map[string]MergeDecision{"tools.node": {Choice: MergeChoiceKeepShared}}}
-	result, err := MergeMiseConfigs(shared, selected, "selected", resolver)
+	result, err := mergeMiseConfigs(shared, selected, "lib", "selected", resolver.ResolveMergeConflict)
 	if err != nil {
 		t.Fatal(err)
 	}

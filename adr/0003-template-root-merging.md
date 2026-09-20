@@ -1,57 +1,44 @@
-# Merge template roots with focused policies
+# Focused template-root merge policies
 
 - Status: accepted
 - Decider: Siddharth K
 - Date: 2026-09-20
 
-## Context and Problem Statement
+## Context
 
-A registry can place shared files directly under `templates/` and template-specific files under `templates/<name>/`. The old copy-then-overlay flow replaced shared root files without showing the conflict. This was unsafe for ordered Git policy files and for `mise.toml`, where both sides can contain required behavior.
+A registry has shared files directly under `templates/` and template-specific files under `templates/<name>/`. Generation must combine those roots without replacing shared behavior or becoming a general configuration merger.
 
-How can generation combine these roots without becoming a general configuration merger or a transaction system?
+## Decision
 
-## Decision Drivers
+Generation compares the substituted shared and selected trees and applies one of three focused tiers.
 
-- Show every root collision before writing the destination.
-- Preserve ordering and override semantics in Git policy files.
-- Treat Mise tools, tasks, and environment values as typed data.
-- Test dependency changes separately from the complete candidate.
-- Keep the current create-only stage, rename, and manifest-save flow.
-- Avoid new dependencies and infrastructure.
+### Tier 1: root `mise.toml`
 
-## Considered Options
+The root `mise.toml` is parsed as typed data. Tools retain Mise-specific semantic rules: compatible version selectors within one major version choose the greater version, incompatible major versions fail, and other scalar conflicts require an explicit choice. Environment conflicts can keep shared, use selected, rename the selected key with selected references updated, or abort.
 
-- Keep selected-template overwrite behavior.
-- Apply a generic text or TOML merge to every collision.
-- Add focused handlers for known files and use a complete-file choice for all other collisions.
-- Add a lock, journal, and multi-resource transaction around generation.
+Contract task collisions retain the selected task metadata and set its commands to shared first followed by selected. Root contract tasks are expected to be argument-free. A non-contract task collision keeps the shared task under its original name, copies the selected task under `<registry-prefix>:<task>`, and prints a user-visible notice.
 
-## Decision Outcome
+### Tier 2: `.gitignore` and `.gitattributes`
 
-Choose focused handlers for `.gitignore`, `.gitattributes`, and `mise.toml`. Use a complete-file decision for every other differing root file. Keep the existing simple persistence model.
+These files use ordered line handling: shared lines come first and selected lines come second, with only adjacent duplicate lines removed. The order is intentional because later lines can override earlier Git policy.
 
-Premise builds one path-sorted comparison after substitutions. Ordered Git files keep shared lines first and selected lines second. The Mise handler extracts each input independently, merges typed sections, and preserves unknown root keys through recursive rules.
+### Tier 3: all other differing root files
 
-When a merged tool version changes an existing selected-template tool, Premise tests that one change in a disposable copy. It then materializes the full stage and tests another disposable copy. Only a validated stage can be renamed to the destination.
+Every other differing root file is resolved as a complete file: keep shared, use selected, or abort. Premise does not provide semantic merges for editor configuration, Prettier files, package manifests, or arbitrary ignore files.
 
-### Positive Consequences
+## Simplifying assumption
 
-- You see conflicts and their strategies before generation changes the workspace.
-- Git ignore negations and attribute overrides keep their selected-side precedence.
-- A failed tool upgrade names the dependency that failed.
-- Complete-candidate checks catch interactions among merged files.
-- Template authors keep the current manifest and directory model.
+Registries usually target different frameworks, so non-contract task and file collisions should be uncommon. Same-framework major dependency conflicts are likely genuine merge blockers and should fail rather than drive a general configuration merge engine.
 
-### Negative Consequences
+## Implementation boundary
 
-- Canonical Mise output does not preserve source comments or formatting.
-- Ordinary collisions require an interactive complete-file decision.
-- The destination rename and manifest save are not one crash-consistent transaction.
-- New smart formats require separate semantics and tests.
+Generation resolves or pulls the registry first. `BuildMergePlan` prepares the comparison and decisions, and `ExecuteMergePlan` performs dependency preflights, materialization, complete validation, and the destination rename.
 
-## Deliberate limits
+## Consequences
 
-Premise does not smart-merge `.editorconfig`, Prettier files, package manifests, or arbitrary ignore files. It does not update existing generated projects. It does not add locks, journals, recovery state, transaction directories, platform-specific atomic wrappers, or schema changes.
+The focused policies expose collisions before destination creation, preserve ordered Git behavior, keep selected contract metadata, and make changed dependencies fail early. New smart formats require their own semantics and tests.
+
+Crash-consistent transaction, lock, and journal machinery is out of scope.
 
 ## Links
 

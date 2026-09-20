@@ -61,144 +61,6 @@ func TemplateDirectory(sourceRoot, name string) (string, error) {
 	return path, nil
 }
 
-type ScaffoldRequest struct {
-	SharedSource     string
-	Source           string
-	Destination      string
-	Replacements     map[string]string
-	SelectedIdentity string
-	Resolver         MergeResolver
-}
-
-type PreparedScaffold struct {
-	Destination   string
-	Stage         string
-	SelectedStage string
-	Plan          TemplateMergePlan
-	Mise          MiseMergeResult
-}
-
-func PrepareScaffold(request ScaffoldRequest) (*PreparedScaffold, error) {
-	source, err := filepath.Abs(request.Source)
-	if err != nil {
-		return nil, fmt.Errorf("resolve scaffold source: %w", err)
-	}
-	destination, err := filepath.Abs(request.Destination)
-	if err != nil {
-		return nil, fmt.Errorf("resolve scaffold destination: %w", err)
-	}
-	if source == destination {
-		return nil, errors.New("scaffold source and destination must differ")
-	}
-	if info, err := os.Stat(source); err != nil {
-		return nil, fmt.Errorf("inspect scaffold source: %w", err)
-	} else if !info.IsDir() {
-		return nil, fmt.Errorf("scaffold source %s is not a directory", source)
-	}
-
-	sharedSource := ""
-	if request.SharedSource != "" {
-		sharedSource, err = filepath.Abs(request.SharedSource)
-		if err != nil {
-			return nil, fmt.Errorf("resolve shared scaffold source: %w", err)
-		}
-		if info, err := os.Stat(sharedSource); err != nil {
-			return nil, fmt.Errorf("inspect shared scaffold source: %w", err)
-		} else if !info.IsDir() {
-			return nil, fmt.Errorf("shared scaffold source %s is not a directory", sharedSource)
-		}
-	}
-	if _, err := os.Lstat(destination); err == nil {
-		return nil, fmt.Errorf("destination %s already exists", destination)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("inspect scaffold destination: %w", err)
-	}
-
-	parent := filepath.Dir(destination)
-	if err := os.MkdirAll(parent, 0o755); err != nil {
-		return nil, fmt.Errorf("create destination parent: %w", err)
-	}
-	stage, err := os.MkdirTemp(parent, ".premise-stage-*")
-	if err != nil {
-		return nil, fmt.Errorf("create scaffold staging directory: %w", err)
-	}
-	selectedStage, err := os.MkdirTemp("", "premise-selected-*")
-	if err != nil {
-		_ = os.RemoveAll(stage)
-		return nil, fmt.Errorf("create selected template staging directory: %w", err)
-	}
-	prepared := &PreparedScaffold{Destination: destination, Stage: stage, SelectedStage: selectedStage}
-	clean := true
-	defer func() {
-		if clean {
-			_ = prepared.Close()
-		}
-	}()
-	if err := copyTree(source, selectedStage, literalReplacer(request.Replacements)); err != nil {
-		return nil, fmt.Errorf("stage selected scaffold: %w", err)
-	}
-	identity := request.SelectedIdentity
-	if identity == "" {
-		identity = filepath.Base(source)
-	}
-	plan, err := BuildTemplateMergePlan(sharedSource, source, request.Replacements, identity, request.Resolver)
-	if err != nil {
-		return nil, err
-	}
-	prepared.Plan = plan
-	prepared.Mise = plan.Mise
-	clean = false
-	return prepared, nil
-}
-
-func (prepared *PreparedScaffold) Materialize() error {
-	if prepared.Stage == "" {
-		return errors.New("prepared scaffold is already committed or closed")
-	}
-	return MaterializeTemplateMerge(prepared.Plan, prepared.Stage)
-}
-
-func (prepared *PreparedScaffold) Commit() error {
-	if prepared.Stage == "" {
-		return errors.New("prepared scaffold is already committed or closed")
-	}
-	if _, err := os.Lstat(prepared.Destination); err == nil {
-		return fmt.Errorf("destination %s already exists", prepared.Destination)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect scaffold destination: %w", err)
-	}
-	if err := os.Rename(prepared.Stage, prepared.Destination); err != nil {
-		return fmt.Errorf("commit scaffold: %w", err)
-	}
-	prepared.Stage = ""
-	return nil
-}
-
-func (prepared *PreparedScaffold) Close() error {
-	var failures []error
-	if prepared.Stage != "" {
-		failures = append(failures, os.RemoveAll(prepared.Stage))
-		prepared.Stage = ""
-	}
-	if prepared.SelectedStage != "" {
-		failures = append(failures, os.RemoveAll(prepared.SelectedStage))
-		prepared.SelectedStage = ""
-	}
-	return errors.Join(failures...)
-}
-
-func Scaffold(request ScaffoldRequest) error {
-	prepared, err := PrepareScaffold(request)
-	if err != nil {
-		return err
-	}
-	defer prepared.Close()
-	if err := prepared.Materialize(); err != nil {
-		return err
-	}
-	return prepared.Commit()
-}
-
 func RenderTemplateMise(kind string) (string, error) {
 	tasks, err := ContractTasks(kind)
 	if err != nil {
@@ -298,6 +160,12 @@ func TestTemplateContracts(ctx context.Context, root string, manifest Config, st
 }
 
 func runTemplateContracts(ctx context.Context, directory, kind, label string, stdout, stderr io.Writer) error {
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	if stderr == nil {
+		stderr = io.Discard
+	}
 	tasks, err := ContractTasks(kind)
 	if err != nil {
 		return fmt.Errorf("template %s: %w", label, err)

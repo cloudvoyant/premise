@@ -57,16 +57,17 @@ Each init command creates `templates/<kind>/mise.toml` and adds a matching decla
 
 Files placed directly under `templates/` are shared scaffold files. Premise compares these files with the selected `templates/<name>/` tree after it applies questionnaire substitutions. Directories under `templates/` are template sources and are not copied as shared content.
 
-Premise prints one path-sorted conflict preview before it creates the destination. It handles root collisions by file type:
+Premise prints one path-sorted conflict preview before it creates the destination. Root collisions use three tiers:
 
-| File             | Merge behavior                                                                                     |
-| ---------------- | -------------------------------------------------------------------------------------------------- |
-| `.gitignore`     | Keep shared lines first, then selected lines. Remove only adjacent duplicate lines.                |
-| `.gitattributes` | Keep shared lines first, then selected lines. This order keeps later selected overrides effective. |
-| `mise.toml`      | Merge tools, tasks, environment values, lists, and unknown root keys with Mise-specific rules.     |
-| Any other file   | Keep the complete shared file, use the complete selected file, or abort.                           |
+| Tier                                      | Merge behavior                                                                    |
+| ----------------------------------------- | --------------------------------------------------------------------------------- |
+| Tier 1: `mise.toml`                       | Parse typed Mise data and apply semantic rules for tools and environment values.  |
+| Tier 2: `.gitignore` and `.gitattributes` | Keep shared lines first and selected lines second because line order has meaning. |
+| Tier 3: any other differing root file     | Keep the complete shared file, use the complete selected file, or abort.          |
 
-Equal files need no decision. Premise does not parse `.editorconfig`, Prettier files, package manifests, or arbitrary ignore files as smart merge formats.
+Equal files need no decision. Premise does not parse editor configuration, Prettier files, package manifests, or arbitrary ignore files as smart merge formats.
+
+When contract tasks collide, Premise keeps the selected task metadata and appends shared commands before selected commands. Root contract tasks are expected to be argument-free. When a non-contract task collides, the shared task keeps its name and the selected task is copied to `<registry-prefix>:<task>`. Premise prints a notice naming that namespace. Only the contract task command sequence is combined; other task fields remain one-sided.
 
 The initial Mise tasks echo their contract names. Replace each echo with the real implementation while keeping the task name stable.
 
@@ -97,7 +98,7 @@ pm generate ../my-registry:lib
 
 Premise asks the selected template's questions and creates `apps/<name>` or `libs/<name>` according to its kind. It shows all root collisions and resolves each conflict before it writes the destination. Premise records the project, source-qualified template selector, path, answers, and declared template version under `workspace.projects`.
 
-Before the full merge, Premise tests each selected-template tool version that the shared `mise.toml` would change. It tests one tool update at a time in a disposable copy. After the merge, Premise tests another disposable copy with `mise install` and every required template contract under `PREMISE_TEMPLATE_TEST=1`. A failed decision, tool preflight, or complete-candidate test leaves the destination and `premise.yaml` unchanged.
+Before materializing the full merge, Premise runs a dependency preflight for each selected-template tool version that the shared `mise.toml` would change. Each preflight uses a disposable copy, `mise install`, and every required template contract. Premise then materializes the merge privately and runs final validation in another disposable copy with `mise install` and every required contract under `PREMISE_TEMPLATE_TEST=1`. Only a completely validated candidate is renamed into the destination; a failed decision, preflight, or final validation leaves the destination and `premise.yaml` unchanged.
 
 ### Choose from the default registry
 
@@ -187,7 +188,7 @@ projects:
       name: orders
 ```
 
-`version` records the selected template declaration's version at generation time when the registry provides one; registries with repository-level versioning can omit it. If project registration or manifest saving fails after the validated stage is renamed, Premise removes the newly created destination so output and provenance do not diverge. This is a small create-only rollback. Premise does not use locks, journals, recovery state, or a multi-resource transaction.
+`version` records the selected template declaration's version at generation time when the registry provides one; registries with repository-level versioning can omit it. If project registration or manifest saving fails after the validated stage is renamed, Premise removes the newly created destination so output and provenance do not diverge. Generation is create-only; crash-consistent updates across the destination and manifest are out of scope.
 
 ### Task contracts
 
@@ -220,8 +221,7 @@ Templates can define additional tasks.
 
 ### Versioning
 
-Premise calculates release versions through the svu Go SDK, exposed by the
-`pm version` command:
+Premise calculates release versions through the svu Go SDK, exposed by the `pm version` command:
 
 ```bash
 pm version current                  # current stable version (e.g. v0.1.0)
@@ -230,9 +230,7 @@ pm version bump patch|minor|major   # explicit patch/minor/major bump
 pm version rc --identifier <id>     # MAJOR.MINOR.PATCH-rc.<id>
 ```
 
-Each command prints exactly one version to stdout. Release-candidate identifiers
-must be valid SemVer prerelease identifiers: letters, digits, and hyphens, with
-numeric identifiers forbidding leading zeroes.
+Each command prints exactly one version to stdout. Release-candidate identifiers must be valid SemVer prerelease identifiers: letters, digits, and hyphens, with numeric identifiers forbidding leading zeroes.
 
 Version calculation relies on a `v0.0.0` stable bootstrap tag that must exist before CI runs. That tag is created externally and is never produced by a task or workflow. Premise configures the SDK to read only stable SemVer tags (`vMAJOR.MINOR.PATCH`), so unrelated tags are ignored. No `.svu.yml` file or svu executable is required.
 
@@ -242,11 +240,7 @@ Stable releases happen on pushes to `main`. The workflow calls `pm ci flow on-me
 
 Registries that publish language packages can keep credentials in separate CI steps with `pm release prepare`, `pm release github`, and `pm release packages`. `pm release snapshot` builds the complete artifact matrix without tagging or publishing.
 
-Release-candidate publication is opt-in for Go: a feature-branch push whose HEAD
-commit message contains the exact marker `[publish-rc]` runs `mise run publish:rc`,
-which succeeds and prints only `Skipping RC publish: Go supports prerelease
-installs through commit hashes.` Go needs no prerelease artifact because installs
-resolve through commit hashes, so no RC tag or release is ever created.
+Release-candidate publication is opt-in for Go: a feature-branch push whose HEAD commit message contains the exact marker `[publish-rc]` runs `mise run publish:rc`, which succeeds and prints only `Skipping RC publish: Go supports prerelease installs through commit hashes.` Go needs no prerelease artifact because installs resolve through commit hashes, so no RC tag or release is ever created.
 
 ### Current limitations
 

@@ -22,8 +22,8 @@ func (answers fixedQuestionnaire) Ask(_ []Question) (map[string]string, error) {
 
 func fixedGenerateOptions(answers fixedQuestionnaire) GenerateOptions {
 	return GenerateOptions{
-		Questionnaire: answers,
-		Resolver:      &mapMergeResolver{Decisions: map[string]MergeDecision{}},
+		Questionnaire:    answers,
+		ConflictResolver: (&mapMergeResolver{Decisions: map[string]MergeDecision{}}).ResolveMergeConflict,
 	}
 }
 
@@ -133,17 +133,17 @@ func TestGeneratePrintsSortedCollisionStrategiesBeforeValidation(t *testing.T) {
 	resolver := &mapMergeResolver{Decisions: map[string]MergeDecision{"NOTICE": {Choice: MergeChoiceKeepShared}}}
 	var output bytes.Buffer
 	if err := Generate(context.Background(), workspace, registry+":app", GenerateOptions{
-		Questionnaire: fixedQuestionnaire{"name": "orders"},
-		Resolver:      resolver,
+		Questionnaire:    fixedQuestionnaire{"name": "orders"},
+		ConflictResolver: resolver.ResolveMergeConflict,
 	}, &output); err != nil {
 		t.Fatal(err)
 	}
 
 	want := "Template root comparison:\n" +
-		"- .gitattributes: smart line merge\n" +
-		"- .gitignore: smart line merge\n" +
-		"- NOTICE: whole-file decision\n" +
-		"- mise.toml: semantic Mise merge\n"
+		"- .gitattributes: tier-two ordered-line merge\n" +
+		"- .gitignore: tier-two ordered-line merge\n" +
+		"- NOTICE: tier-three whole-file selection\n" +
+		"- mise.toml: tier-one typed Mise merge\n"
 	if !strings.HasPrefix(output.String(), want) {
 		t.Fatalf("comparison output =\n%s\nwant prefix =\n%s", output.String(), want)
 	}

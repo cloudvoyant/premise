@@ -9,14 +9,14 @@ import (
 	"testing"
 )
 
-func TestValidateToolChangesRunsEachChangeInDisposableCopy(t *testing.T) {
+func TestValidateMergeToolChangesRunsEachChangeInDisposableCopy(t *testing.T) {
 	selected := filepath.Join(t.TempDir(), "selected")
 	if err := os.MkdirAll(selected, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeTestFile(t, filepath.Join(selected, "mise.toml"), "[tools]\nbun = '1.1'\n", 0o644)
 	log := installMiseTestShim(t, false)
-	if err := ValidateToolChanges(context.Background(), selected, "lib", []ToolChange{{Name: "bun", From: "1.1", To: "1.2"}}, os.Stderr); err != nil {
+	if err := validateMergeToolChanges(context.Background(), selected, "lib", []ToolChange{{Name: "bun", From: "1.1", To: "1.2"}}, os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(log)
@@ -46,7 +46,7 @@ func TestValidateToolChangesRunsEachChangeInDisposableCopy(t *testing.T) {
 	}
 }
 
-func TestValidateToolChangesAppliesCompleteStructuredValue(t *testing.T) {
+func TestValidateMergeToolChangesAppliesCompleteStructuredValue(t *testing.T) {
 	selected := filepath.Join(t.TempDir(), "selected")
 	if err := os.MkdirAll(selected, 0o755); err != nil {
 		t.Fatal(err)
@@ -60,7 +60,7 @@ func TestValidateToolChangesAppliesCompleteStructuredValue(t *testing.T) {
 		From: map[string]any{"version": "20", "os": []any{"linux"}},
 		To:   map[string]any{"version": "22", "os": []any{"linux", "macos"}},
 	}
-	if err := ValidateToolChanges(context.Background(), selected, "lib", []ToolChange{change}, os.Stderr); err != nil {
+	if err := validateMergeToolChanges(context.Background(), selected, "lib", []ToolChange{change}, os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(captured)
@@ -76,7 +76,7 @@ func TestValidateToolChangesAppliesCompleteStructuredValue(t *testing.T) {
 	}
 }
 
-func TestValidateToolChangesAttributesFailureAndCleansCopy(t *testing.T) {
+func TestValidateMergeToolChangesAttributesFailureAndCleansCopy(t *testing.T) {
 	selected := filepath.Join(t.TempDir(), "selected")
 	if err := os.MkdirAll(selected, 0o755); err != nil {
 		t.Fatal(err)
@@ -88,7 +88,7 @@ func TestValidateToolChangesAttributesFailureAndCleansCopy(t *testing.T) {
 	}
 	t.Setenv("TMPDIR", temp)
 	installMiseTestShim(t, true)
-	err := ValidateToolChanges(context.Background(), selected, "lib", []ToolChange{{Name: "bun", From: "1.1", To: "1.2"}}, os.Stderr)
+	err := validateMergeToolChanges(context.Background(), selected, "lib", []ToolChange{{Name: "bun", From: "1.1", To: "1.2"}}, os.Stderr)
 	if err == nil || !strings.Contains(err.Error(), "tool update bun 1.1 -> 1.2 failed") {
 		t.Fatalf("error = %v", err)
 	}
@@ -101,7 +101,7 @@ func TestValidateToolChangesAttributesFailureAndCleansCopy(t *testing.T) {
 	}
 }
 
-func TestValidateGeneratedCandidateRunsContractsInDisposableCopy(t *testing.T) {
+func TestValidateMergeCandidateRunsContractsInDisposableCopy(t *testing.T) {
 	stage := filepath.Join(t.TempDir(), "stage")
 	if err := os.MkdirAll(stage, 0o755); err != nil {
 		t.Fatal(err)
@@ -115,7 +115,7 @@ func TestValidateGeneratedCandidateRunsContractsInDisposableCopy(t *testing.T) {
 	t.Setenv("TMPDIR", temporary)
 	log := installMiseTestShim(t, false)
 
-	if err := ValidateGeneratedCandidate(context.Background(), stage, "app", os.Stderr); err != nil {
+	if err := validateMergeCandidate(context.Background(), stage, "app", os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(log)
@@ -146,7 +146,7 @@ func TestValidateGeneratedCandidateRunsContractsInDisposableCopy(t *testing.T) {
 	}
 }
 
-func TestValidateGeneratedCandidateCleansCopyOnFailure(t *testing.T) {
+func TestValidateMergeCandidateCleansCopyOnFailure(t *testing.T) {
 	stage := filepath.Join(t.TempDir(), "stage")
 	if err := os.MkdirAll(stage, 0o755); err != nil {
 		t.Fatal(err)
@@ -159,7 +159,7 @@ func TestValidateGeneratedCandidateCleansCopyOnFailure(t *testing.T) {
 	t.Setenv("TMPDIR", temporary)
 	installMiseTestShim(t, true)
 
-	err := ValidateGeneratedCandidate(context.Background(), stage, "lib", os.Stderr)
+	err := validateMergeCandidate(context.Background(), stage, "lib", os.Stderr)
 	if err == nil || !strings.Contains(err.Error(), "generated candidate validation failed") {
 		t.Fatalf("error = %v", err)
 	}

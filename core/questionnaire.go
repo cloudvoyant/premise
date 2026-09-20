@@ -13,51 +13,7 @@ import (
 // InteractiveQuestionnaire collects generation answers from a terminal.
 type InteractiveQuestionnaire struct{}
 
-var (
-	_ Questionnaire = InteractiveQuestionnaire{}
-	_ MergeResolver = InteractiveQuestionnaire{}
-)
-
-var promptMergeChoice = func(conflict MergeConflict) (MergeChoice, error) {
-	options := []huh.Option[MergeChoice]{
-		huh.NewOption("Keep shared", MergeChoiceKeepShared),
-		huh.NewOption("Use selected", MergeChoiceUseSelected),
-	}
-	if conflict.AllowRename {
-		options = append(options, huh.NewOption("Rename selected", MergeChoiceRenameSelected))
-	}
-	options = append(options, huh.NewOption("Abort generation", MergeChoiceAbort))
-	choice := MergeChoiceAbort
-	title := fmt.Sprintf("Resolve %s conflict for %s (%s vs %s)", conflict.Kind, conflict.Key, conflict.Shared, conflict.Selected)
-	if err := huh.NewSelect[MergeChoice]().Title(title).Options(options...).Value(&choice).Run(); err != nil {
-		return "", err
-	}
-	return choice, nil
-}
-
-var promptMergeRename = func(conflict MergeConflict) (string, error) {
-	var name string
-	if err := huh.NewInput().Title("Rename selected " + conflict.Key + " to:").Value(&name).Validate(requiredAnswer).Run(); err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(name), nil
-}
-
-func (InteractiveQuestionnaire) ResolveMergeConflict(conflict MergeConflict) (MergeDecision, error) {
-	choice, err := promptMergeChoice(conflict)
-	if err != nil {
-		return MergeDecision{}, fmt.Errorf("resolve merge conflict %s: %w", conflict.Key, err)
-	}
-	decision := MergeDecision{Choice: choice}
-	if choice == MergeChoiceRenameSelected {
-		name, err := promptMergeRename(conflict)
-		if err != nil {
-			return MergeDecision{}, fmt.Errorf("rename selected merge value %s: %w", conflict.Key, err)
-		}
-		decision.Rename = name
-	}
-	return decision, nil
-}
+var _ Questionnaire = InteractiveQuestionnaire{}
 
 func (InteractiveQuestionnaire) Ask(questions []Question) (map[string]string, error) {
 	answers := make(map[string]string, len(questions))
