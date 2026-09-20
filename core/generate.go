@@ -14,7 +14,18 @@ type Questionnaire interface {
 	Ask([]Question) (map[string]string, error)
 }
 
-func Generate(ctx context.Context, cwd, selector string, prompts Questionnaire, output io.Writer) error {
+type GenerateOptions struct {
+	Questionnaire Questionnaire
+	Resolver      MergeResolver
+}
+
+func Generate(ctx context.Context, cwd, selector string, options GenerateOptions, output io.Writer) error {
+	if options.Questionnaire == nil {
+		return errors.New("generate questionnaire is required")
+	}
+	if options.Resolver == nil {
+		return errors.New("generate merge resolver is required")
+	}
 	workspaceRoot, workspaceManifestPath, err := FindManifest(cwd)
 	if err != nil {
 		return err
@@ -40,7 +51,7 @@ func Generate(ctx context.Context, cwd, selector string, prompts Questionnaire, 
 	if err != nil {
 		return err
 	}
-	answers, err := prompts.Ask(template.Questions)
+	answers, err := options.Questionnaire.Ask(template.Questions)
 	if err != nil {
 		return err
 	}
@@ -64,12 +75,30 @@ func Generate(ctx context.Context, cwd, selector string, prompts Questionnaire, 
 	if err != nil {
 		return err
 	}
-	if err := Scaffold(ScaffoldRequest{
-		SharedSource: filepath.Join(sourceRoot, "templates"),
-		Source:       source,
-		Destination:  destination,
-		Replacements: replacements,
-	}); err != nil {
+	prepared, err := PrepareScaffold(ScaffoldRequest{
+		SharedSource:     filepath.Join(sourceRoot, "templates"),
+		Source:           source,
+		Destination:      destination,
+		Replacements:     replacements,
+		SelectedIdentity: selector,
+		Resolver:         options.Resolver,
+	})
+	if err != nil {
+		return err
+	}
+	defer prepared.Close()
+
+	printTemplateComparison(output, prepared.Plan)
+	if err := ValidateToolChanges(ctx, prepared.SelectedStage, template.Kind, prepared.Mise.ToolChanges, output); err != nil {
+		return err
+	}
+	if err := prepared.Materialize(); err != nil {
+		return err
+	}
+	if err := ValidateGeneratedCandidate(ctx, prepared.Stage, template.Kind, output); err != nil {
+		return err
+	}
+	if err := prepared.Commit(); err != nil {
 		return err
 	}
 
@@ -90,4 +119,33 @@ func Generate(ctx context.Context, cwd, selector string, prompts Questionnaire, 
 	}
 	fmt.Fprintf(output, "Generated %s %s from %s at %s\n", template.Kind, name, selector, relativeDestination)
 	return nil
+}
+
+func printTemplateComparison(output io.Writer, plan TemplateMergePlan) {
+	fmt.Fprintln(output, "Template root comparison:")
+	if len(plan.Collisions) == 0 {
+		fmt.Fprintln(output, "- no collisions")
+		return
+	}
+	for _, entry := range plan.Entries {
+		if !entry.Shared.Present || !entry.Selected.Present {
+			continue
+		}
+		fmt.Fprintf(output, "- %s: %s\n", entry.Path, mergeStrategyLabel(entry))
+	}
+}
+
+func mergeStrategyLabel(entry MergeEntry) string {
+	switch entry.Strategy {
+	case MergeStrategyEqual:
+		return "equal"
+	case MergeStrategyOrderedLines:
+		return "smart line merge"
+	case MergeStrategyMise:
+		return "semantic Mise merge"
+	case MergeStrategyWholeFile:
+		return "whole-file decision"
+	default:
+		return string(entry.Strategy)
+	}
 }

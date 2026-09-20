@@ -13,14 +13,90 @@ import (
 	core "github.com/cloudvoyant/premise/core"
 )
 
-type fixedQuestionnaire map[string]string
+type fixedQuestionnaire struct {
+	Answers map[string]string
+}
 
-func (answers fixedQuestionnaire) Ask(_ []core.Question) (map[string]string, error) {
-	copy := make(map[string]string, len(answers))
-	for name, value := range answers {
-		copy[name] = value
+func (questionnaire fixedQuestionnaire) Ask(_ []core.Question) (map[string]string, error) {
+	answers := make(map[string]string, len(questionnaire.Answers))
+	for name, value := range questionnaire.Answers {
+		answers[name] = value
 	}
-	return copy, nil
+	return answers, nil
+}
+
+type fixedMergeResolver struct {
+	Decisions map[string]core.MergeDecision
+	Calls     []core.MergeConflict
+}
+
+func (resolver *fixedMergeResolver) ResolveMergeConflict(conflict core.MergeConflict) (core.MergeDecision, error) {
+	resolver.Calls = append(resolver.Calls, conflict)
+	if decision, ok := resolver.Decisions[conflict.Key]; ok {
+		return decision, nil
+	}
+	if decision, ok := resolver.Decisions[conflict.Path]; ok {
+		return decision, nil
+	}
+	return core.MergeDecision{Choice: core.MergeChoiceAbort}, nil
+}
+
+func fixedOptions(answers map[string]string) core.GenerateOptions {
+	return core.GenerateOptions{
+		Questionnaire: fixedQuestionnaire{Answers: answers},
+		Resolver:      &fixedMergeResolver{Decisions: map[string]core.MergeDecision{}},
+	}
+}
+
+type miseInvocation struct {
+	Directory   string
+	Environment string
+	Arguments   string
+}
+
+type miseInvocationLog struct {
+	Path string
+}
+
+func (log *miseInvocationLog) Invocations(t *testing.T) []miseInvocation {
+	t.Helper()
+	data, err := os.ReadFile(log.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		return nil
+	}
+	invocations := make([]miseInvocation, 0, len(lines))
+	for _, line := range lines {
+		parts := strings.SplitN(line, "|", 3)
+		if len(parts) != 3 {
+			t.Fatalf("malformed Mise invocation %q", line)
+		}
+		invocations = append(invocations, miseInvocation{Directory: parts[0], Environment: parts[1], Arguments: parts[2]})
+	}
+	return invocations
+}
+
+func installMiseTaskShim(t *testing.T) *miseInvocationLog {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	log := &miseInvocationLog{Path: filepath.Join(t.TempDir(), "mise.log")}
+	script := "#!/bin/sh\n" +
+		"printf '%s|%s|%s\\n' \"$PWD\" \"$PREMISE_TEMPLATE_TEST\" \"$*\" >> \"$MISE_LOG\"\n" +
+		"if [ -n \"$MISE_FAIL_DIRECTORY\" ]; then case \"$PWD\" in *\"$MISE_FAIL_DIRECTORY\"*) if [ -z \"$MISE_FAIL_ARGUMENT\" ] || [ \"$*\" = \"$MISE_FAIL_ARGUMENT\" ]; then exit 7; fi;; esac; fi\n" +
+		"if [ -n \"$MISE_FAIL_MISE_CONTAINS\" ] && [ -f mise.toml ] && grep -F \"$MISE_FAIL_MISE_CONTAINS\" mise.toml >/dev/null; then exit 8; fi\n" +
+		"exit 0\n"
+	if err := os.WriteFile(filepath.Join(bin, "mise"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MISE_LOG", log.Path)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return log
 }
 
 func workspaceMiseTemplate(t *testing.T) string {
@@ -34,6 +110,7 @@ func workspaceMiseTemplate(t *testing.T) string {
 }
 
 func TestWorkspaceTemplateAndGenerationWorkflow(t *testing.T) {
+	installMiseTaskShim(t)
 	base := t.TempDir()
 	root := filepath.Join(base, "example")
 	registryRoot := filepath.Join(base, "registry")
@@ -81,7 +158,7 @@ func TestWorkspaceTemplateAndGenerationWorkflow(t *testing.T) {
 		t.Fatalf("unexpected registry names: %v", names)
 	}
 	var output bytes.Buffer
-	if err := core.Generate(context.Background(), root, "../registry:app", fixedQuestionnaire{"name": "orders"}, &output); err != nil {
+	if err := core.Generate(context.Background(), root, "../registry:app", fixedOptions(map[string]string{"name": "orders"}), &output); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(output.String(), "Generated app orders") {
@@ -127,72 +204,325 @@ func TestWorkspaceTemplateAndGenerationWorkflow(t *testing.T) {
 	}
 }
 
-// cargoRegistryFixture writes a minimal Cargo template registry to the given
-// path, mirroring cloudvoyant/premise-cargo without network access.
+// cargoRegistryFixture writes an offline Rust CLI registry with an independent shared root.
 func cargoRegistryFixture(t *testing.T, root string) {
 	t.Helper()
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	manifest := core.NewManifest("cargo")
 	manifest.Templates = []core.Template{{
-		Name:    "premise-rust-lib",
-		Kind:    "lib",
+		Name:    "rust-cli",
+		Kind:    "app",
 		Version: "0.1.0",
 		Questions: []core.Question{{
-			Prompt:   "Library name:",
+			Prompt:   "CLI name:",
 			Type:     "string",
 			Populate: "name",
 		}},
-		Substitutions: map[string]string{"premise-rust-lib": "name"},
+		Substitutions: map[string]string{"rust-cli": "name"},
 	}}
 	if err := core.SaveManifest(filepath.Join(root, core.ManifestFilename), manifest); err != nil {
 		t.Fatal(err)
 	}
-	templateDir := filepath.Join(root, "templates", "premise-rust-lib")
-	if err := os.MkdirAll(templateDir, 0o755); err != nil {
+	shared := filepath.Join(root, "templates")
+	selected := filepath.Join(shared, "rust-cli")
+	writeFixtureFile(t, filepath.Join(shared, ".gitignore"), "# shared rust\n/target\n", 0o644)
+	writeFixtureFile(t, filepath.Join(shared, ".gitattributes"), "*.rs text eol=lf\n", 0o644)
+	writeFixtureFile(t, filepath.Join(shared, "NOTICE"), "shared Rust notice\n", 0o640)
+	writeFixtureFile(t, filepath.Join(shared, "mise.toml"), "[tools]\nrust = '1.82'\n\n[tasks.shared]\nrun = 'echo shared-rust'\n\n[env]\nSHARED_ROOT = 'cargo'\n", 0o644)
+	writeFixtureFile(t, filepath.Join(selected, ".gitignore"), "# rust cli\n*.profraw\n", 0o644)
+	writeFixtureFile(t, filepath.Join(selected, ".gitattributes"), "Cargo.lock -diff\n", 0o644)
+	writeFixtureFile(t, filepath.Join(selected, "NOTICE"), "selected Rust notice\n", 0o600)
+	writeFixtureFile(t, filepath.Join(selected, "mise.toml"), "[tools]\nrust = '1.83'\n\n[tasks.build]\nrun = 'cargo build'\n\n[env]\nAPP_KIND = 'rust-cli'\n", 0o644)
+	writeFixtureFile(t, filepath.Join(selected, "Cargo.toml"), "[package]\nname = \"rust-cli\"\nversion = \"0.1.0\"\n", 0o644)
+	writeFixtureFile(t, filepath.Join(selected, "src", "main.rs"), "fn main() { println!(\"rust-cli\"); }\n", 0o644)
+}
+
+// bunRegistryFixture writes an offline Hono registry whose selected Bun version requires one preflight update.
+func bunRegistryFixture(t *testing.T, root string) {
+	t.Helper()
+	manifest := core.NewManifest("bun")
+	manifest.Templates = []core.Template{{
+		Name:    "hono-api",
+		Kind:    "app",
+		Version: "0.2.0",
+		Questions: []core.Question{{
+			Prompt:   "API name:",
+			Type:     "string",
+			Populate: "name",
+		}},
+		Substitutions: map[string]string{"hono-api": "name"},
+	}}
+	if err := core.SaveManifest(filepath.Join(root, core.ManifestFilename), manifest); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(templateDir, "Cargo.toml"), []byte("name = \"premise-rust-lib\"\n"), 0o644); err != nil {
+	shared := filepath.Join(root, "templates")
+	selected := filepath.Join(shared, "hono-api")
+	writeFixtureFile(t, filepath.Join(shared, ".gitignore"), "# shared bun\nnode_modules/\n", 0o644)
+	writeFixtureFile(t, filepath.Join(shared, ".gitattributes"), "*.ts text eol=lf\n", 0o644)
+	writeFixtureFile(t, filepath.Join(shared, "NOTICE"), "shared Bun notice\n", 0o640)
+	writeFixtureFile(t, filepath.Join(shared, "mise.toml"), "[tools]\nbun = '1.2'\n\n[tasks.shared]\nrun = 'echo shared-bun'\n\n[env]\nSHARED_ROOT = 'bun'\n", 0o644)
+	writeFixtureFile(t, filepath.Join(selected, ".gitignore"), "# hono api\n.env\n", 0o644)
+	writeFixtureFile(t, filepath.Join(selected, ".gitattributes"), "bun.lock -diff\n", 0o644)
+	writeFixtureFile(t, filepath.Join(selected, "NOTICE"), "selected Bun notice\n", 0o600)
+	writeFixtureFile(t, filepath.Join(selected, "mise.toml"), "[tools]\nbun = '1.1'\n\n[tasks.build]\nrun = 'bun build src/index.ts'\n\n[env]\nAPP_KIND = 'hono-api'\n", 0o644)
+	writeFixtureFile(t, filepath.Join(selected, "package.json"), "{\"name\":\"hono-api\",\"scripts\":{\"build\":\"bun build src/index.ts\"}}\n", 0o644)
+	writeFixtureFile(t, filepath.Join(selected, "src", "index.ts"), "export const appName = 'hono-api';\n", 0o644)
+}
+
+func writeFixtureFile(t *testing.T, path, content string, mode os.FileMode) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), mode); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, mode); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestGenerateFromCargoRegistry(t *testing.T) {
+func TestGenerateFromCargoAndBunRegistries(t *testing.T) {
+	log := installMiseTaskShim(t)
 	base := t.TempDir()
 	workspace := filepath.Join(base, "workspace")
 	if _, err := core.InitializeWorkspace(workspace, workspaceMiseTemplate(t)); err != nil {
 		t.Fatal(err)
 	}
 	cargoRegistry := filepath.Join(base, "cargo-fixture")
+	bunRegistry := filepath.Join(base, "bun-fixture")
 	cargoRegistryFixture(t, cargoRegistry)
+	bunRegistryFixture(t, bunRegistry)
 
-	const selector = "../cargo-fixture:premise-rust-lib"
+	cargoSelector := cargoRegistry + ":rust-cli"
+	cargoResolver := &fixedMergeResolver{Decisions: map[string]core.MergeDecision{
+		"NOTICE": {Choice: core.MergeChoiceKeepShared},
+	}}
 	var output bytes.Buffer
-	if err := core.Generate(context.Background(), workspace, selector, fixedQuestionnaire{"name": "orders"}, &output); err != nil {
+	if err := core.Generate(context.Background(), workspace, cargoSelector, core.GenerateOptions{
+		Questionnaire: fixedQuestionnaire{Answers: map[string]string{"name": "orders-cli"}},
+		Resolver:      cargoResolver,
+	}, &output); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "Generated lib orders") {
-		t.Fatalf("unexpected generation output: %s", output.String())
+
+	bunSelector := bunRegistry + ":hono-api"
+	bunResolver := &fixedMergeResolver{Decisions: map[string]core.MergeDecision{
+		"NOTICE": {Choice: core.MergeChoiceUseSelected},
+	}}
+	if err := core.Generate(context.Background(), workspace, bunSelector, core.GenerateOptions{
+		Questionnaire: fixedQuestionnaire{Answers: map[string]string{"name": "gateway-api"}},
+		Resolver:      bunResolver,
+	}, &output); err != nil {
+		t.Fatal(err)
 	}
 
-	generated, err := os.ReadFile(filepath.Join(workspace, "libs", "orders", "Cargo.toml"))
+	orders := filepath.Join(workspace, "apps", "orders-cli")
+	gateway := filepath.Join(workspace, "apps", "gateway-api")
+	assertFileContent(t, filepath.Join(orders, ".gitignore"), "# shared rust\n/target\n# rust cli\n*.profraw\n")
+	assertFileContent(t, filepath.Join(orders, ".gitattributes"), "*.rs text eol=lf\nCargo.lock -diff\n")
+	assertFileContent(t, filepath.Join(orders, "NOTICE"), "shared Rust notice\n")
+	assertFileContains(t, filepath.Join(orders, "Cargo.toml"), "name = \"orders-cli\"")
+	assertFileContains(t, filepath.Join(orders, "src", "main.rs"), "orders-cli")
+	assertFileContent(t, filepath.Join(gateway, ".gitignore"), "# shared bun\nnode_modules/\n# hono api\n.env\n")
+	assertFileContent(t, filepath.Join(gateway, ".gitattributes"), "*.ts text eol=lf\nbun.lock -diff\n")
+	assertFileContent(t, filepath.Join(gateway, "NOTICE"), "selected Bun notice\n")
+	assertFileContains(t, filepath.Join(gateway, "package.json"), "gateway-api")
+	assertFileContains(t, filepath.Join(gateway, "src", "index.ts"), "gateway-api")
+	assertMergedMise(t, filepath.Join(orders, "mise.toml"), "rust", "1.83", "cargo", "orders-cli")
+	assertMergedMise(t, filepath.Join(gateway, "mise.toml"), "bun", "1.2", "bun", "gateway-api")
+
+	manifest, err := core.LoadManifest(filepath.Join(workspace, core.ManifestFilename))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(generated), "name = \"orders\"") || strings.Contains(string(generated), "premise-rust-lib") {
-		t.Fatalf("unexpected generated Cargo.toml:\n%s", generated)
+	if len(manifest.Workspace.Projects) != 2 {
+		t.Fatalf("projects = %#v", manifest.Workspace.Projects)
+	}
+	projects := make(map[string]core.Project, len(manifest.Workspace.Projects))
+	for _, project := range manifest.Workspace.Projects {
+		projects[project.Name] = project
+	}
+	if projects["orders-cli"].Template != cargoSelector || projects["gateway-api"].Template != bunSelector {
+		t.Fatalf("project provenance = %#v", manifest.Workspace.Projects)
+	}
+	if _, err := os.Stat(filepath.Join(orders, "Cargo.toml")); err != nil {
+		t.Fatalf("first destination changed after second generation: %v", err)
 	}
 
-	reloaded, err := core.LoadManifest(filepath.Join(workspace, core.ManifestFilename))
+	invocations := log.Invocations(t)
+	contracts, err := core.ContractTasks("app")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reloaded.Workspace.Projects) != 1 {
-		t.Fatalf("unexpected projects: %#v", reloaded.Workspace.Projects)
+	wantPerValidation := 1 + len(contracts)
+	groups := map[string]int{}
+	preflights := 0
+	for _, invocation := range invocations {
+		if invocation.Environment != "1" {
+			t.Fatalf("PREMISE_TEMPLATE_TEST = %q for %#v", invocation.Environment, invocation)
+		}
+		if invocation.Directory == orders || invocation.Directory == gateway {
+			t.Fatalf("validation ran in live destination: %#v", invocation)
+		}
+		groups[invocation.Directory]++
+		if strings.Contains(invocation.Directory, "premise-tool-preflight-") {
+			preflights++
+		}
 	}
-	if project := reloaded.Workspace.Projects[0]; project.Template != selector || project.Path != "libs/orders" {
-		t.Fatalf("unexpected provenance: %#v", project)
+	if len(groups) != 3 {
+		t.Fatalf("validation directories = %#v, want Rust candidate, Bun preflight, Bun candidate", groups)
+	}
+	for directory, count := range groups {
+		if count != wantPerValidation {
+			t.Fatalf("Mise calls in %s = %d, want %d", directory, count, wantPerValidation)
+		}
+	}
+	if preflights != wantPerValidation {
+		t.Fatalf("preflight calls = %d, want exactly one %d-call preflight", preflights, wantPerValidation)
+	}
+	if strings.Count(output.String(), "[tool bun 1.1 -> 1.2] mise install") != 1 {
+		t.Fatalf("Bun preflight output =\n%s", output.String())
+	}
+}
+
+func assertFileContent(t *testing.T, path, want string) {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(content); got != want {
+		t.Fatalf("%s = %q, want %q", path, got, want)
+	}
+}
+
+func assertFileContains(t *testing.T, path, want string) {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), want) {
+		t.Fatalf("%s does not contain %q:\n%s", path, want, content)
+	}
+}
+
+func assertMergedMise(t *testing.T, path, tool, version, sharedRoot, appKind string) {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := core.ExtractMiseConfig("generated", content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := config.Tools[tool].Selector; got != version {
+		t.Fatalf("%s tool %s = %q, want %q", path, tool, got, version)
+	}
+	if _, ok := config.Tasks["shared"]; !ok {
+		t.Fatalf("%s missing shared task", path)
+	}
+	if _, ok := config.Tasks["build"]; !ok {
+		t.Fatalf("%s missing selected build task", path)
+	}
+	if config.Env["SHARED_ROOT"] != sharedRoot || config.Env["APP_KIND"] != appKind {
+		t.Fatalf("%s environment = %#v", path, config.Env)
+	}
+}
+
+func TestGenerateValidationFailuresLeaveNoLiveState(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		fixture        func(*testing.T, string)
+		template       string
+		project        string
+		failDirectory  string
+		failArgument   string
+		failMise       string
+		wantError      string
+		mergeDecisions map[string]core.MergeDecision
+	}{
+		{
+			name:           "selective tool update",
+			fixture:        bunRegistryFixture,
+			template:       "hono-api",
+			project:        "broken-api",
+			failMise:       "bun = '1.2'",
+			wantError:      "tool update bun 1.1 -> 1.2 failed",
+			mergeDecisions: map[string]core.MergeDecision{"NOTICE": {Choice: core.MergeChoiceUseSelected}},
+		},
+		{
+			name:           "final candidate contract",
+			fixture:        cargoRegistryFixture,
+			template:       "rust-cli",
+			project:        "broken-cli",
+			failDirectory:  "premise-candidate-validation-",
+			failArgument:   "run e2e",
+			wantError:      "generated candidate validation failed",
+			mergeDecisions: map[string]core.MergeDecision{"NOTICE": {Choice: core.MergeChoiceKeepShared}},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			installMiseTaskShim(t)
+			t.Setenv("MISE_FAIL_DIRECTORY", test.failDirectory)
+			t.Setenv("MISE_FAIL_ARGUMENT", test.failArgument)
+			t.Setenv("MISE_FAIL_MISE_CONTAINS", test.failMise)
+
+			base := t.TempDir()
+			workspace := filepath.Join(base, "workspace")
+			manifestPath, err := core.InitializeWorkspace(workspace, workspaceMiseTemplate(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			registry := filepath.Join(base, "registry")
+			test.fixture(t, registry)
+			before, err := os.ReadFile(manifestPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			temporary := filepath.Join(base, "temporary")
+			if err := os.MkdirAll(temporary, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("TMPDIR", temporary)
+
+			err = core.Generate(context.Background(), workspace, registry+":"+test.template, core.GenerateOptions{
+				Questionnaire: fixedQuestionnaire{Answers: map[string]string{"name": test.project}},
+				Resolver:      &fixedMergeResolver{Decisions: test.mergeDecisions},
+			}, io.Discard)
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("error = %v, want %q", err, test.wantError)
+			}
+			if _, err := os.Stat(filepath.Join(workspace, "apps", test.project)); !os.IsNotExist(err) {
+				t.Fatalf("destination exists after failure: %v", err)
+			}
+			after, err := os.ReadFile(manifestPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(before, after) {
+				t.Fatalf("manifest changed after failure:\n%s", after)
+			}
+			assertNoGenerationTemporaryDirectories(t, filepath.Join(workspace, "apps"), temporary)
+		})
+	}
+}
+
+func assertNoGenerationTemporaryDirectories(t *testing.T, roots ...string) {
+	t.Helper()
+	for _, root := range roots {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range entries {
+			for _, prefix := range []string{".premise-stage-", "premise-selected-", "premise-tool-preflight-", "premise-candidate-validation-"} {
+				if strings.Contains(entry.Name(), prefix) {
+					t.Fatalf("temporary directory leaked: %s", filepath.Join(root, entry.Name()))
+				}
+			}
+		}
 	}
 }
 
@@ -209,7 +539,7 @@ func TestGenerateExplainsMissingTemplateManifest(t *testing.T) {
 	if err := os.MkdirAll(templateSource, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	err := core.Generate(context.Background(), workspace, templateSource+":premise-lib", fixedQuestionnaire{}, io.Discard)
+	err := core.Generate(context.Background(), workspace, templateSource+":premise-lib", fixedOptions(nil), io.Discard)
 	if err == nil {
 		t.Fatal("expected missing template manifest error")
 	}

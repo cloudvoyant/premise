@@ -55,7 +55,18 @@ pm template ls
 
 Each init command creates `templates/<kind>/mise.toml` and adds a matching declaration to `premise.yaml`. Omit the kind to select it interactively. `pm template ls` prints declared template names in stable alphabetical order. Premise rejects template initialization in a monorepo.
 
-Files placed directly under `templates/` are shared scaffold files. Generation copies those root files first, then overlays the selected `templates/<name>/` directory. A template file replaces a same-named shared file; Premise does not merge conflicting file contents. Directories under `templates/` are template sources and are not copied as shared content.
+Files placed directly under `templates/` are shared scaffold files. Premise compares these files with the selected `templates/<name>/` tree after it applies questionnaire substitutions. Directories under `templates/` are template sources and are not copied as shared content.
+
+Premise prints one path-sorted conflict preview before it creates the destination. It handles root collisions by file type:
+
+| File             | Merge behavior                                                                                     |
+| ---------------- | -------------------------------------------------------------------------------------------------- |
+| `.gitignore`     | Keep shared lines first, then selected lines. Remove only adjacent duplicate lines.                |
+| `.gitattributes` | Keep shared lines first, then selected lines. This order keeps later selected overrides effective. |
+| `mise.toml`      | Merge tools, tasks, environment values, lists, and unknown root keys with Mise-specific rules.     |
+| Any other file   | Keep the complete shared file, use the complete selected file, or abort.                           |
+
+Equal files need no decision. Premise does not parse `.editorconfig`, Prettier files, package manifests, or arbitrary ignore files as smart merge formats.
 
 The initial Mise tasks echo their contract names. Replace each echo with the real implementation while keeping the task name stable.
 
@@ -84,7 +95,9 @@ pm generate ../my-registry:app
 pm generate ../my-registry:lib
 ```
 
-Premise asks the selected template's questions and creates `apps/<name>` or `libs/<name>` according to its kind. The generated project contains the registry's shared root files overlaid by the selected template files. Premise records the project, source-qualified template selector, path, answers, and declared template version under `workspace.projects`.
+Premise asks the selected template's questions and creates `apps/<name>` or `libs/<name>` according to its kind. It shows all root collisions and resolves each conflict before it writes the destination. Premise records the project, source-qualified template selector, path, answers, and declared template version under `workspace.projects`.
+
+Before the full merge, Premise tests each selected-template tool version that the shared `mise.toml` would change. It tests one tool update at a time in a disposable copy. After the merge, Premise tests another disposable copy with `mise install` and every required template contract under `PREMISE_TEMPLATE_TEST=1`. A failed decision, tool preflight, or complete-candidate test leaves the destination and `premise.yaml` unchanged.
 
 ### Choose from the default registry
 
@@ -174,7 +187,7 @@ projects:
       name: orders
 ```
 
-`version` records the selected template declaration's version at generation time when the registry provides one; registries with repository-level versioning can omit it. If project registration or manifest saving fails after copying, Premise removes the newly created destination so output and provenance do not diverge.
+`version` records the selected template declaration's version at generation time when the registry provides one; registries with repository-level versioning can omit it. If project registration or manifest saving fails after the validated stage is renamed, Premise removes the newly created destination so output and provenance do not diverge. This is a small create-only rollback. Premise does not use locks, journals, recovery state, or a multi-resource transaction.
 
 ### Task contracts
 
@@ -242,3 +255,5 @@ resolve through commit hashes, so no RC tag or release is ever created.
 - Remote templates use the repository's default branch.
 - Private-repository authentication, concurrent cache locking, and offline mode are not available yet. Credential delegation for private registry sources is deferred to DIFF-150; go-git performs clones today.
 - Premise refuses to merge into or replace an existing destination.
+- Smart root merging is limited to `.gitignore`, `.gitattributes`, and `mise.toml`. Other root collisions use a complete-file choice.
+- Generation is create-only. It does not update existing projects or provide crash recovery across the destination and workspace manifest.

@@ -386,6 +386,7 @@ func TestClassifyGenerateSelector(t *testing.T) {
 }
 
 func TestRegistryResolutionRecordsQualifiedProvenance(t *testing.T) {
+	installMiseTestShim(t, false)
 	goRegistry := writeRegistryFixture(t, templateFixture("premise-app", "app"))
 	cargoRegistry := writeRegistryFixture(t, templateFixture("premise-rust-lib", "lib"))
 	bunRegistry := writeRegistryFixture(t)
@@ -436,7 +437,7 @@ func TestRegistryResolutionRecordsQualifiedProvenance(t *testing.T) {
 			if _, err := InitializeWorkspace(workspace, "[tasks.build]\nrun = 'echo ok'\n"); err != nil {
 				t.Fatal(err)
 			}
-			if err := Generate(context.Background(), workspace, selector, fixedQuestionnaire{"name": "orders"}, io.Discard); err != nil {
+			if err := Generate(context.Background(), workspace, selector, fixedGenerateOptions(fixedQuestionnaire{"name": "orders"}), io.Discard); err != nil {
 				t.Fatal(err)
 			}
 			manifest, err := LoadManifest(filepath.Join(workspace, ManifestFilename))

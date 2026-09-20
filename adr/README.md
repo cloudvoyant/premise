@@ -2,10 +2,11 @@
 
 Records follow the [MADR](https://adr.github.io/madr/) format — see [template.md](template.md). Filenames are `NNNN-kebab-title.md`, numbered sequentially.
 
-| ADR                           | Status   | Summary                                        |
-| ----------------------------- | -------- | ---------------------------------------------- |
-| [0001](0001-core-concepts.md) | proposed | What premise is; terminology and relationships |
-| [0002](0002-cli-design.md)    | proposed | CLI surface, command shape, and the `pm` alias |
+| ADR                                   | Status   | Summary                                        |
+| ------------------------------------- | -------- | ---------------------------------------------- |
+| [0001](0001-core-concepts.md)         | proposed | What premise is; terminology and relationships |
+| [0002](0002-cli-design.md)            | proposed | CLI surface, command shape, and the `pm` alias |
+| [0003](0003-template-root-merging.md) | accepted | Focused template-root merging and validation   |
 
 Background research lives under `.codevoyant/explore/premise-composition-and-evolution/`.
 
