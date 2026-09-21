@@ -22,8 +22,8 @@ func TestIsRegistry(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "templates", "Cargo.toml"), []byte("[workspace]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if registry, err := isCargoRegistry(root); err != nil || registry {
-		t.Fatalf("isCargoRegistry(templates/Cargo.toml) = %v, %v; want false", registry, err)
+	if registry, err := isCargoRegistry(root); err != nil || !registry {
+		t.Fatalf("isCargoRegistry(templates/Cargo.toml) = %v, %v; want true", registry, err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "Cargo.toml"), []byte("[workspace]\n"), 0o644); err != nil {
 		t.Fatal(err)

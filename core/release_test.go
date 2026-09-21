@@ -25,6 +25,13 @@ func TestDetectReleaseProfile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(cargoRoot, "Cargo.toml"), []byte("[workspace]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	legacyCargoRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(legacyCargoRoot, "templates"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyCargoRoot, "templates", "Cargo.toml"), []byte("[workspace]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	for _, test := range []struct {
 		root string
@@ -32,6 +39,7 @@ func TestDetectReleaseProfile(t *testing.T) {
 	}{
 		{root: goRoot, want: ReleaseProfileGo},
 		{root: cargoRoot, want: ReleaseProfileCargo},
+		{root: legacyCargoRoot, want: ReleaseProfileCargo},
 	} {
 		got, err := DetectReleaseProfile(test.root)
 		if err != nil {
@@ -428,6 +436,9 @@ printf '%s\n' "$*" >> "$CAPTURE"
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(cargoRoot, "templates"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cargoRoot, "Cargo.toml"), []byte("[workspace]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(capture, nil, 0o600); err != nil {

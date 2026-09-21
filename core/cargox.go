@@ -42,15 +42,25 @@ type cargoPublication struct {
 
 // isCargoRegistry reports whether root follows Premise's Cargo registry convention.
 func isCargoRegistry(root string) (bool, error) {
-	path := filepath.Join(root, "Cargo.toml")
-	info, err := os.Stat(path)
-	if err == nil {
-		return info.Mode().IsRegular(), nil
+	_, found, err := cargoWorkspaceDirectory(root)
+	return found, err
+}
+
+// cargoWorkspaceDirectory resolves the aggregate Cargo workspace. New registries
+// keep it at the repository root; the templates location remains supported while
+// existing registries migrate.
+func cargoWorkspaceDirectory(root string) (string, bool, error) {
+	for _, directory := range []string{root, filepath.Join(root, "templates")} {
+		path := filepath.Join(directory, "Cargo.toml")
+		info, err := os.Stat(path)
+		if err == nil {
+			return directory, info.Mode().IsRegular(), nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", false, err
+		}
 	}
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	return false, err
+	return "", false, nil
 }
 
 func publishCargoPackages(ctx context.Context, root, version, task string, stdout, stderr io.Writer) (resultErr error) {
@@ -72,6 +82,13 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 		return fmt.Errorf("unsupported Cargo publication task %q", task)
 	}
 
+	workspaceDirectory, found, err := cargoWorkspaceDirectory(root)
+	if err != nil {
+		return fmt.Errorf("inspect Cargo registry workspace: %w", err)
+	}
+	if !found {
+		return errors.New("Cargo registry workspace is missing Cargo.toml")
+	}
 	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
 	if err != nil {
 		return fmt.Errorf("load Cargo registry manifest: %w", err)
@@ -89,7 +106,7 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 		}
 		backups = append(backups, backup)
 	}
-	lockPath := filepath.Join(root, "Cargo.lock")
+	lockPath := filepath.Join(workspaceDirectory, "Cargo.lock")
 	lockBackup, err := backupCargoFile(lockPath)
 	if err != nil {
 		return err
@@ -105,7 +122,7 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 		}
 	}
 	lockRunner := miseRunner{Stdout: stdout, Stderr: stderr}
-	if err := lockRunner.run(ctx, root, nil, "exec", "--", "cargo", "generate-lockfile"); err != nil {
+	if err := lockRunner.run(ctx, workspaceDirectory, nil, "exec", "--", "cargo", "generate-lockfile"); err != nil {
 		return fmt.Errorf("regenerate Cargo lockfile: %w", err)
 	}
 
