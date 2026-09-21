@@ -460,6 +460,7 @@ func validateGenerationToolChanges(ctx context.Context, selectedStage, kind stri
 		output = io.Discard
 	}
 	for _, change := range changes {
+		fmt.Fprintf(output, "Validating tool %s %v -> %v...\n", change.Name, change.From, change.To)
 		candidate, err := os.MkdirTemp("", "premise-tool-preflight-*")
 		if err != nil {
 			return fmt.Errorf("create %s tool preflight: %w", change.Name, err)
@@ -473,7 +474,7 @@ func validateGenerationToolChanges(ctx context.Context, selectedStage, kind stri
 				return err
 			}
 			label := fmt.Sprintf("tool %s %v -> %v", change.Name, change.From, change.To)
-			if err := runTemplateContracts(ctx, candidate, kind, label, output, output); err != nil {
+			if err := runGenerationTemplateContracts(ctx, candidate, kind, label, output); err != nil {
 				return fmt.Errorf("tool update %s %v -> %v failed: %w", change.Name, change.From, change.To, err)
 			}
 			return nil
@@ -489,6 +490,7 @@ func validateGeneratedCandidate(ctx context.Context, stage, kind string, output 
 	if output == nil {
 		output = io.Discard
 	}
+	fmt.Fprintln(output, "Validating generated candidate...")
 	candidate, err := os.MkdirTemp("", "premise-candidate-validation-*")
 	if err != nil {
 		return fmt.Errorf("create generated candidate validation copy: %w", err)
@@ -497,7 +499,7 @@ func validateGeneratedCandidate(ctx context.Context, stage, kind string, output 
 	if err := copyTree(stage, candidate, nil); err != nil {
 		return fmt.Errorf("copy generated candidate: %w", err)
 	}
-	if err := runTemplateContracts(ctx, candidate, kind, "generated candidate", output, output); err != nil {
+	if err := runGenerationTemplateContracts(ctx, candidate, kind, "generated candidate", output); err != nil {
 		return fmt.Errorf("generated candidate validation failed: %w", err)
 	}
 	return nil

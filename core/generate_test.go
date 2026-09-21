@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -629,6 +630,58 @@ func TestValidateGeneratedCandidateRunsContractsInDisposableCopy(t *testing.T) {
 	}
 	if string(marker) != "unchanged\n" {
 		t.Fatalf("stage changed: %q", marker)
+	}
+}
+
+func TestValidateGeneratedCandidateDiscardsSuccessOutputAndStopsAfterFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a shell fixture")
+	}
+	stage := filepath.Join(t.TempDir(), "stage")
+	if err := os.MkdirAll(stage, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(stage, "mise.toml"), "[tasks.build]\nrun = 'echo build'\n", 0o644)
+	bin := filepath.Join(t.TempDir(), "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(t.TempDir(), "mise.log")
+	script := "#!/bin/sh\n" +
+		"printf '%s|%s\\n' \"$PREMISE_TEMPLATE_TEST\" \"$*\" >> \"$MISE_LOG\"\n" +
+		"if [ \"$*\" = \"run clean\" ]; then printf 'failed stdout: %s\\n' \"$*\"; printf 'failed stderr: %s\\n' \"$*\" >&2; exit 7; fi\n" +
+		"printf 'successful stdout: %s\\n' \"$*\"; printf 'successful stderr: %s\\n' \"$*\" >&2\n"
+	if err := os.WriteFile(filepath.Join(bin, "mise"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MISE_LOG", log)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var output bytes.Buffer
+	err := validateGeneratedCandidate(context.Background(), stage, "lib", &output)
+	if err == nil || !strings.Contains(err.Error(), "template generated candidate task clean failed") {
+		t.Fatalf("error = %v", err)
+	}
+	if !strings.Contains(output.String(), "Validating generated candidate...\n") ||
+		!strings.Contains(output.String(), "failed stdout: run clean") ||
+		!strings.Contains(output.String(), "failed stderr: run clean") {
+		t.Fatalf("failure output = %q", output.String())
+	}
+	if strings.Contains(output.String(), "successful stdout") || strings.Contains(output.String(), "successful stderr") {
+		t.Fatalf("successful command output was not discarded: %q", output.String())
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if got, want := len(lines), 4; got != want {
+		t.Fatalf("mise calls = %d, want %d: %s", got, want, data)
+	}
+	for index, want := range []string{"1|install", "1|run install", "1|run build", "1|run clean"} {
+		if lines[index] != want {
+			t.Fatalf("mise call %d = %q, want %q", index, lines[index], want)
+		}
 	}
 }
 

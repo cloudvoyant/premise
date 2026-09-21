@@ -364,7 +364,7 @@ func TestGenerateFromCargoAndBunRegistries(t *testing.T) {
 	if preflights != wantPerValidation {
 		t.Fatalf("preflight calls = %d, want exactly one %d-call preflight", preflights, wantPerValidation)
 	}
-	if strings.Count(output.String(), "[tool bun 1.1 -> 1.2] mise install") != 1 {
+	if strings.Count(output.String(), "Validating tool bun 1.1 -> 1.2...\n") != 1 {
 		t.Fatalf("Bun preflight output =\n%s", output.String())
 	}
 }

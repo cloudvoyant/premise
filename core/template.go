@@ -186,6 +186,42 @@ func runTemplateContracts(ctx context.Context, directory, kind, label string, st
 	return errors.Join(failures...)
 }
 
+// runGenerationTemplateContracts validates a generated candidate without
+// exposing successful command output. Failed command output is written to
+// failureOutput so generation errors retain the useful Mise diagnostics.
+func runGenerationTemplateContracts(ctx context.Context, directory, kind, label string, failureOutput io.Writer) error {
+	if failureOutput == nil {
+		failureOutput = io.Discard
+	}
+	tasks, err := ContractTasks(kind)
+	if err != nil {
+		return fmt.Errorf("template %s: %w", label, err)
+	}
+	testEnvironment := []string{"PREMISE_TEMPLATE_TEST=1"}
+	run := func(arguments ...string) error {
+		var commandOutput bytes.Buffer
+		mise := miseRunner{
+			Stdout:  &commandOutput,
+			Stderr:  &commandOutput,
+			Ceiling: filepath.Dir(filepath.Clean(directory)),
+		}
+		if err := mise.run(ctx, directory, testEnvironment, arguments...); err != nil {
+			_, _ = io.Copy(failureOutput, &commandOutput)
+			return err
+		}
+		return nil
+	}
+	if err := run("install"); err != nil {
+		return fmt.Errorf("template %s tool install failed: %w", label, err)
+	}
+	for _, task := range tasks {
+		if err := run("run", task); err != nil {
+			return fmt.Errorf("template %s task %s failed: %w", label, task, err)
+		}
+	}
+	return nil
+}
+
 func copyTree(source, destination string, replacer *strings.Replacer) error {
 	err := filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
