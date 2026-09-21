@@ -11,11 +11,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -135,7 +137,7 @@ func MergeMiseConfigs(shared, selected MiseConfig, templateKind, registryIdentit
 		if !ok || anyEqual(selectedTool.Raw, mergedTool.Raw) {
 			continue
 		}
-		changes = append(changes, ToolChange{Name: name, From: cloneAny(selectedTool.Raw), To: cloneAny(mergedTool.Raw)})
+		changes = append(changes, ToolChange{Name: name, From: cloneMiseValue(selectedTool.Raw), To: cloneMiseValue(mergedTool.Raw)})
 	}
 	sort.Slice(changes, func(i, j int) bool { return changes[i].Name < changes[j].Name })
 	sort.Strings(notices)
@@ -243,7 +245,7 @@ func withoutEnvironment(environment []string, names ...string) []string {
 }
 
 func extractMiseRoot(label string, input map[string]any) (MiseConfig, error) {
-	root := cloneMap(input)
+	root := cloneMiseValue(input).(map[string]any)
 	config := MiseConfig{
 		Root:  root,
 		Tools: make(map[string]MiseTool),
@@ -257,7 +259,7 @@ func extractMiseRoot(label string, input map[string]any) (MiseConfig, error) {
 		}
 		for name, value := range tools {
 			selector, stringSelector := value.(string)
-			config.Tools[name] = MiseTool{Raw: cloneAny(value), Selector: selector, StringSelector: stringSelector}
+			config.Tools[name] = MiseTool{Raw: cloneMiseValue(value), Selector: selector, StringSelector: stringSelector}
 		}
 	}
 	if raw, ok := root["tasks"]; ok {
@@ -272,7 +274,7 @@ func extractMiseRoot(label string, input map[string]any) (MiseConfig, error) {
 				return MiseConfig{}, err
 			}
 			config.Tasks[name] = task
-			normalized[name] = cloneMap(task.Raw)
+			normalized[name] = cloneMiseValue(task.Raw).(map[string]any)
 		}
 		root["tasks"] = normalized
 	}
@@ -281,8 +283,8 @@ func extractMiseRoot(label string, input map[string]any) (MiseConfig, error) {
 		if !ok {
 			return MiseConfig{}, fmt.Errorf("%s mise.toml section env must be a table", label)
 		}
-		config.Env = cloneMap(environment)
-		root["env"] = cloneMap(environment)
+		config.Env = cloneMiseValue(environment).(map[string]any)
+		root["env"] = cloneMiseValue(environment).(map[string]any)
 	}
 	return config, nil
 }
@@ -295,7 +297,7 @@ func extractMiseTask(label, name string, value any) (MiseTask, error) {
 	if !ok {
 		return MiseTask{}, fmt.Errorf("%s mise.toml task %s must be a command string or table", label, name)
 	}
-	task := MiseTask{Raw: cloneMap(raw)}
+	task := MiseTask{Raw: cloneMiseValue(raw).(map[string]any)}
 	run, ok := raw["run"]
 	if !ok {
 		return task, nil
@@ -346,7 +348,7 @@ func updateMiseTool(path, name string, value any) error {
 	if _, ok := tools[name]; !ok {
 		return fmt.Errorf("mise config %s does not contain tool %s", path, name)
 	}
-	tools[name] = cloneAny(value)
+	tools[name] = cloneMiseValue(value)
 	config, err = extractMiseRoot(path, config.Root)
 	if err != nil {
 		return err
@@ -365,29 +367,23 @@ func updateMiseTool(path, name string, value any) error {
 	return nil
 }
 
-func cloneMap(input map[string]any) map[string]any {
-	if input == nil {
-		return nil
-	}
-	output := make(map[string]any, len(input))
-	for key, value := range input {
-		output[key] = cloneAny(value)
-	}
-	return output
-}
-
-func cloneAny(value any) any {
+// cloneMiseValue recursively copies the TOML value shapes used by Mise.
+func cloneMiseValue(value any) any {
 	switch typed := value.(type) {
 	case map[string]any:
-		return cloneMap(typed)
-	case []any:
-		output := make([]any, len(typed))
-		for index, item := range typed {
-			output[index] = cloneAny(item)
+		cloned := maps.Clone(typed)
+		for key, item := range cloned {
+			cloned[key] = cloneMiseValue(item)
 		}
-		return output
+		return cloned
+	case []any:
+		cloned := slices.Clone(typed)
+		for index, item := range cloned {
+			cloned[index] = cloneMiseValue(item)
+		}
+		return cloned
 	case []string:
-		return append([]string(nil), typed...)
+		return slices.Clone(typed)
 	default:
 		return typed
 	}
@@ -416,11 +412,11 @@ func mergeMiseTools(shared, selected map[string]MiseTool, resolver MergeConflict
 		right, rightOK := selected[name]
 		switch {
 		case !leftOK:
-			output[name] = cloneAny(right.Raw)
+			output[name] = cloneMiseValue(right.Raw)
 		case !rightOK:
-			output[name] = cloneAny(left.Raw)
+			output[name] = cloneMiseValue(left.Raw)
 		case anyEqual(left.Raw, right.Raw):
-			output[name] = cloneAny(right.Raw)
+			output[name] = cloneMiseValue(right.Raw)
 		case left.StringSelector && right.StringSelector:
 			leftVersion, leftErr := semver.NewVersion(left.Selector)
 			rightVersion, rightErr := semver.NewVersion(right.Selector)
@@ -464,13 +460,13 @@ func mergeMiseTasks(shared, selected map[string]MiseTask, templateKind, registry
 		right, rightOK := selected[name]
 		switch {
 		case !leftOK:
-			output[name] = cloneMap(right.Raw)
+			output[name] = cloneMiseValue(right.Raw).(map[string]any)
 		case !rightOK:
-			output[name] = cloneMap(left.Raw)
+			output[name] = cloneMiseValue(left.Raw).(map[string]any)
 		case isContractTask(contracts, name):
 			// Contract metadata belongs to the selected template. Only its run
 			// body is composed; contract tasks are intentionally argument-free.
-			merged := cloneMap(right.Raw)
+			merged := cloneMiseValue(right.Raw).(map[string]any)
 			commands := make([]string, 0, len(left.Run)+len(right.Run))
 			commands = append(commands, left.Run...)
 			commands = append(commands, right.Run...)
@@ -484,8 +480,8 @@ func mergeMiseTasks(shared, selected map[string]MiseTask, templateKind, registry
 			if _, exists := selected[namespaced]; exists {
 				return nil, nil, fmt.Errorf("cannot namespace Mise task %q as %q: task name already exists", name, namespaced)
 			}
-			output[name] = cloneMap(left.Raw)
-			output[namespaced] = cloneMap(right.Raw)
+			output[name] = cloneMiseValue(left.Raw).(map[string]any)
+			output[namespaced] = cloneMiseValue(right.Raw).(map[string]any)
 			notices = append(notices, fmt.Sprintf("Mise task %q was namespaced as %q to preserve the shared task", name, namespaced))
 		}
 	}
@@ -515,8 +511,8 @@ func miseTaskPrefix(identity string) string {
 }
 
 func mergeMiseEnvironment(shared, selected MiseConfig, selectedIdentity string, resolver MergeConflictResolver) (map[string]any, map[string]any, error) {
-	selectedRoot := cloneMap(selected.Root)
-	selectedEnvironment := cloneMap(selected.Env)
+	selectedRoot := cloneMiseValue(selected.Root).(map[string]any)
+	selectedEnvironment := cloneMiseValue(selected.Env).(map[string]any)
 	names := sortedMapKeys(selectedEnvironment)
 	decisions := make(map[string]MergeDecision, len(names))
 
@@ -564,15 +560,15 @@ func mergeMiseEnvironment(shared, selected MiseConfig, selectedIdentity string, 
 		}
 	}
 
-	output := cloneMap(shared.Env)
+	output := cloneMiseValue(shared.Env).(map[string]any)
 	for _, name := range names {
 		decision := decisions[name]
 		switch decision.Choice {
 		case MergeChoiceKeepShared:
 		case MergeChoiceUseSelected:
-			output[name] = cloneAny(selectedEnvironment[name])
+			output[name] = cloneMiseValue(selectedEnvironment[name])
 		case MergeChoiceRenameSelected:
-			output[decision.Rename] = cloneAny(selectedEnvironment[decision.Rename])
+			output[decision.Rename] = cloneMiseValue(selectedEnvironment[decision.Rename])
 		}
 	}
 	return selectedRoot, output, nil
@@ -580,13 +576,13 @@ func mergeMiseEnvironment(shared, selected MiseConfig, selectedIdentity string, 
 
 func mergeMiseValue(path string, left any, leftOK bool, right any, rightOK bool, resolver MergeConflictResolver) (any, bool, error) {
 	if !leftOK {
-		return cloneAny(right), rightOK, nil
+		return cloneMiseValue(right), rightOK, nil
 	}
 	if !rightOK {
-		return cloneAny(left), true, nil
+		return cloneMiseValue(left), true, nil
 	}
 	if anyEqual(left, right) {
-		return cloneAny(right), true, nil
+		return cloneMiseValue(right), true, nil
 	}
 	leftMap, leftMapOK := left.(map[string]any)
 	rightMap, rightMapOK := right.(map[string]any)
@@ -616,7 +612,7 @@ func mergeMiseValue(path string, left any, leftOK bool, right any, rightOK bool,
 				}
 			}
 			if !found {
-				output = append(output, cloneAny(item))
+				output = append(output, cloneMiseValue(item))
 			}
 		}
 		return output, true, nil
@@ -632,9 +628,9 @@ func resolveMiseScalar(path string, shared, selected any, allowRename bool, reso
 	}
 	switch decision.Choice {
 	case MergeChoiceKeepShared:
-		return cloneAny(shared), nil
+		return cloneMiseValue(shared), nil
 	case MergeChoiceUseSelected:
-		return cloneAny(selected), nil
+		return cloneMiseValue(selected), nil
 	case MergeChoiceAbort:
 		return nil, fmt.Errorf("merge aborted for mise value %s", path)
 	default:
@@ -663,7 +659,7 @@ func rewriteEnvironmentReferences(value any, oldName, newName string) any {
 		}
 		return output
 	default:
-		return cloneAny(typed)
+		return cloneMiseValue(typed)
 	}
 }
 

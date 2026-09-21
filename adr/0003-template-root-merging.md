@@ -32,11 +32,11 @@ Registries usually target different frameworks, so non-contract task and file co
 
 ## Implementation boundary
 
-Generation resolves or pulls the registry first. `BuildMergePlan` prepares the comparison and decisions, and `ExecuteMergePlan` performs dependency preflights, materialization, complete validation, and the destination rename.
+Generation resolves or pulls the registry first. `BuildGeneratePlan(GenerateParameters)` prepares the plan and decisions, and `ApplyGeneratePlan` performs dependency preflights, materialization, complete validation, and the destination rename.
 
 ## Consequences
 
-The focused policies expose collisions before destination creation, preserve ordered Git behavior, keep selected contract metadata, and make changed dependencies fail early. New smart formats require their own semantics and tests.
+The focused policies resolve collisions before destination creation, preserve ordered Git behavior, keep selected contract metadata, and make changed dependencies fail early. New smart formats require their own semantics and tests.
 
 Crash-consistent transaction, lock, and journal machinery is out of scope.
 

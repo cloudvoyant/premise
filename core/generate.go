@@ -75,7 +75,7 @@ func Generate(ctx context.Context, cwd, selector string, options GenerateOptions
 	if err != nil {
 		return err
 	}
-	plan, err := BuildMergePlan(TemplateGeneration{
+	plan, err := BuildGeneratePlan(GenerateParameters{
 		RegistryTemplatesRoot: filepath.Join(sourceRoot, "templates"),
 		TemplateRoot:          source,
 		ClientRepoRoot:        workspaceRoot,
@@ -89,11 +89,10 @@ func Generate(ctx context.Context, cwd, selector string, options GenerateOptions
 	if err != nil {
 		return err
 	}
-	printTemplateComparison(output, plan)
 	for _, notice := range plan.Mise.Notices {
 		fmt.Fprintf(output, "- %s\n", notice)
 	}
-	if err := ExecuteMergePlan(ctx, plan, output); err != nil {
+	if err := ApplyGeneratePlan(ctx, plan, output); err != nil {
 		return err
 	}
 
@@ -114,38 +113,4 @@ func Generate(ctx context.Context, cwd, selector string, options GenerateOptions
 	}
 	fmt.Fprintf(output, "Generated %s %s from %s at %s\n", template.Kind, name, selector, relativeDestination)
 	return nil
-}
-
-func printTemplateComparison(output io.Writer, plan *MergePlan) {
-	if output == nil {
-		output = io.Discard
-	}
-	fmt.Fprintln(output, "Template root comparison:")
-	if len(plan.Collisions) == 0 {
-		fmt.Fprintln(output, "- no collisions")
-		return
-	}
-	for _, entry := range plan.Entries {
-		if !entry.Shared.Present || !entry.Selected.Present {
-			continue
-		}
-		fmt.Fprintf(output, "- %s: %s\n", entry.Path, mergeStrategyLabel(entry))
-	}
-}
-
-func mergeStrategyLabel(entry MergeEntry) string {
-	switch entry.Strategy {
-	case MergeStrategyCopy:
-		return "one-sided copy"
-	case MergeStrategyEqual:
-		return "equal coalescing"
-	case MergeStrategyOrderedLines:
-		return "tier-two ordered-line merge"
-	case MergeStrategyMise:
-		return "tier-one typed Mise merge"
-	case MergeStrategyWholeFile:
-		return "tier-three whole-file selection"
-	default:
-		return string(entry.Strategy)
-	}
 }

@@ -23,7 +23,7 @@ func (answers fixedQuestionnaire) Ask(_ []Question) (map[string]string, error) {
 func fixedGenerateOptions(answers fixedQuestionnaire) GenerateOptions {
 	return GenerateOptions{
 		Questionnaire:    answers,
-		ConflictResolver: (&mapMergeResolver{Decisions: map[string]MergeDecision{}}).ResolveMergeConflict,
+		ConflictResolver: MergeDecisions{}.Resolve,
 	}
 }
 
@@ -111,7 +111,7 @@ func TestGenerateMergesSharedFilesWithSelectedTemplate(t *testing.T) {
 	}
 }
 
-func TestGeneratePrintsSortedCollisionStrategiesBeforeValidation(t *testing.T) {
+func TestGenerateDoesNotPrintTechnicalCollisionComparison(t *testing.T) {
 	installMiseTestShim(t, false)
 	template := templateFixture("app", "app")
 	registry := writeRegistryFixture(t, template)
@@ -130,22 +130,15 @@ func TestGeneratePrintsSortedCollisionStrategiesBeforeValidation(t *testing.T) {
 	if _, err := InitializeWorkspace(workspace, "monorepo_root = true\n"); err != nil {
 		t.Fatal(err)
 	}
-	resolver := &mapMergeResolver{Decisions: map[string]MergeDecision{"NOTICE": {Choice: MergeChoiceKeepShared}}}
 	var output bytes.Buffer
 	if err := Generate(context.Background(), workspace, registry+":app", GenerateOptions{
 		Questionnaire:    fixedQuestionnaire{"name": "orders"},
-		ConflictResolver: resolver.ResolveMergeConflict,
+		ConflictResolver: MergeDecisions{"NOTICE": {Choice: MergeChoiceKeepShared}}.Resolve,
 	}, &output); err != nil {
 		t.Fatal(err)
 	}
-
-	want := "Template root comparison:\n" +
-		"- .gitattributes: tier-two ordered-line merge\n" +
-		"- .gitignore: tier-two ordered-line merge\n" +
-		"- NOTICE: tier-three whole-file selection\n" +
-		"- mise.toml: tier-one typed Mise merge\n"
-	if !strings.HasPrefix(output.String(), want) {
-		t.Fatalf("comparison output =\n%s\nwant prefix =\n%s", output.String(), want)
+	if strings.Contains(output.String(), "Template root comparison:") || strings.Contains(output.String(), "no collisions") {
+		t.Fatalf("technical comparison output was not removed:\n%s", output.String())
 	}
 }
 

@@ -145,11 +145,11 @@ color = "green"
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolver := &mapMergeResolver{Decisions: map[string]MergeDecision{
+	resolver := MergeDecisions{
 		"DATABASE":       {Choice: MergeChoiceRenameSelected, Rename: "SELECTED_DATABASE"},
 		"settings.color": {Choice: MergeChoiceUseSelected},
-	}}
-	result, err := MergeMiseConfigs(shared, selected, "lib", "selected", resolver.ResolveMergeConflict)
+	}
+	result, err := MergeMiseConfigs(shared, selected, "lib", "selected", resolver.Resolve)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,10 +204,10 @@ run = "echo $A $Z"
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolver := &mapMergeResolver{Decisions: map[string]MergeDecision{
+	resolver := MergeDecisions{
 		"Z": {Choice: MergeChoiceRenameSelected, Rename: "SELECTED_Z"},
-	}}
-	result, err := MergeMiseConfigs(shared, selected, "lib", "selected", resolver.ResolveMergeConflict)
+	}
+	result, err := MergeMiseConfigs(shared, selected, "lib", "selected", resolver.Resolve)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,10 +238,10 @@ node = { version = "20", os = ["linux"] }
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolver := &mapMergeResolver{Decisions: map[string]MergeDecision{
+	resolver := MergeDecisions{
 		"tools.node": {Choice: MergeChoiceKeepShared},
-	}}
-	result, err := MergeMiseConfigs(shared, selected, "lib", "selected", resolver.ResolveMergeConflict)
+	}
+	result, err := MergeMiseConfigs(shared, selected, "lib", "selected", resolver.Resolve)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,32 +367,12 @@ func TestMergeMiseConfigsAsksForIncomparableToolSelectors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolver := &mapMergeResolver{Decisions: map[string]MergeDecision{"tools.node": {Choice: MergeChoiceKeepShared}}}
-	result, err := MergeMiseConfigs(shared, selected, "lib", "selected", resolver.ResolveMergeConflict)
+	resolver := MergeDecisions{"tools.node": {Choice: MergeChoiceKeepShared}}
+	result, err := MergeMiseConfigs(shared, selected, "lib", "selected", resolver.Resolve)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Config.Tools["node"].Selector != "lts" {
 		t.Fatalf("node = %#v", result.Config.Tools["node"])
 	}
-}
-
-// -----------------------------------------------------------------------------
-// Test helpers
-// -----------------------------------------------------------------------------
-
-type mapMergeResolver struct {
-	Decisions map[string]MergeDecision
-	Calls     []MergeConflict
-}
-
-func (resolver *mapMergeResolver) ResolveMergeConflict(conflict MergeConflict) (MergeDecision, error) {
-	resolver.Calls = append(resolver.Calls, conflict)
-	if decision, ok := resolver.Decisions[conflict.Key]; ok {
-		return decision, nil
-	}
-	if decision, ok := resolver.Decisions[conflict.Path]; ok {
-		return decision, nil
-	}
-	return MergeDecision{Choice: MergeChoiceAbort}, nil
 }

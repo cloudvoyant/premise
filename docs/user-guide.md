@@ -57,7 +57,7 @@ Each init command creates `templates/<kind>/mise.toml` and adds a matching decla
 
 Files placed directly under `templates/` are shared scaffold files. Premise compares these files with the selected `templates/<name>/` tree after it applies questionnaire substitutions. Directories under `templates/` are template sources and are not copied as shared content. See the [Generation Architecture](generation.md) for the implementation boundary and merge flow.
 
-Premise prints one path-sorted conflict preview before it creates the destination. Root collisions use three tiers:
+Premise resolves root conflicts before it creates the destination. Interactive prompts (or a supplied resolver) choose among the supported three tiers; no technical conflict report is printed:
 
 | Tier                                      | Merge behavior                                                                    |
 | ----------------------------------------- | --------------------------------------------------------------------------------- |

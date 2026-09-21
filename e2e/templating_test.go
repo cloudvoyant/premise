@@ -25,26 +25,10 @@ func (questionnaire fixedQuestionnaire) Ask(_ []core.Question) (map[string]strin
 	return answers, nil
 }
 
-type fixedMergeResolver struct {
-	Decisions map[string]core.MergeDecision
-	Calls     []core.MergeConflict
-}
-
-func (resolver *fixedMergeResolver) ResolveMergeConflict(conflict core.MergeConflict) (core.MergeDecision, error) {
-	resolver.Calls = append(resolver.Calls, conflict)
-	if decision, ok := resolver.Decisions[conflict.Key]; ok {
-		return decision, nil
-	}
-	if decision, ok := resolver.Decisions[conflict.Path]; ok {
-		return decision, nil
-	}
-	return core.MergeDecision{Choice: core.MergeChoiceAbort}, nil
-}
-
 func fixedOptions(answers map[string]string) core.GenerateOptions {
 	return core.GenerateOptions{
 		Questionnaire:    fixedQuestionnaire{Answers: answers},
-		ConflictResolver: (&fixedMergeResolver{Decisions: map[string]core.MergeDecision{}}).ResolveMergeConflict,
+		ConflictResolver: core.MergeDecisions{}.Resolve,
 	}
 }
 
@@ -169,7 +153,7 @@ func TestWorkspaceTemplateAndGenerationWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := core.BuildMergePlan(core.TemplateGeneration{TemplateRoot: source, ClientRepoRoot: root, ProjectPath: filepath.Join("apps", "orders")}); err == nil {
+	if _, err := core.BuildGeneratePlan(core.GenerateParameters{TemplateRoot: source, ClientRepoRoot: root, ProjectPath: filepath.Join("apps", "orders")}); err == nil {
 		t.Fatal("expected existing destination error")
 	}
 
@@ -294,24 +278,24 @@ func TestGenerateFromCargoAndBunRegistries(t *testing.T) {
 	bunRegistryFixture(t, bunRegistry)
 
 	cargoSelector := cargoRegistry + ":rust-cli"
-	cargoResolver := &fixedMergeResolver{Decisions: map[string]core.MergeDecision{
+	cargoResolver := core.MergeDecisions{
 		"NOTICE": {Choice: core.MergeChoiceKeepShared},
-	}}
+	}
 	var output bytes.Buffer
 	if err := core.Generate(context.Background(), workspace, cargoSelector, core.GenerateOptions{
 		Questionnaire:    fixedQuestionnaire{Answers: map[string]string{"name": "orders-cli"}},
-		ConflictResolver: cargoResolver.ResolveMergeConflict,
+		ConflictResolver: cargoResolver.Resolve,
 	}, &output); err != nil {
 		t.Fatal(err)
 	}
 
 	bunSelector := bunRegistry + ":hono-api"
-	bunResolver := &fixedMergeResolver{Decisions: map[string]core.MergeDecision{
+	bunResolver := core.MergeDecisions{
 		"NOTICE": {Choice: core.MergeChoiceUseSelected},
-	}}
+	}
 	if err := core.Generate(context.Background(), workspace, bunSelector, core.GenerateOptions{
 		Questionnaire:    fixedQuestionnaire{Answers: map[string]string{"name": "gateway-api"}},
-		ConflictResolver: bunResolver.ResolveMergeConflict,
+		ConflictResolver: bunResolver.Resolve,
 	}, &output); err != nil {
 		t.Fatal(err)
 	}
@@ -489,7 +473,7 @@ func TestGenerateValidationFailuresLeaveNoLiveState(t *testing.T) {
 
 			err = core.Generate(context.Background(), workspace, registry+":"+test.template, core.GenerateOptions{
 				Questionnaire:    fixedQuestionnaire{Answers: map[string]string{"name": test.project}},
-				ConflictResolver: (&fixedMergeResolver{Decisions: test.mergeDecisions}).ResolveMergeConflict,
+				ConflictResolver: (core.MergeDecisions(test.mergeDecisions)).Resolve,
 			}, io.Discard)
 			if err == nil || !strings.Contains(err.Error(), test.wantError) {
 				t.Fatalf("error = %v, want %q", err, test.wantError)

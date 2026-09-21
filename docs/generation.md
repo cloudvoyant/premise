@@ -10,7 +10,7 @@ Generation does not overwrite an existing destination or update an existing proj
 
 - Resolve a selector to a registry and a declared template, whether the source is local or remote.
 - Apply questionnaire answers and literal substitutions consistently to the selected template and shared registry files.
-- Make root collisions visible before materialization and give each supported collision a deterministic decision.
+- Resolve root collisions before publication and give each supported collision a deterministic decision.
 - Never overwrite an existing destination.
 - Run dependency preflight and final validation before publishing the generated project.
 - Persist template provenance, including the selector, project path, answers, and declared version when available.
@@ -32,15 +32,15 @@ The merge has three focused tiers:
 2. **Tier 2: `.gitignore` and `.gitattributes`.** Files are normalized into ordered lines, then shared lines are followed by selected lines and only adjacent duplicates are removed.
 3. **Tier 3: other differing root files.** The complete shared file, the complete selected file, or an abort is chosen. Premise does not attempt general semantic merges for arbitrary configuration files.
 
-One-sided files are copied without a conflict decision. Equal files coalesce without a decision. Root collisions are displayed in path order before the destination is created.
+One-sided files are copied without a conflict decision. Equal files coalesce without a decision. Conflicts are resolved before publication through interactive prompts or a supplied resolver; generation does not print a technical conflict report.
 
 ```mermaid
 flowchart LR
   S[Selector] --> R[ResolveTemplateSource]
   R --> Q[Answers and substitutions]
-  Q --> P[BuildMergePlan(TemplateGeneration)]
-  P --> D[Preview and decisions]
-  D --> X[ExecuteMergePlan]
+  Q --> P[BuildGeneratePlan(GenerateParameters)]
+  P --> D[Resolve conflicts]
+  D --> X[ApplyGeneratePlan]
   X --> V[Preflight and final validation]
   V --> N[Rename new destination]
   N --> M[Persist provenance manifest]
@@ -50,13 +50,13 @@ flowchart LR
 
 `ResolveTemplateSource` resolves local or remote registries and returns the selected source and template identity. Generation then loads the template declaration, asks its questions, validates the project name, and resolves literal substitutions.
 
-`BuildMergePlan(TemplateGeneration)` validates the client repository root, project path, source directories, and absent destination. It stages the substituted selected tree, reads direct shared files from the registry `templates/` root, builds the comparison entries, resolves the three merge tiers, and keeps the prepared plan private.
+`BuildGeneratePlan(GenerateParameters)` validates the client repository root, project path, source directories, and absent destination. It stages the substituted selected tree, reads direct shared files from the registry `templates/` root, builds the comparison entries, and resolves the three merge tiers before returning a plan with private staging paths.
 
-`ExecuteMergePlan` runs a dependency preflight for each selected-template tool change in a disposable copy. It then materializes the merge in a private stage, copies that stage for final validation, runs `mise install` and every required template contract, and renames the validated stage into the destination. The rename is the publication boundary; an existing destination is rejected.
+`ApplyGeneratePlan` runs a dependency preflight for each selected-template tool change in a disposable copy. It then materializes the resolved generation in a private stage, copies that stage for final validation, runs `mise install` and every required template contract, and renames the validated stage into the destination. The rename is the publication boundary; an existing destination is rejected.
 
 `core/misex.go` provides the Mise process boundary and typed `mise.toml` operations. It extracts and merges tools, environment values, root values, and tasks. Contract task commands append shared then selected commands, while non-contract collisions use the registry-prefixed namespace.
 
-After `ExecuteMergePlan` succeeds, generation adds a `Project` to `workspace.projects` and saves the final `premise.yaml`. If project registration or manifest persistence fails, it removes the newly created destination. Temporary selected, preflight, and validation directories are cleaned up by the merge plan. Crash-consistent recovery across the destination and manifest is outside this workflow.
+After `ApplyGeneratePlan` succeeds, generation adds a `Project` to `workspace.projects` and saves the final `premise.yaml`. If project registration or manifest persistence fails, it removes the newly created destination. Temporary selected, preflight, and validation directories are cleaned up by the generation plan. Crash-consistent recovery across the destination and manifest is outside this workflow.
 
 Migration of an existing project from one template version to another is a separate future workflow. It must define its own provenance, conflict, validation, and rollback behavior rather than silently changing this create-only path.
 
