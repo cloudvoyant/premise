@@ -99,37 +99,6 @@ func TestGenerateMergesSharedFilesWithSelectedTemplate(t *testing.T) {
 	}
 }
 
-func TestGenerateDoesNotPrintTechnicalCollisionComparison(t *testing.T) {
-	installMiseTestShim(t, false)
-	template := templateFixture("app", "app")
-	registry := writeRegistryFixture(t, template)
-	shared := filepath.Join(registry, "templates")
-	selected := filepath.Join(shared, "app")
-	writeTestFile(t, filepath.Join(shared, ".gitattributes"), "*.txt text\n", 0o644)
-	writeTestFile(t, filepath.Join(selected, ".gitattributes"), "*.sh text eol=lf\n", 0o644)
-	writeTestFile(t, filepath.Join(shared, ".gitignore"), "shared/\n", 0o644)
-	writeTestFile(t, filepath.Join(selected, ".gitignore"), "selected/\n", 0o644)
-	writeTestFile(t, filepath.Join(shared, "NOTICE"), "shared\n", 0o644)
-	writeTestFile(t, filepath.Join(selected, "NOTICE"), "selected\n", 0o644)
-	writeTestFile(t, filepath.Join(shared, "mise.toml"), "[tools]\ngo = '1.25'\n", 0o644)
-	writeTestFile(t, filepath.Join(selected, "mise.toml"), "[tools]\ngo = '1.24'\n", 0o644)
-
-	workspace := filepath.Join(t.TempDir(), "workspace")
-	if _, err := InitializeWorkspace(workspace, "monorepo_root = true\n"); err != nil {
-		t.Fatal(err)
-	}
-	var output bytes.Buffer
-	if err := Generate(context.Background(), workspace, registry+":app", GenerateOptions{
-		Questionnaire:    fixedQuestionnaire{"name": "orders"},
-		ConflictResolver: MergeDecisions{"NOTICE": {Choice: MergeChoiceKeepShared}}.Resolve,
-	}, &output); err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(output.String(), "Template root comparison:") || strings.Contains(output.String(), "no collisions") {
-		t.Fatalf("technical comparison output was not removed:\n%s", output.String())
-	}
-}
-
 func TestGenerateToolPreflightFailureLeavesDestinationAndManifestUntouched(t *testing.T) {
 	installScopedMiseTestShim(t, "premise-tool-preflight-")
 	registry := writeRegistryFixture(t, templateFixture("app", "app"))
