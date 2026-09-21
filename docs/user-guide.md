@@ -28,13 +28,13 @@ pm template ls
 pm template test
 ```
 
-A Premise root is either a monorepo or a template registry. It cannot be both.
+A Premise root can contain generated projects, a template registry, or both. `workspace.kind` selects the default CI lifecycle; it does not prohibit the other capability.
 
 ## Usage
 
 ### Initialize a workspace
 
-Run `pm init` at the repository root. The default `monorepo` kind creates `premise.yaml`, a root `mise.toml`, `apps/`, and `libs/`. The root Mise configuration discovers app and library projects and layers their tools and environment. Use `pm init --kind template-registry` to create a registry manifest and `templates/` directory without monorepo conventions. Premise preserves existing files and refuses to replace an existing manifest.
+Run `pm init` at the repository root. The default `monorepo` kind creates `premise.yaml`, a root `mise.toml`, `apps/`, and `libs/`. The root Mise configuration discovers app and library projects and layers their tools and environment. Use `pm init --kind template-registry` to start with an empty `template_registry` configuration and a `templates/` directory. Either kind can later add templates or generated projects. Premise preserves existing files and refuses to replace an existing manifest.
 
 Use `pm install` or `pm i` to install mise tools declared by the workspace and its generated projects. It does not install package-manager dependencies yet. Run project lifecycle tasks directly through mise's monorepo pattern:
 
@@ -45,7 +45,7 @@ mise run --jobs 1 '//...:test'
 
 ### Initialize and list templates
 
-Run these commands in a project initialized with `--kind template-registry`:
+Run these commands in any Premise project:
 
 ```bash
 pm template init app
@@ -53,9 +53,21 @@ pm template init lib
 pm template ls
 ```
 
-Each init command creates `templates/<kind>/mise.toml` and adds a matching declaration to `premise.yaml`. Omit the kind to select it interactively. `pm template ls` prints declared template names in stable alphabetical order. Premise rejects template initialization in a monorepo.
+Each init command creates `templates/<kind>/mise.toml`, creates `template_registry` when needed, and adds a matching declaration to `premise.yaml`. Omit the kind to select it interactively. `pm template ls` prints declared template names in stable alphabetical order.
 
-Files placed directly under `templates/` are shared scaffold files. Generation copies those root files first, then overlays the selected `templates/<name>/` directory. A template file replaces a same-named shared file; Premise does not merge conflicting file contents. Directories under `templates/` are template sources and are not copied as shared content.
+`template_registry.workspace_files` explicitly lists repository-root files that Premise copies or merges into a client workspace root. Entries can use basename globs, but cannot contain path separators or select directories. Every pattern must match at least one direct regular file. `premise.yaml` is always excluded. Direct files inside the physical `templates/` directory have no special meaning. The selected `templates/<name>` tree is copied separately to `apps/<name>` or `libs/<name>`. See the [Generation Architecture](generation.md) for the implementation boundary and merge flow.
+
+Premise resolves client-root conflicts before it creates the project destination. Interactive prompts (or a supplied resolver) choose among the supported three tiers; no technical conflict report is printed:
+
+| Tier                                      | Merge behavior                                                                             |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Tier 1: `mise.toml`                       | Parse typed registry and client Mise data and apply semantic rules.                        |
+| Tier 2: `.gitignore` and `.gitattributes` | Keep registry lines first and existing client lines second because line order has meaning. |
+| Tier 3: any other differing root file     | Keep the complete registry file, retain the complete client file, or abort.                |
+
+Equal files need no decision. A root file and a selected-project file with the same name do not conflict because their destinations differ. Premise does not parse editor configuration, Prettier files, package manifests, or arbitrary ignore files as smart merge formats.
+
+When root contract tasks collide, Premise keeps the existing client task metadata and appends registry commands before client commands. Root contract tasks are expected to be argument-free. When a non-contract root task collides, the registry task keeps its name and the client task is copied to `<registry-prefix>:<task>`. Premise prints a notice naming that namespace. Only the contract task command sequence is combined; other task fields remain one-sided.
 
 The initial Mise tasks echo their contract names. Replace each echo with the real implementation while keeping the task name stable.
 
@@ -84,7 +96,9 @@ pm generate ../my-registry:app
 pm generate ../my-registry:lib
 ```
 
-Premise asks the selected template's questions and creates `apps/<name>` or `libs/<name>` according to its kind. The generated project contains the registry's shared root files overlaid by the selected template files. Premise records the project, source-qualified template selector, path, answers, and declared template version under `workspace.projects`.
+Premise asks the selected template's questions, expands its registry's declared `workspace_files` against the registry repository root, plans those files against the current client workspace root, and creates `apps/<name>` or `libs/<name>` according to the template kind. It resolves each client-root conflict before publication. Premise records the project, source-qualified template selector, path, answers, and declared template version under `workspace.projects`.
+
+Before publication, Premise preflights each existing client-root tool selector that the registry's root `mise.toml` would change. It then builds a disposable complete workspace candidate containing the planned root files and selected project at its final relative path. It installs root Mise tools and runs complete root and selected-project contracts under `PREMISE_TEMPLATE_TEST=1`. Successful command output stays hidden, and validation stops at the first failure. Only a completely validated candidate is published; a failed decision, preflight, or final validation leaves root files, the project destination, and `premise.yaml` unchanged.
 
 ### Choose from the default registry
 
@@ -128,7 +142,7 @@ Remote selectors follow the repository's default branch and do not accept a bran
 workspace:
   name: example
   kind: monorepo
-  schema-version: "0.1"
+  schema-version: "0.2"
   providers:
     ci: github
     tools: mise
@@ -136,17 +150,25 @@ workspace:
     infra: pulumi
     versioning: svu
   projects: []
-templates:
-  - name: premise-app
-    kind: app
-    version: 0.1.0
-    questions:
-      - prompt: "App name:"
-        type: string
-        populate: name
-    substitutions:
-      premise-app: name
+template_registry:
+  workspace_files:
+    - .gitignore
+    - package.json
+    - "*.config.js"
+  templates:
+    - name: premise-app
+      kind: app
+      path: templates/premise-app
+      version: 0.1.0
+      questions:
+        - prompt: "App name:"
+          type: string
+          populate: name
+      substitutions:
+        premise-app: name
 ```
+
+Each `workspace_files` entry is an explicit repository-root filename or basename glob. Use `[]` when the registry shares no root files. Premise rejects missing matches, nested paths, directories, and `premise.yaml`. Every template also declares a normalized repository-relative `path`, independent of the workspace-file sources.
 
 Each key under `substitutions` is literal text that exists in the live template. Its value names the questionnaire answer that replaces it. In this example, generation replaces every `premise-app` occurrence in UTF-8 text files with the app name; binary files remain unchanged.
 
@@ -174,7 +196,7 @@ projects:
       name: orders
 ```
 
-`version` records the selected template declaration's version at generation time when the registry provides one; registries with repository-level versioning can omit it. If project registration or manifest saving fails after copying, Premise removes the newly created destination so output and provenance do not diverge.
+`version` records the selected template declaration's version at generation time when the registry provides one; registries with repository-level versioning can omit it. If project registration or manifest saving fails after the validated stage is renamed, Premise removes the newly created destination so output and provenance do not diverge. Generation is create-only; crash-consistent updates across the destination and manifest are out of scope.
 
 ### Task contracts
 
@@ -207,8 +229,7 @@ Templates can define additional tasks.
 
 ### Versioning
 
-Premise calculates release versions through the svu Go SDK, exposed by the
-`pm version` command:
+Premise calculates release versions through the svu Go SDK, exposed by the `pm version` command:
 
 ```bash
 pm version current                  # current stable version (e.g. v0.1.0)
@@ -217,9 +238,7 @@ pm version bump patch|minor|major   # explicit patch/minor/major bump
 pm version rc --identifier <id>     # MAJOR.MINOR.PATCH-rc.<id>
 ```
 
-Each command prints exactly one version to stdout. Release-candidate identifiers
-must be valid SemVer prerelease identifiers: letters, digits, and hyphens, with
-numeric identifiers forbidding leading zeroes.
+Each command prints exactly one version to stdout. Release-candidate identifiers must be valid SemVer prerelease identifiers: letters, digits, and hyphens, with numeric identifiers forbidding leading zeroes.
 
 Version calculation relies on a `v0.0.0` stable bootstrap tag that must exist before CI runs. That tag is created externally and is never produced by a task or workflow. Premise configures the SDK to read only stable SemVer tags (`vMAJOR.MINOR.PATCH`), so unrelated tags are ignored. No `.svu.yml` file or svu executable is required.
 
@@ -229,11 +248,7 @@ Stable releases happen on pushes to `main`. The workflow calls `pm ci flow on-me
 
 Registries that publish language packages can keep credentials in separate CI steps with `pm release prepare`, `pm release github`, and `pm release packages`. `pm release snapshot` builds the complete artifact matrix without tagging or publishing.
 
-Release-candidate publication is opt-in for Go: a feature-branch push whose HEAD
-commit message contains the exact marker `[publish-rc]` runs `mise run publish:rc`,
-which succeeds and prints only `Skipping RC publish: Go supports prerelease
-installs through commit hashes.` Go needs no prerelease artifact because installs
-resolve through commit hashes, so no RC tag or release is ever created.
+Release-candidate publication is opt-in for Go: a feature-branch push whose HEAD commit message contains the exact marker `[publish-rc]` runs `mise run publish:rc`, which succeeds and prints only `Skipping RC publish: Go supports prerelease installs through commit hashes.` Go needs no prerelease artifact because installs resolve through commit hashes, so no RC tag or release is ever created.
 
 ### Current limitations
 
@@ -242,3 +257,5 @@ resolve through commit hashes, so no RC tag or release is ever created.
 - Remote templates use the repository's default branch.
 - Private-repository authentication, concurrent cache locking, and offline mode are not available yet. Credential delegation for private registry sources is deferred to DIFF-150; go-git performs clones today.
 - Premise refuses to merge into or replace an existing destination.
+- Smart root merging is limited to `.gitignore`, `.gitattributes`, and `mise.toml`. Other root collisions use a complete-file choice.
+- Generation is create-only. It does not update existing projects or provide crash recovery across the destination and workspace manifest.

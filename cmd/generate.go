@@ -40,7 +40,9 @@ Use .:app to select a template from the current workspace.`,
 		if err != nil {
 			return err
 		}
-		return core.Generate(cmd.Context(), cwd, selector, core.InteractiveQuestionnaire{}, cmd.OutOrStdout())
+		return core.Generate(cmd.Context(), cwd, selector, core.GenerateOptions{
+			Questionnaire: core.InteractiveQuestionnaire{},
+		}, cmd.OutOrStdout())
 	},
 }
 

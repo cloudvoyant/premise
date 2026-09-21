@@ -97,9 +97,8 @@ const (
 	ProjectKindTemplateRegistry ProjectKind = "template-registry"
 )
 
-// DetectProjectKind classifies a Premise root without invoking Mise. A root
-// cannot be both a monorepo and a template registry because those lifecycle
-// models require different CI behavior.
+// DetectProjectKind selects the root's configured CI lifecycle without
+// restricting which workspace and template-registry capabilities may coexist.
 func DetectProjectKind(root string) (ProjectKind, error) {
 	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
 	if err != nil {
@@ -109,7 +108,7 @@ func DetectProjectKind(root string) (ProjectKind, error) {
 	if err != nil {
 		return "", err
 	}
-	hasTemplates := len(manifest.Templates) > 0
+	hasRegistry := manifest.TemplateRegistry != nil
 	switch manifest.Workspace.Kind {
 	case ProjectKindMonorepo:
 		if !hasMonorepo {
@@ -117,20 +116,18 @@ func DetectProjectKind(root string) (ProjectKind, error) {
 		}
 		return ProjectKindMonorepo, nil
 	case ProjectKindTemplateRegistry:
-		if hasMonorepo {
-			return "", errors.New("premise project cannot be both a monorepo and a template registry")
+		if !hasRegistry {
+			return "", errors.New("template-registry project requires template_registry configuration")
 		}
 		return ProjectKindTemplateRegistry, nil
 	case "":
 		switch {
-		case hasMonorepo && hasTemplates:
-			return "", errors.New("premise project cannot be both a monorepo and a template registry")
 		case hasMonorepo:
 			return ProjectKindMonorepo, nil
-		case hasTemplates:
+		case hasRegistry:
 			return ProjectKindTemplateRegistry, nil
 		default:
-			return "", errors.New("premise project must be either a monorepo or a template registry")
+			return "", errors.New("premise project must configure a monorepo or template_registry")
 		}
 	default:
 		return "", fmt.Errorf("unsupported project kind %q", manifest.Workspace.Kind)
@@ -184,7 +181,10 @@ func LoadRegistry(sourceRoot string) (Registry, error) {
 	if err != nil {
 		return Registry{}, fmt.Errorf("load registry manifest: %w", err)
 	}
-	templates := append([]Template{}, manifest.Templates...)
+	if manifest.TemplateRegistry == nil {
+		return Registry{}, errors.New("manifest does not configure template_registry")
+	}
+	templates := append([]Template{}, manifest.DeclaredTemplates()...)
 	sort.Slice(templates, func(i, j int) bool {
 		return templates[i].Name < templates[j].Name
 	})

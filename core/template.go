@@ -38,141 +38,35 @@ func ResolveTemplateSource(ctx context.Context, workspaceRoot, selector string) 
 	return root, selection, nil
 }
 
-func TemplateDirectory(sourceRoot, name string) (string, error) {
-	if err := ValidateTemplateName(name); err != nil {
-		return "", fmt.Errorf("validate template directory name: %w", err)
+func TemplateDirectory(sourceRoot, templatePath string) (string, error) {
+	if err := validateTemplatePath(templatePath); err != nil {
+		return "", fmt.Errorf("validate template path: %w", err)
 	}
 	root, err := filepath.Abs(sourceRoot)
 	if err != nil {
 		return "", fmt.Errorf("resolve template root: %w", err)
 	}
-	path := filepath.Join(root, "templates", name)
-	relative, err := filepath.Rel(root, path)
-	if err != nil || escapesRoot(relative) {
-		return "", fmt.Errorf("template path escapes source root")
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve template root symlinks: %w", err)
 	}
-	info, err := os.Stat(path)
+	declaredPath := filepath.Join(root, filepath.FromSlash(templatePath))
+	info, err := os.Stat(declaredPath)
 	if err != nil {
 		return "", fmt.Errorf("inspect template directory: %w", err)
 	}
 	if !info.IsDir() {
-		return "", fmt.Errorf("template path %s is not a directory", path)
+		return "", fmt.Errorf("template path %s is not a directory", declaredPath)
 	}
-	return path, nil
-}
-
-type ScaffoldRequest struct {
-	SharedSource string
-	Source       string
-	Destination  string
-	Replacements map[string]string
-}
-
-func Scaffold(request ScaffoldRequest) error {
-	source, err := filepath.Abs(request.Source)
+	resolvedPath, err := filepath.EvalSymlinks(declaredPath)
 	if err != nil {
-		return fmt.Errorf("resolve scaffold source: %w", err)
+		return "", fmt.Errorf("resolve template directory symlinks: %w", err)
 	}
-	destination, err := filepath.Abs(request.Destination)
-	if err != nil {
-		return fmt.Errorf("resolve scaffold destination: %w", err)
+	relative, err := filepath.Rel(resolvedRoot, resolvedPath)
+	if err != nil || escapesRoot(relative) {
+		return "", errors.New("template path escapes source root")
 	}
-	if source == destination {
-		return errors.New("scaffold source and destination must differ")
-	}
-	if info, err := os.Stat(source); err != nil {
-		return fmt.Errorf("inspect scaffold source: %w", err)
-	} else if !info.IsDir() {
-		return fmt.Errorf("scaffold source %s is not a directory", source)
-	}
-
-	var sharedSource string
-	if request.SharedSource != "" {
-		sharedSource, err = filepath.Abs(request.SharedSource)
-		if err != nil {
-			return fmt.Errorf("resolve shared scaffold source: %w", err)
-		}
-		if info, err := os.Stat(sharedSource); err != nil {
-			return fmt.Errorf("inspect shared scaffold source: %w", err)
-		} else if !info.IsDir() {
-			return fmt.Errorf("shared scaffold source %s is not a directory", sharedSource)
-		}
-	}
-
-	if _, err := os.Lstat(destination); err == nil {
-		return fmt.Errorf("destination %s already exists", destination)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect scaffold destination: %w", err)
-	}
-
-	parent := filepath.Dir(destination)
-	if err := os.MkdirAll(parent, 0o755); err != nil {
-		return fmt.Errorf("create destination parent: %w", err)
-	}
-	stage, err := os.MkdirTemp(parent, "."+filepath.Base(destination)+".premise-*")
-	if err != nil {
-		return fmt.Errorf("create scaffold staging directory: %w", err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = os.RemoveAll(stage)
-		}
-	}()
-
-	replacer := literalReplacer(request.Replacements)
-	if sharedSource != "" {
-		if err := copyRootFiles(sharedSource, stage, replacer); err != nil {
-			return fmt.Errorf("stage shared scaffold files: %w", err)
-		}
-	}
-	if err := copyTree(source, stage, replacer); err != nil {
-		return fmt.Errorf("stage scaffold: %w", err)
-	}
-	if err := os.Rename(stage, destination); err != nil {
-		return fmt.Errorf("commit scaffold: %w", err)
-	}
-	committed = true
-	return nil
-}
-
-func copyRootFiles(source, destination string, replacer *strings.Replacer) error {
-	entries, err := os.ReadDir(source)
-	if err != nil {
-		return fmt.Errorf("read shared scaffold source: %w", err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return fmt.Errorf("inspect shared scaffold entry %s: %w", entry.Name(), err)
-		}
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("unsupported shared scaffold entry %s", entry.Name())
-		}
-
-		path := filepath.Join(source, entry.Name())
-		target := filepath.Join(destination, entry.Name())
-		if !inside(destination, target) {
-			return fmt.Errorf("shared destination entry escapes scaffold root: %s", target)
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("read shared scaffold file %s: %w", entry.Name(), err)
-		}
-		if replacer != nil && isText(data) {
-			data = []byte(replacer.Replace(string(data)))
-		}
-		if err := os.WriteFile(target, data, info.Mode().Perm()); err != nil {
-			return fmt.Errorf("write shared scaffold file %s: %w", entry.Name(), err)
-		}
-		if err := os.Chmod(target, info.Mode().Perm()); err != nil {
-			return fmt.Errorf("preserve shared scaffold file permissions %s: %w", entry.Name(), err)
-		}
-	}
-	return nil
+	return declaredPath, nil
 }
 
 func RenderTemplateMise(kind string) (string, error) {
@@ -192,13 +86,6 @@ func RenderTemplateMise(kind string) (string, error) {
 }
 
 func InitializeTemplate(root, kind string) (string, error) {
-	monorepo, err := hasMonorepoRoot(root)
-	if err != nil {
-		return "", fmt.Errorf("detect project kind: %w", err)
-	}
-	if monorepo {
-		return "", errors.New("cannot add registry templates to a monorepo project")
-	}
 	manifestPath := filepath.Join(root, ManifestFilename)
 	manifest, err := LoadManifest(manifestPath)
 	if err != nil {
@@ -234,9 +121,13 @@ func InitializeTemplate(root, kind string) (string, error) {
 	if err := os.WriteFile(filepath.Join(templatePath, "mise.toml"), []byte(mise), 0o644); err != nil {
 		return "", fmt.Errorf("write template mise.toml: %w", err)
 	}
-	manifest.Templates = append(manifest.Templates, Template{
+	if manifest.TemplateRegistry == nil {
+		manifest.TemplateRegistry = &TemplateRegistry{WorkspaceFiles: []string{}, Templates: []Template{}}
+	}
+	manifest.TemplateRegistry.Templates = append(manifest.TemplateRegistry.Templates, Template{
 		Name:    kind,
 		Kind:    kind,
+		Path:    filepath.ToSlash(filepath.Join("templates", kind)),
 		Version: "0.1.0",
 		Questions: []Question{{
 			Prompt:   kindLabel(kind) + " name:",
@@ -253,40 +144,107 @@ func InitializeTemplate(root, kind string) (string, error) {
 }
 
 func TestTemplateContracts(ctx context.Context, root string, manifest Config, stdout, stderr io.Writer) error {
-	if len(manifest.Templates) == 0 {
+	templates := manifest.DeclaredTemplates()
+	if len(templates) == 0 {
 		return errors.New("manifest declares no templates")
 	}
 	var failures []error
-	for _, template := range manifest.Templates {
-		directory, err := TemplateDirectory(root, template.Name)
+	for _, template := range templates {
+		directory, err := TemplateDirectory(root, template.Path)
 		if err != nil {
 			failures = append(failures, fmt.Errorf("template %s: %w", template.Name, err))
 			continue
 		}
-		tasks, err := ContractTasks(template.Kind)
-		if err != nil {
-			failures = append(failures, fmt.Errorf("template %s: %w", template.Name, err))
-			continue
-		}
-		fmt.Fprintf(stdout, "[%s] mise install\n", template.Name)
-		mise := miseRunner{
-			Stdout:  stdout,
-			Stderr:  stderr,
-			Ceiling: filepath.Dir(filepath.Clean(root)),
-		}
-		testEnvironment := []string{"PREMISE_TEMPLATE_TEST=1"}
-		if err := mise.run(ctx, directory, testEnvironment, "install"); err != nil {
-			failures = append(failures, fmt.Errorf("template %s tool install failed: %w", template.Name, err))
-		}
-		for _, task := range tasks {
-			fmt.Fprintf(stdout, "[%s] mise run %s\n", template.Name, task)
-			if err := mise.run(ctx, directory, testEnvironment, "run", task); err != nil {
-				failures = append(failures, fmt.Errorf("template %s task %s failed: %w", template.Name, task, err))
-			}
+		if err := runTemplateContracts(ctx, directory, template.Kind, template.Name, stdout, stderr); err != nil {
+			failures = append(failures, err)
 		}
 	}
 	if err := errors.Join(failures...); err != nil {
 		return fmt.Errorf("template contract failures: %w", err)
+	}
+	return nil
+}
+
+func runTemplateContracts(ctx context.Context, directory, kind, label string, stdout, stderr io.Writer) error {
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	if stderr == nil {
+		stderr = io.Discard
+	}
+	tasks, err := ContractTasks(kind)
+	if err != nil {
+		return fmt.Errorf("template %s: %w", label, err)
+	}
+	mise := miseRunner{Stdout: stdout, Stderr: stderr, Ceiling: filepath.Dir(filepath.Clean(directory))}
+	testEnvironment := []string{"PREMISE_TEMPLATE_TEST=1"}
+	var failures []error
+	fmt.Fprintf(stdout, "[%s] mise install\n", label)
+	if err := mise.run(ctx, directory, testEnvironment, "install"); err != nil {
+		failures = append(failures, fmt.Errorf("template %s tool install failed: %w", label, err))
+	}
+	for _, task := range tasks {
+		fmt.Fprintf(stdout, "[%s] mise run %s\n", label, task)
+		if err := mise.run(ctx, directory, testEnvironment, "run", task); err != nil {
+			failures = append(failures, fmt.Errorf("template %s task %s failed: %w", label, task, err))
+		}
+	}
+	return errors.Join(failures...)
+}
+
+func runGenerationMiseInstall(ctx context.Context, directory, label string, failureOutput io.Writer) error {
+	if failureOutput == nil {
+		failureOutput = io.Discard
+	}
+	var commandOutput bytes.Buffer
+	mise := miseRunner{
+		Stdout:  &commandOutput,
+		Stderr:  &commandOutput,
+		Ceiling: filepath.Dir(filepath.Clean(directory)),
+	}
+	if err := mise.run(ctx, directory, []string{"PREMISE_TEMPLATE_TEST=1"}, "install"); err != nil {
+		_, _ = io.Copy(failureOutput, &commandOutput)
+		return fmt.Errorf("template %s tool install failed: %w", label, err)
+	}
+	return nil
+}
+
+// runGenerationTemplateContracts validates a generated candidate without
+// exposing successful command output. Failed command output is written to
+// failureOutput so generation errors retain the useful Mise diagnostics.
+func runGenerationTemplateContracts(ctx context.Context, directory, kind, label string, failureOutput io.Writer) error {
+	return runGenerationTemplateContractsWithCeiling(ctx, directory, kind, label, filepath.Dir(filepath.Clean(directory)), failureOutput)
+}
+
+func runGenerationTemplateContractsWithCeiling(ctx context.Context, directory, kind, label, ceiling string, failureOutput io.Writer) error {
+	if failureOutput == nil {
+		failureOutput = io.Discard
+	}
+	tasks, err := ContractTasks(kind)
+	if err != nil {
+		return fmt.Errorf("template %s: %w", label, err)
+	}
+	testEnvironment := []string{"PREMISE_TEMPLATE_TEST=1"}
+	run := func(arguments ...string) error {
+		var commandOutput bytes.Buffer
+		mise := miseRunner{
+			Stdout:  &commandOutput,
+			Stderr:  &commandOutput,
+			Ceiling: ceiling,
+		}
+		if err := mise.run(ctx, directory, testEnvironment, arguments...); err != nil {
+			_, _ = io.Copy(failureOutput, &commandOutput)
+			return err
+		}
+		return nil
+	}
+	if err := run("install"); err != nil {
+		return fmt.Errorf("template %s tool install failed: %w", label, err)
+	}
+	for _, task := range tasks {
+		if err := run("run", task); err != nil {
+			return fmt.Errorf("template %s task %s failed: %w", label, task, err)
+		}
 	}
 	return nil
 }

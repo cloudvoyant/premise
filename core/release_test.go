@@ -22,13 +22,9 @@ func TestDetectReleaseProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	cargoRoot := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(cargoRoot, "templates"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(cargoRoot, "Cargo.toml"), []byte("[workspace]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(cargoRoot, "templates", "Cargo.toml"), []byte("[workspace]\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
 	for _, test := range []struct {
 		root string
 		want ReleaseProfile
@@ -70,12 +66,12 @@ func TestGoReleaserConfigIsConventionDriven(t *testing.T) {
 
 	cargoRoot := t.TempDir()
 	cargoManifest := NewManifest("premise-cargo")
-	cargoManifest.Templates = []Template{
+	cargoManifest.TemplateRegistry = &TemplateRegistry{WorkspaceFiles: []string{}, Templates: []Template{
 		templateFixture("premise-rust-lib", "lib"),
 		templateFixture("premise-rust-app", "app"),
 		templateFixture("premise-clap-cli", "app"),
 		templateFixture("premise-ratatui-app", "app"),
-	}
+	}}
 	if err := SaveManifest(filepath.Join(cargoRoot, ManifestFilename), cargoManifest); err != nil {
 		t.Fatal(err)
 	}
@@ -227,14 +223,14 @@ func writeTaggedCargoReleaseFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	manifest := NewManifest("premise-cargo")
-	manifest.Templates = []Template{templateFixture("premise-rust-app", "app")}
+	manifest.TemplateRegistry = &TemplateRegistry{WorkspaceFiles: []string{}, Templates: []Template{templateFixture("premise-rust-app", "app")}}
 	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(root, "templates"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "templates", "Cargo.toml"), []byte("[workspace]\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "Cargo.toml"), []byte("[workspace]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	repository, err := git.PlainInit(root, false)
@@ -351,6 +347,7 @@ case "$*" in
     [ -z "${CARGO_REGISTRY_TOKEN:-}" ]
     [ -z "${CARGO_TOKEN:-}" ]
     [ -z "${CRATES_TOKEN:-}" ]
+    [ -z "${EXPECTED_INSTALL_DIRECTORY:-}" ] || [ "$(pwd -P)" = "$(cd "$EXPECTED_INSTALL_DIRECTORY" && pwd -P)" ]
     printf 'install\n' >> "$CAPTURE"
     ;;
   exec*)
@@ -425,16 +422,20 @@ printf '%s\n' "$*" >> "$CAPTURE"
 
 	cargoRoot := t.TempDir()
 	cargoManifest := NewManifest("premise-cargo")
-	cargoManifest.Templates = []Template{templateFixture("premise-rust-app", "app")}
+	cargoManifest.TemplateRegistry = &TemplateRegistry{WorkspaceFiles: []string{}, Templates: []Template{templateFixture("premise-rust-app", "app")}}
 	if err := SaveManifest(filepath.Join(cargoRoot, ManifestFilename), cargoManifest); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(cargoRoot, "templates"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(cargoRoot, "Cargo.toml"), []byte("[workspace]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(capture, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("EXPECTED_INSTALL_DIRECTORY", cargoRoot)
 	if err := runGoReleaser(t.Context(), cargoRoot, ReleaseProfileCargo, true, &output, &output); err != nil {
 		t.Fatal(err)
 	}

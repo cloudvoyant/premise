@@ -1,7 +1,7 @@
 workspace:
   name: premise
   kind: template-registry
-  schema-version: "0.1"
+  schema-version: "0.2"
   providers:
     ci: github
     tools: mise
@@ -9,22 +9,26 @@ workspace:
     infra: pulumi
     versioning: svu
   projects: []
-templates:
-  - name: premise-app
-    kind: app
-    version: 0.1.0
-    questions:
-      - prompt: "App name:"
-        type: string
-        populate: name
-    substitutions:
-      premise-app: name
-  - name: premise-lib
-    kind: lib
-    version: 0.1.0
-    questions:
-      - prompt: "Library name:"
-        type: string
-        populate: name
-    substitutions:
-      premise-lib: name
+template_registry:
+  workspace_files: []
+  templates:
+    - name: premise-app
+      kind: app
+      path: templates/premise-app
+      version: 0.1.0
+      questions:
+        - prompt: "App name:"
+          type: string
+          populate: name
+      substitutions:
+        premise-app: name
+    - name: premise-lib
+      kind: lib
+      path: templates/premise-lib
+      version: 0.1.0
+      questions:
+        - prompt: "Library name:"
+          type: string
+          populate: name
+      substitutions:
+        premise-lib: name

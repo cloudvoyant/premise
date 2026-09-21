@@ -42,15 +42,22 @@ type cargoPublication struct {
 
 // isCargoRegistry reports whether root follows Premise's Cargo registry convention.
 func isCargoRegistry(root string) (bool, error) {
-	path := filepath.Join(root, "templates", "Cargo.toml")
+	_, found, err := cargoWorkspaceDirectory(root)
+	return found, err
+}
+
+// cargoWorkspaceDirectory resolves the aggregate Cargo workspace at the
+// registry repository root. Template source directories are independent.
+func cargoWorkspaceDirectory(root string) (string, bool, error) {
+	path := filepath.Join(root, "Cargo.toml")
 	info, err := os.Stat(path)
 	if err == nil {
-		return info.Mode().IsRegular(), nil
+		return root, info.Mode().IsRegular(), nil
 	}
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
+	if !errors.Is(err, os.ErrNotExist) {
+		return "", false, err
 	}
-	return false, err
+	return "", false, nil
 }
 
 func publishCargoPackages(ctx context.Context, root, version, task string, stdout, stderr io.Writer) (resultErr error) {
@@ -72,24 +79,37 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 		return fmt.Errorf("unsupported Cargo publication task %q", task)
 	}
 
+	workspaceDirectory, found, err := cargoWorkspaceDirectory(root)
+	if err != nil {
+		return fmt.Errorf("inspect Cargo registry workspace: %w", err)
+	}
+	if !found {
+		return errors.New("Cargo registry workspace is missing Cargo.toml")
+	}
 	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
 	if err != nil {
 		return fmt.Errorf("load Cargo registry manifest: %w", err)
 	}
-	if len(manifest.Templates) == 0 {
+	templates := manifest.DeclaredTemplates()
+	if len(templates) == 0 {
 		return errors.New("Cargo registry manifest declares no templates")
 	}
 
-	backups := make([]cargoFileBackup, 0, len(manifest.Templates)+1)
-	for _, template := range manifest.Templates {
-		path := filepath.Join(root, "templates", template.Name, "Cargo.toml")
-		backup, err := backupCargoFile(path)
+	templateDirectories := make([]string, 0, len(templates))
+	backups := make([]cargoFileBackup, 0, len(templates)+1)
+	for _, template := range templates {
+		directory, err := TemplateDirectory(root, template.Path)
+		if err != nil {
+			return fmt.Errorf("resolve Cargo template %s: %w", template.Name, err)
+		}
+		templateDirectories = append(templateDirectories, directory)
+		backup, err := backupCargoFile(filepath.Join(directory, "Cargo.toml"))
 		if err != nil {
 			return err
 		}
 		backups = append(backups, backup)
 	}
-	lockPath := filepath.Join(root, "templates", "Cargo.lock")
+	lockPath := filepath.Join(workspaceDirectory, "Cargo.lock")
 	lockBackup, err := backupCargoFile(lockPath)
 	if err != nil {
 		return err
@@ -99,14 +119,13 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 		resultErr = errors.Join(resultErr, restoreCargoFiles(backups))
 	}()
 
-	for _, backup := range backups[:len(manifest.Templates)] {
+	for _, backup := range backups[:len(templates)] {
 		if err := setCargoPackageVersion(backup.path, version); err != nil {
 			return err
 		}
 	}
 	lockRunner := miseRunner{Stdout: stdout, Stderr: stderr}
-	templatesRoot := filepath.Join(root, "templates")
-	if err := lockRunner.run(ctx, templatesRoot, nil, "exec", "--", "cargo", "generate-lockfile"); err != nil {
+	if err := lockRunner.run(ctx, workspaceDirectory, nil, "exec", "--", "cargo", "generate-lockfile"); err != nil {
 		return fmt.Errorf("regenerate Cargo lockfile: %w", err)
 	}
 
@@ -117,9 +136,9 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 	client := &http.Client{Timeout: 30 * time.Second}
 	preflight := miseRunner{Stderr: stderr}
 	publisher := miseRunner{Stdout: stdout, Stderr: stderr}
-	publications := make([]cargoPublication, 0, len(manifest.Templates))
-	for _, template := range manifest.Templates {
-		directory := filepath.Join(root, "templates", template.Name)
+	publications := make([]cargoPublication, 0, len(templates))
+	for index, template := range templates {
+		directory := templateDirectories[index]
 		name, err := cargoPackageName(filepath.Join(directory, "Cargo.toml"))
 		if err != nil {
 			return err

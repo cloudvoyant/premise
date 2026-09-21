@@ -25,6 +25,7 @@ sources = [
   "main.go",
   "cmd/**/*.go",
   "core/**/*.go",
+  "assets/**/*.toml",
   "templates/**/*.toml",
   "go.mod",
   "go.sum",

@@ -15,6 +15,7 @@ func templateFixture(name, kind string) Template {
 	return Template{
 		Name:    name,
 		Kind:    kind,
+		Path:    filepath.ToSlash(filepath.Join("templates", name)),
 		Version: "0.1.0",
 		Questions: []Question{{
 			Prompt:   kindLabel(kind) + " name:",
@@ -31,12 +32,12 @@ func writeRegistryFixture(t *testing.T, templates ...Template) string {
 	t.Helper()
 	root := t.TempDir()
 	manifest := NewManifest("fixture")
-	manifest.Templates = templates
+	manifest.TemplateRegistry = &TemplateRegistry{WorkspaceFiles: []string{}, Templates: templates}
 	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
 		t.Fatalf("save fixture manifest: %v", err)
 	}
 	for _, template := range templates {
-		dir := filepath.Join(root, "templates", template.Name)
+		dir := filepath.Join(root, filepath.FromSlash(template.Path))
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatalf("create fixture template directory: %v", err)
 		}
@@ -386,6 +387,7 @@ func TestClassifyGenerateSelector(t *testing.T) {
 }
 
 func TestRegistryResolutionRecordsQualifiedProvenance(t *testing.T) {
+	installMiseTestShim(t, false)
 	goRegistry := writeRegistryFixture(t, templateFixture("premise-app", "app"))
 	cargoRegistry := writeRegistryFixture(t, templateFixture("premise-rust-lib", "lib"))
 	bunRegistry := writeRegistryFixture(t)
@@ -436,7 +438,7 @@ func TestRegistryResolutionRecordsQualifiedProvenance(t *testing.T) {
 			if _, err := InitializeWorkspace(workspace, "[tasks.build]\nrun = 'echo ok'\n"); err != nil {
 				t.Fatal(err)
 			}
-			if err := Generate(context.Background(), workspace, selector, fixedQuestionnaire{"name": "orders"}, io.Discard); err != nil {
+			if err := Generate(context.Background(), workspace, selector, fixedGenerateOptions(fixedQuestionnaire{"name": "orders"}), io.Discard); err != nil {
 				t.Fatal(err)
 			}
 			manifest, err := LoadManifest(filepath.Join(workspace, ManifestFilename))
@@ -456,7 +458,9 @@ func TestDetectProjectKind(t *testing.T) {
 		root := t.TempDir()
 		manifest := NewManifest("fixture")
 		manifest.Workspace.Kind = kind
-		manifest.Templates = templates
+		if templates != nil || kind == ProjectKindTemplateRegistry {
+			manifest.TemplateRegistry = &TemplateRegistry{WorkspaceFiles: []string{}, Templates: templates}
+		}
 		if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
 			t.Fatal(err)
 		}
@@ -478,9 +482,9 @@ func TestDetectProjectKind(t *testing.T) {
 		{name: "declared empty template registry", root: write(t, ProjectKindTemplateRegistry, nil, ""), want: ProjectKindTemplateRegistry},
 		{name: "declared monorepo", root: write(t, ProjectKindMonorepo, nil, "monorepo_root = true\n"), want: ProjectKindMonorepo},
 		{name: "declared monorepo missing marker", root: write(t, ProjectKindMonorepo, nil, "[tools]\nnode = 'lts'\n"), wantErr: "requires top-level"},
-		{name: "hybrid", root: write(t, "", []Template{templateFixture("app", "app")}, "monorepo_root = true\n"), wantErr: "cannot be both"},
-		{name: "nested marker is not monorepo", root: write(t, "", nil, "[env]\nmonorepo_root = true\n"), wantErr: "must be either"},
-		{name: "unclassified", root: write(t, "", nil, ""), wantErr: "must be either"},
+		{name: "hybrid defaults to monorepo lifecycle", root: write(t, "", []Template{templateFixture("app", "app")}, "monorepo_root = true\n"), want: ProjectKindMonorepo},
+		{name: "nested marker is not monorepo", root: write(t, "", nil, "[env]\nmonorepo_root = true\n"), wantErr: "must configure"},
+		{name: "unclassified", root: write(t, "", nil, ""), wantErr: "must configure"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got, err := DetectProjectKind(test.root)

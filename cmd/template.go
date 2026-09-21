@@ -74,13 +74,6 @@ var templateListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		kind, err := core.DetectProjectKind(root)
-		if err != nil {
-			return err
-		}
-		if kind != core.ProjectKindTemplateRegistry {
-			return fmt.Errorf("template ls requires a template registry, got %s", kind)
-		}
 		registry, err := core.LoadRegistry(root)
 		if err != nil {
 			return err

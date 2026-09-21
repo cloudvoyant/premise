@@ -65,7 +65,7 @@ func DetectReleaseProfile(root string) (ReleaseProfile, error) {
 	if cargoWorkspace {
 		return ReleaseProfileCargo, nil
 	}
-	return "", fmt.Errorf("unsupported release repository: expected go.mod or templates/Cargo.toml at %s", root)
+	return "", fmt.Errorf("unsupported release repository: expected go.mod, Cargo.toml, or templates/Cargo.toml at %s", root)
 }
 
 func publishReleaseCandidate(ctx context.Context, root string, kind ProjectKind, stdout, stderr io.Writer) error {
@@ -306,8 +306,9 @@ archives:
       {{- if eq .Os "darwin" }}macos{{- else }}{{ .Os }}{{- end }}
 `)
 	case ReleaseProfileCargo:
-		applications := make([]string, 0, len(manifest.Templates))
-		for _, template := range manifest.Templates {
+		templates := manifest.DeclaredTemplates()
+		applications := make([]string, 0, len(templates))
+		for _, template := range templates {
 			if template.Kind == "app" {
 				applications = append(applications, template.Name)
 			}
@@ -368,7 +369,14 @@ release:
 func runGoReleaser(ctx context.Context, root string, profile ReleaseProfile, snapshot bool, stdout, stderr io.Writer) error {
 	workingDirectory := root
 	if profile == ReleaseProfileCargo {
-		workingDirectory = filepath.Join(root, "templates")
+		workspaceDirectory, found, err := cargoWorkspaceDirectory(root)
+		if err != nil {
+			return fmt.Errorf("inspect Cargo release workspace: %w", err)
+		}
+		if !found {
+			return errors.New("Cargo release workspace is missing Cargo.toml")
+		}
+		workingDirectory = workspaceDirectory
 		if err := installReleaseTools(ctx, workingDirectory, stdout, stderr); err != nil {
 			return fmt.Errorf("prepare Cargo release toolchain: %w", err)
 		}

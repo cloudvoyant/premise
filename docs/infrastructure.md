@@ -32,7 +32,7 @@ GCP_REGISTRY_NAME       = "your-repository-name"
 
 Version calculation uses the svu Go SDK through `core/version.go`. Premise owns the stable-tag policy, so repositories do not carry `.svu.yml`. A `v0.0.0` stable bootstrap tag must exist before CI runs; it is created externally, never by a task or workflow. GoReleaser configuration is also generated inside Premise and written to a temporary file only while `pm release` runs. Calculated versions and generated configuration are never committed to source.
 
-The action delegates lifecycle and publication policy to `pm ci flow`. The supported flows are `on-commit`, `on-merge`, and `on-release`. A matching root Mise task replaces the fallback lifecycle, but the flow still owns its guarded publication phase. Otherwise, Premise runs monorepo lifecycle tasks or enters each declared template in a template registry. A Premise root cannot be both a monorepo and a template registry.
+The action delegates lifecycle and publication policy to `pm ci flow`. The supported flows are `on-commit`, `on-merge`, and `on-release`. A matching root Mise task replaces the fallback lifecycle, but the flow still owns its guarded publication phase. Otherwise, Premise runs the lifecycle selected by `workspace.kind`: monorepo lifecycle tasks or each declared registry template. A repository can contain both generated projects and `template_registry`; the kind selects lifecycle behavior rather than forbidding either capability.
 
 The action accepts one `install-premise` mode. `pre-built` uses `install.sh`, `build` compiles the checked-out action source, and `skip` requires an existing `pm` on `PATH`. Real RC and stable publication remain in separate credential-bearing workflow steps.
 

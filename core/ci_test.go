@@ -378,15 +378,19 @@ func TestRegistryCIStopsFailedTemplateBeforeDeployAndContinues(t *testing.T) {
 	}
 }
 
-func TestCIFlowRejectsHybridWithoutOverride(t *testing.T) {
+func TestCIFlowAllowsTemplatesInMonorepoLifecycle(t *testing.T) {
 	root := writeCIProject(t, []Template{templateFixture("app", "app")}, true)
 	runner := newFakeCIRunner()
-	err := runCIFlow(context.Background(), root, CIFlowOnCommit, "preview", CIReleaseNone, runner)
-	if err == nil || !strings.Contains(err.Error(), "cannot be both") {
-		t.Fatalf("runCIFlow() error = %v", err)
+	if err := runCIFlow(context.Background(), root, CIFlowOnCommit, "preview", CIReleaseNone, runner); err != nil {
+		t.Fatal(err)
 	}
-	if len(runner.calls) != 0 {
-		t.Fatalf("hybrid flow ran lifecycle commands: %#v", runner.calls)
+	if len(runner.calls) == 0 || runner.calls[0].name != "pm" || strings.Join(runner.calls[0].arguments, " ") != "install" {
+		t.Fatalf("hybrid workspace did not run monorepo lifecycle: %#v", runner.calls)
+	}
+	for _, call := range runner.calls {
+		if strings.Contains(call.directory, filepath.Join("templates", "app")) {
+			t.Fatalf("monorepo lifecycle unexpectedly ran registry fallback: %#v", call)
+		}
 	}
 }
 
@@ -394,7 +398,7 @@ func writeCIProject(t *testing.T, templates []Template, monorepo bool) string {
 	t.Helper()
 	root := t.TempDir()
 	manifest := NewManifest("ci-fixture")
-	manifest.Templates = templates
+	manifest.TemplateRegistry = &TemplateRegistry{WorkspaceFiles: []string{}, Templates: templates}
 	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
 		t.Fatal(err)
 	}
