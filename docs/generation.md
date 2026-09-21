@@ -2,63 +2,65 @@
 
 ## Overview
 
-Premise's current generation workflow is create-only: it resolves one template from a local or remote registry, creates a new project, and records its provenance in the workspace manifest.
+Premise generation is create-only. It resolves one template, merges the registry's direct shared files into the client workspace root, creates one project under `apps/<name>` or `libs/<name>`, validates the resulting workspace candidate, and records the project's provenance.
 
-Generation does not overwrite an existing destination or update an existing project. Template migration is a separate future workflow, not an implicit extension of this design.
+Generation does not overwrite an existing project destination or update an existing project. Template migration is a separate future workflow.
 
 ## Requirements
 
-- Resolve a selector to a registry and a declared template, whether the source is local or remote.
-- Apply questionnaire answers and literal substitutions consistently to the selected template and shared registry files.
-- Resolve root collisions before publication and give each supported collision a deterministic decision.
-- Never overwrite an existing destination.
-- Run dependency preflight and final validation before publishing the generated project.
+- Resolve a selector to a registry and one declared template, whether the source is local or remote.
+- Apply questionnaire answers and literal substitutions to both shared registry files and selected-template files.
+- Merge direct registry files against files at the client workspace root.
+- Copy the selected template tree only to its new `apps/<name>` or `libs/<name>` destination.
+- Never treat selected-template files as conflicts with client-root files.
+- Never overwrite an existing project destination.
+- Validate changed root tool versions independently and validate the complete workspace candidate before publication.
 - Persist template provenance, including the selector, project path, answers, and declared version when available.
-- Remove a newly published destination when final manifest registration or persistence fails.
+- Restore changed workspace-root files and remove the new project if final project registration or manifest persistence fails.
 
 ## Design
 
 ### Registry structure
 
-A registry has a manifest and a `templates/` directory. Regular files placed directly under `templates/` are shared files. The selected template is the tree at `templates/<name>/`; sibling template directories are not shared content. Shared files and the selected tree are compared after substitutions are applied.
+A registry has a manifest and a `templates/` directory. Regular files directly under `templates/` are client-workspace-root inputs. The selected template is the tree at `templates/<name>/`; sibling template directories are excluded.
 
-Selector resolution first identifies the registry source and then the template declaration. Local selectors can point at a registry on disk. Remote selectors identify a repository and template, and the resolved source is fetched or refreshed through the registry cache. `ResolveTemplateSource` returns the source root and the selected `TemplateSelection` used by generation.
+For example, `templates/package.json`, `templates/bunfig.toml`, and `templates/mise.toml` become or merge with files at the client workspace root. Files under `templates/premise-hono-api/` are copied to `apps/<generated-name>/`. These two target locations are independent, so equal relative paths such as `package.json` or `mise.toml` do not conflict with each other.
 
-### Three-tier generation
+Selector resolution first identifies the registry source and then the template declaration. Local selectors can point at a registry on disk. Remote selectors identify a repository and template, and the source is fetched or refreshed through the registry cache. `ResolveTemplateSource` returns the source root and selected `TemplateSelection`.
 
-The merge has three focused tiers:
+### Three-tier workspace-root merge
 
-1. **Tier 1: root `mise.toml`.** Typed Mise data is merged with Mise-aware rules. Compatible tool versions can select the greater version within one major version; incompatible major versions fail. Environment and other scalar conflicts require a decision. Contract task collisions retain selected metadata and append shared commands before selected commands. Non-contract task collisions retain the shared name and namespace the selected task as `<registry-prefix>:<task>`, with a notice.
-2. **Tier 2: `.gitignore` and `.gitattributes`.** Files are normalized into ordered lines, then shared lines are followed by selected lines and only adjacent duplicates are removed.
-3. **Tier 3: other differing root files.** The complete shared file, the complete selected file, or an abort is chosen. Premise does not attempt general semantic merges for arbitrary configuration files.
+Only a direct shared file that meets an existing client-root path needs collision handling:
 
-One-sided files are copied without a conflict decision. Equal files coalesce without a decision. Conflicts are resolved before publication through interactive prompts or a supplied resolver; generation does not print a technical conflict report.
+1. **Tier 1: root `mise.toml`.** The registry's shared Mise configuration merges with the existing client workspace Mise configuration. Compatible tool versions can select the greater version within one major version; incompatible major versions fail. Environment and other scalar conflicts require a decision. Contract task collisions retain client metadata and append registry commands before client commands. Non-contract task collisions retain the registry task name and namespace the client task as `<registry-prefix>:<task>`.
+2. **Tier 2: root `.gitignore` and `.gitattributes`.** Registry lines are followed by client lines, and only adjacent duplicates are removed.
+3. **Tier 3: other differing root files.** The complete registry file, complete existing client file, or an abort is chosen. Premise does not attempt semantic merging for arbitrary configuration files.
+
+A shared file whose root path does not exist is copied without a decision. Equal files coalesce. Files in the selected template never enter this comparison.
 
 ```mermaid
 flowchart LR
-  S[Selector] --> R[ResolveTemplateSource]
+  S[Selector] --> R[Resolve registry and template]
   R --> Q[Answers and substitutions]
-  Q --> P[BuildGeneratePlan(GenerateParameters)]
-  P --> D[Resolve conflicts]
-  D --> X[ApplyGeneratePlan]
-  X --> V[Preflight and final validation]
-  V --> N[Rename new destination]
+  Q --> P[Plan client-root changes]
+  P --> T[Stage selected project]
+  T --> V[Validate workspace candidate]
+  V --> W[Publish root files]
+  W --> N[Rename project destination]
   N --> M[Persist provenance manifest]
 ```
 
 ## Implementation
 
-`ResolveTemplateSource` resolves local or remote registries and returns the selected source and template identity. Generation then loads the template declaration, asks its questions, validates the project name, and resolves literal substitutions.
+`BuildGeneratePlan(GenerateParameters)` validates the client workspace, absent project destination, registry root, and selected template. It stages the substituted selected tree without merging shared files into it. It separately reads direct shared files, compares only those paths against the client workspace root, and resolves the three merge tiers.
 
-`BuildGeneratePlan(GenerateParameters)` validates the client repository root, project path, source directories, and absent destination. It stages the substituted selected tree, reads direct shared files from the registry `templates/` root, builds the comparison entries, and resolves the three merge tiers before returning a plan with private staging paths.
+`ApplyGeneratePlan` materializes the selected project in a private stage. For validation, it creates a disposable workspace candidate containing the client root files, planned root-file outputs, and the selected project at its final relative path. It validates the candidate root Mise installation, runs root contracts when the root defines the complete contract, and runs the selected project's complete contract. Successful command output remains hidden; the first failed command's diagnostics are shown.
 
-`ApplyGeneratePlan` runs a dependency preflight for each selected-template tool change in a disposable copy. It then materializes the resolved generation in a private stage, copies that stage for final validation, runs `mise install` and every required template contract, and renames the validated stage into the destination. The rename is the publication boundary; an existing destination is rejected.
+After validation, Premise writes the planned direct root files and renames the staged project into its destination. It keeps in-memory copies of changed root files until the workspace manifest is saved. A publication or manifest error restores those files and removes the new destination. There is no lock, journal, crash-recovery protocol, platform-specific transaction wrapper, or existing-project migration.
 
-`core/misex.go` provides the Mise process boundary and typed `mise.toml` operations. It extracts and merges tools, environment values, root values, and tasks. Contract task commands append shared then selected commands, while non-contract collisions use the registry-prefixed namespace.
+`core/misex.go` owns typed Mise extraction, encoding, mutation, and merge behavior. `core/merge.go` owns file-level decisions. `core/generate.go` owns planning, staging, workspace-candidate validation, root publication, and destination publication.
 
-After `ApplyGeneratePlan` succeeds, generation adds a `Project` to `workspace.projects` and saves the final `premise.yaml`. If project registration or manifest persistence fails, it removes the newly created destination. Temporary selected, preflight, and validation directories are cleaned up by the generation plan. Crash-consistent recovery across the destination and manifest is outside this workflow.
-
-Migration of an existing project from one template version to another is a separate future workflow. It must define its own provenance, conflict, validation, and rollback behavior rather than silently changing this create-only path.
+Migration of an existing project from one template version to another remains separate future work.
 
 ## References
 

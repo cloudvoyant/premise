@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -51,14 +50,20 @@ type generationStages struct {
 // GeneratePlan is the complete, prepared generation. Its staging paths are
 // private so callers can only publish a plan through ApplyGeneratePlan.
 type GeneratePlan struct {
+	// Entries contains registry-root files resolved against the client workspace
+	// root. The selected template is staged separately for its apps/ or libs/
+	// destination and never participates in these root-file conflicts.
 	Entries []MergeEntry
 	Root    PathValue
 	Mise    MiseMergeResult
 
+	workspaceRoot string
+	projectPath   string
 	destination   string
 	stage         string
 	selectedStage string
 	templateKind  string
+	rootBackups   []MergeEntry
 }
 
 // -----------------------------------------------------------------------------
@@ -150,13 +155,12 @@ func Generate(ctx context.Context, cwd, selector string, options GenerateOptions
 		Answers:  answers,
 	}
 	if err := workspaceManifest.AddProject(project); err != nil {
-		_ = os.RemoveAll(destination)
-		return err
+		return errors.Join(err, removeGeneratedDestination(destination), plan.rollbackRoot())
 	}
 	if err := SaveManifest(workspaceManifestPath, workspaceManifest); err != nil {
-		_ = os.RemoveAll(destination)
-		return err
+		return errors.Join(err, removeGeneratedDestination(destination), plan.rollbackRoot())
 	}
+	plan.rootBackups = nil
 	fmt.Fprintf(output, "Generated %s %s from %s at %s\n", template.Kind, name, selector, relativeDestination)
 	return nil
 }
@@ -165,7 +169,7 @@ func Generate(ctx context.Context, cwd, selector string, options GenerateOptions
 // project destination. The returned plan owns private staging paths until
 // ApplyGeneratePlan.
 func BuildGeneratePlan(request GenerateParameters) (*GeneratePlan, error) {
-	destination, err := validateGenerationTarget(request)
+	workspaceRoot, destination, err := validateGenerationTarget(request)
 	if err != nil {
 		return nil, err
 	}
@@ -178,8 +182,12 @@ func BuildGeneratePlan(request GenerateParameters) (*GeneratePlan, error) {
 		return nil, err
 	}
 	plan := &GeneratePlan{
-		destination: destination, stage: stages.stage, selectedStage: stages.selectedStage,
-		templateKind: request.TemplateKind,
+		workspaceRoot: workspaceRoot,
+		projectPath:   filepath.Clean(request.ProjectPath),
+		destination:   destination,
+		stage:         stages.stage,
+		selectedStage: stages.selectedStage,
+		templateKind:  request.TemplateKind,
 	}
 	keepStages := false
 	defer func() {
@@ -217,17 +225,18 @@ func ApplyGeneratePlan(ctx context.Context, plan *GeneratePlan, output io.Writer
 			if rollbackErr := os.RemoveAll(plan.destination); rollbackErr != nil {
 				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("rollback generation destination: %w", rollbackErr))
 			}
+			cleanupErr = errors.Join(cleanupErr, plan.rollbackRoot())
 		}
 		err = errors.Join(err, cleanupErr)
 	}()
 
-	if err = validateGenerationToolChanges(ctx, plan.selectedStage, plan.templateKind, plan.Mise.ToolChanges, output); err != nil {
-		return err
-	}
 	if err = materializeGeneratePlan(plan, plan.stage); err != nil {
 		return err
 	}
-	if err = validateGeneratedCandidate(ctx, plan.stage, plan.templateKind, output); err != nil {
+	if err = validateGeneratePlanToolChanges(ctx, plan, output); err != nil {
+		return err
+	}
+	if err = validateGeneratePlanCandidate(ctx, plan, output); err != nil {
 		return err
 	}
 	if _, statErr := os.Lstat(plan.destination); statErr == nil {
@@ -235,8 +244,11 @@ func ApplyGeneratePlan(ctx context.Context, plan *GeneratePlan, output io.Writer
 	} else if !errors.Is(statErr, os.ErrNotExist) {
 		return fmt.Errorf("inspect generation destination: %w", statErr)
 	}
+	if err = plan.publishRoot(); err != nil {
+		return err
+	}
 	if err = os.Rename(plan.stage, plan.destination); err != nil {
-		return fmt.Errorf("commit generation: %w", err)
+		return errors.Join(fmt.Errorf("commit generation: %w", err), plan.rollbackRoot())
 	}
 	plan.stage = ""
 	published = true
@@ -247,46 +259,46 @@ func ApplyGeneratePlan(ctx context.Context, plan *GeneratePlan, output io.Writer
 // Utils
 // -----------------------------------------------------------------------------
 
-func validateGenerationTarget(request GenerateParameters) (string, error) {
+func validateGenerationTarget(request GenerateParameters) (string, string, error) {
 	if request.ClientRepoRoot == "" {
-		return "", errors.New("client repository root is required")
+		return "", "", errors.New("client repository root is required")
 	}
 	clientRoot, err := filepath.Abs(request.ClientRepoRoot)
 	if err != nil {
-		return "", fmt.Errorf("resolve client repository root: %w", err)
+		return "", "", fmt.Errorf("resolve client repository root: %w", err)
 	}
 	if info, err := os.Stat(clientRoot); err != nil {
-		return "", fmt.Errorf("inspect client repository root: %w", err)
+		return "", "", fmt.Errorf("inspect client repository root: %w", err)
 	} else if !info.IsDir() {
-		return "", fmt.Errorf("client repository root %s is not a directory", clientRoot)
+		return "", "", fmt.Errorf("client repository root %s is not a directory", clientRoot)
 	}
 	clientRoot, err = filepath.EvalSymlinks(clientRoot)
 	if err != nil {
-		return "", fmt.Errorf("resolve client repository root: %w", err)
+		return "", "", fmt.Errorf("resolve client repository root: %w", err)
 	}
 	if request.ProjectPath == "" {
-		return "", errors.New("project path is required")
+		return "", "", errors.New("project path is required")
 	}
 	if filepath.IsAbs(request.ProjectPath) {
-		return "", errors.New("project path must be relative")
+		return "", "", errors.New("project path must be relative")
 	}
 	destination := filepath.Join(clientRoot, request.ProjectPath)
 	if !inside(clientRoot, destination) {
-		return "", fmt.Errorf("project path %q escapes client repository root", request.ProjectPath)
+		return "", "", fmt.Errorf("project path %q escapes client repository root", request.ProjectPath)
 	}
 	if _, err := os.Lstat(destination); err == nil {
-		return "", fmt.Errorf("destination %s already exists", destination)
+		return "", "", fmt.Errorf("destination %s already exists", destination)
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("inspect generation destination: %w", err)
+		return "", "", fmt.Errorf("inspect generation destination: %w", err)
 	}
 	resolvedDestination, err := resolveFuturePath(destination)
 	if err != nil {
-		return "", fmt.Errorf("resolve generation destination: %w", err)
+		return "", "", fmt.Errorf("resolve generation destination: %w", err)
 	}
 	if !inside(clientRoot, resolvedDestination) {
-		return "", fmt.Errorf("project path %q escapes client repository root", request.ProjectPath)
+		return "", "", fmt.Errorf("project path %q escapes client repository root", request.ProjectPath)
 	}
-	return resolvedDestination, nil
+	return clientRoot, resolvedDestination, nil
 }
 
 func validateGenerationSources(request GenerateParameters, destination string) (generationSources, error) {
@@ -379,23 +391,21 @@ func resolveFuturePath(path string) (string, error) {
 	}
 }
 
-func selectPresent(left, right PathValue, leftOK bool) PathValue {
-	if leftOK {
-		return left
-	}
-	return right
-}
-
 func buildGenerationEntries(plan *GeneratePlan, sources generationSources, request GenerateParameters) error {
 	shared, err := readSharedValues(sources.registryTemplatesRoot, literalReplacer(request.Substitutions))
 	if err != nil {
 		return err
 	}
-	selected, rootMode, err := readTreeValues(plan.selectedStage, nil)
+	selectedInfo, err := os.Stat(plan.selectedStage)
+	if err != nil {
+		return fmt.Errorf("inspect selected template stage: %w", err)
+	}
+	plan.Root = PathValue{Present: true, Kind: "dir", Mode: selectedInfo.Mode().Perm()}
+	paths := unionPathKeys(shared, nil)
+	client, err := readClientRootValues(plan.workspaceRoot, paths)
 	if err != nil {
 		return err
 	}
-	plan.Root = PathValue{Present: true, Kind: "dir", Mode: rootMode}
 	registryIdentity := request.RegistryIdentity
 	if registryIdentity == "" {
 		registryIdentity = request.TemplateIdentity
@@ -403,31 +413,30 @@ func buildGenerationEntries(plan *GeneratePlan, sources generationSources, reque
 	if registryIdentity == "" {
 		registryIdentity = filepath.Base(sources.templateRoot)
 	}
-	paths := unionPathKeys(shared, selected)
 	for _, path := range paths {
-		sharedValue, sharedOK := shared[path]
-		selectedValue, selectedOK := selected[path]
-		sharedValue.Present = sharedOK
-		selectedValue.Present = selectedOK
-		entry := MergeEntry{Path: path, Shared: sharedValue, Selected: selectedValue}
+		sharedValue := shared[path]
+		clientValue, clientOK := client[path]
+		sharedValue.Present = true
+		clientValue.Present = clientOK
+		entry := MergeEntry{Path: path, Shared: sharedValue, Selected: clientValue}
 		switch {
-		case !sharedOK || !selectedOK:
-			entry.Output = clonePathValue(selectPresent(sharedValue, selectedValue, sharedOK))
+		case !clientOK:
+			entry.Output = clonePathValue(sharedValue)
 			entry.Strategy = MergeStrategyCopy
-		case samePathValue(sharedValue, selectedValue):
-			entry.Output = clonePathValue(selectedValue)
+		case samePathValue(sharedValue, clientValue):
+			entry.Output = clonePathValue(clientValue)
 			entry.Strategy = MergeStrategyEqual
 		default:
-			conflict := MergeConflict{Path: path, Key: path, Kind: pathKind(sharedValue, selectedValue), Shared: describePathValue(sharedValue), Selected: describePathValue(selectedValue)}
+			conflict := MergeConflict{Path: path, Key: path, Kind: pathKind(sharedValue, clientValue), Shared: describePathValue(sharedValue), Selected: describePathValue(clientValue)}
 			switch {
-			case path == "mise.toml" && sharedValue.Kind == "file" && selectedValue.Kind == "file":
-				result, err := mergeTierOneMise(&entry, sharedValue, selectedValue, request.TemplateKind, registryIdentity, request.ResolveConflict)
+			case path == "mise.toml" && sharedValue.Kind == "file" && clientValue.Kind == "file":
+				result, err := mergeTierOneMise(&entry, sharedValue, clientValue, request.TemplateKind, registryIdentity, request.ResolveConflict)
 				if err != nil {
 					return err
 				}
 				plan.Mise = result
-			case isOrderedMergePath(path) && sharedValue.Kind == "file" && selectedValue.Kind == "file":
-				if err := mergeTierTwoLines(&entry, sharedValue, selectedValue, request.ResolveConflict); err != nil {
+			case isOrderedMergePath(path) && sharedValue.Kind == "file" && clientValue.Kind == "file":
+				if err := mergeTierTwoLines(&entry, sharedValue, clientValue, request.ResolveConflict); err != nil {
 					return err
 				}
 			default:
@@ -438,7 +447,6 @@ func buildGenerationEntries(plan *GeneratePlan, sources generationSources, reque
 		}
 		plan.Entries = append(plan.Entries, entry)
 	}
-	plan.Entries = pruneOutputFileDescendants(plan.Entries)
 	return nil
 }
 
@@ -455,11 +463,11 @@ func (plan *GeneratePlan) close() error {
 	return errors.Join(failures...)
 }
 
-func validateGenerationToolChanges(ctx context.Context, selectedStage, kind string, changes []ToolChange, output io.Writer) error {
+func validateGeneratePlanToolChanges(ctx context.Context, plan *GeneratePlan, output io.Writer) error {
 	if output == nil {
 		output = io.Discard
 	}
-	for _, change := range changes {
+	for _, change := range plan.Mise.ToolChanges {
 		fmt.Fprintf(output, "Validating tool %s %v -> %v...\n", change.Name, change.From, change.To)
 		candidate, err := os.MkdirTemp("", "premise-tool-preflight-*")
 		if err != nil {
@@ -467,14 +475,14 @@ func validateGenerationToolChanges(ctx context.Context, selectedStage, kind stri
 		}
 		failure := func() error {
 			defer os.RemoveAll(candidate)
-			if err := copyTree(selectedStage, candidate, nil); err != nil {
+			if err := prepareWorkspaceCandidate(plan, candidate, false); err != nil {
 				return err
 			}
 			if err := updateMiseTool(filepath.Join(candidate, "mise.toml"), change.Name, change.To); err != nil {
 				return err
 			}
 			label := fmt.Sprintf("tool %s %v -> %v", change.Name, change.From, change.To)
-			if err := runGenerationTemplateContracts(ctx, candidate, kind, label, output); err != nil {
+			if err := validateWorkspaceCandidateContracts(ctx, candidate, plan.projectPath, plan.templateKind, label, output); err != nil {
 				return fmt.Errorf("tool update %s %v -> %v failed: %w", change.Name, change.From, change.To, err)
 			}
 			return nil
@@ -486,7 +494,7 @@ func validateGenerationToolChanges(ctx context.Context, selectedStage, kind stri
 	return nil
 }
 
-func validateGeneratedCandidate(ctx context.Context, stage, kind string, output io.Writer) error {
+func validateGeneratePlanCandidate(ctx context.Context, plan *GeneratePlan, output io.Writer) error {
 	if output == nil {
 		output = io.Discard
 	}
@@ -496,52 +504,64 @@ func validateGeneratedCandidate(ctx context.Context, stage, kind string, output 
 		return fmt.Errorf("create generated candidate validation copy: %w", err)
 	}
 	defer os.RemoveAll(candidate)
-	if err := copyTree(stage, candidate, nil); err != nil {
-		return fmt.Errorf("copy generated candidate: %w", err)
+	if err := prepareWorkspaceCandidate(plan, candidate, true); err != nil {
+		return fmt.Errorf("prepare generated workspace candidate: %w", err)
 	}
-	if err := runGenerationTemplateContracts(ctx, candidate, kind, "generated candidate", output); err != nil {
+	if err := validateWorkspaceCandidateContracts(ctx, candidate, plan.projectPath, plan.templateKind, "generated candidate", output); err != nil {
 		return fmt.Errorf("generated candidate validation failed: %w", err)
 	}
 	return nil
 }
 
+func prepareWorkspaceCandidate(plan *GeneratePlan, candidate string, mergedRoot bool) error {
+	if err := copyClientRootFiles(plan.workspaceRoot, candidate); err != nil {
+		return err
+	}
+	if err := materializeRootEntries(plan.Entries, candidate, !mergedRoot); err != nil {
+		return err
+	}
+	project := filepath.Join(candidate, plan.projectPath)
+	if !inside(candidate, project) {
+		return fmt.Errorf("candidate project path escapes workspace: %s", plan.projectPath)
+	}
+	return copyTree(plan.stage, project, nil)
+}
+
+func validateWorkspaceCandidateContracts(ctx context.Context, candidate, projectPath, kind, label string, output io.Writer) error {
+	rootMise := filepath.Join(candidate, "mise.toml")
+	if data, err := os.ReadFile(rootMise); err == nil {
+		config, err := ExtractMiseConfig("generated workspace", data)
+		if err != nil {
+			return err
+		}
+		tasks, err := ContractTasks(kind)
+		if err != nil {
+			return err
+		}
+		complete := true
+		for _, task := range tasks {
+			if _, ok := config.Tasks[task]; !ok {
+				complete = false
+				break
+			}
+		}
+		if complete {
+			if err := runGenerationTemplateContracts(ctx, candidate, kind, label+" workspace", output); err != nil {
+				return err
+			}
+		} else if err := runGenerationMiseInstall(ctx, candidate, label+" workspace", output); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	project := filepath.Join(candidate, projectPath)
+	return runGenerationTemplateContractsWithCeiling(ctx, project, kind, label+" project", candidate, output)
+}
+
 func materializeGeneratePlan(plan *GeneratePlan, destination string) error {
-	if err := os.MkdirAll(destination, 0o755); err != nil {
-		return fmt.Errorf("create generation stage: %w", err)
-	}
-	var directories []MergeEntry
-	for _, entry := range plan.Entries {
-		target := filepath.Join(destination, filepath.FromSlash(entry.Path))
-		if !inside(destination, target) {
-			return fmt.Errorf("merge entry escapes generation root: %s", target)
-		}
-		switch entry.Output.Kind {
-		case "dir":
-			if err := os.MkdirAll(target, entry.Output.Mode.Perm()); err != nil {
-				return fmt.Errorf("create generation directory %s: %w", entry.Path, err)
-			}
-			directories = append(directories, entry)
-		case "file":
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return fmt.Errorf("create generation parent %s: %w", entry.Path, err)
-			}
-			if err := os.WriteFile(target, entry.Output.Data, entry.Output.Mode.Perm()); err != nil {
-				return fmt.Errorf("write generated file %s: %w", entry.Path, err)
-			}
-			if err := os.Chmod(target, entry.Output.Mode.Perm()); err != nil {
-				return fmt.Errorf("preserve generated file permissions %s: %w", entry.Path, err)
-			}
-		default:
-			return fmt.Errorf("unsupported output kind %q for %s", entry.Output.Kind, entry.Path)
-		}
-	}
-	sort.Slice(directories, func(i, j int) bool {
-		return strings.Count(directories[i].Path, "/") > strings.Count(directories[j].Path, "/")
-	})
-	for _, entry := range directories {
-		if err := os.Chmod(filepath.Join(destination, filepath.FromSlash(entry.Path)), entry.Output.Mode.Perm()); err != nil {
-			return fmt.Errorf("preserve generated directory permissions %s: %w", entry.Path, err)
-		}
+	if err := copyTree(plan.selectedStage, destination, nil); err != nil {
+		return fmt.Errorf("materialize selected template: %w", err)
 	}
 	if plan.Root.Present {
 		if err := os.Chmod(destination, plan.Root.Mode.Perm()); err != nil {
@@ -549,6 +569,161 @@ func materializeGeneratePlan(plan *GeneratePlan, destination string) error {
 		}
 	}
 	return nil
+}
+
+func materializeRootEntries(entries []MergeEntry, root string, skipMise bool) error {
+	for _, entry := range entries {
+		if skipMise && entry.Path == "mise.toml" {
+			continue
+		}
+		target := filepath.Join(root, filepath.FromSlash(entry.Path))
+		if !inside(root, target) {
+			return fmt.Errorf("root merge entry escapes workspace: %s", target)
+		}
+		switch entry.Output.Kind {
+		case "dir":
+			if err := os.MkdirAll(target, entry.Output.Mode.Perm()); err != nil {
+				return fmt.Errorf("create root directory %s: %w", entry.Path, err)
+			}
+		case "file":
+			if info, err := os.Lstat(target); err == nil && info.IsDir() {
+				return fmt.Errorf("cannot replace workspace directory %s with a shared file", entry.Path)
+			} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			if err := os.WriteFile(target, entry.Output.Data, entry.Output.Mode.Perm()); err != nil {
+				return fmt.Errorf("write workspace root file %s: %w", entry.Path, err)
+			}
+			if err := os.Chmod(target, entry.Output.Mode.Perm()); err != nil {
+				return fmt.Errorf("preserve workspace root file permissions %s: %w", entry.Path, err)
+			}
+		default:
+			return fmt.Errorf("unsupported root output kind %q for %s", entry.Output.Kind, entry.Path)
+		}
+	}
+	return nil
+}
+
+func readClientRootValues(root string, names []string) (map[string]PathValue, error) {
+	values := make(map[string]PathValue, len(names))
+	for _, name := range names {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if !inside(root, path) {
+			return nil, fmt.Errorf("client root entry escapes workspace: %s", name)
+		}
+		info, err := os.Lstat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("inspect client root entry %s: %w", name, err)
+		}
+		value := PathValue{Present: true, Mode: info.Mode().Perm()}
+		switch {
+		case info.IsDir():
+			value.Kind = "dir"
+		case info.Mode().IsRegular():
+			value.Kind = "file"
+			value.Data, err = os.ReadFile(path)
+			if err != nil {
+				return nil, fmt.Errorf("read client root file %s: %w", name, err)
+			}
+		default:
+			return nil, fmt.Errorf("unsupported client root entry %s", name)
+		}
+		values[name] = value
+	}
+	return values, nil
+}
+
+func copyClientRootFiles(source, destination string) error {
+	entries, err := os.ReadDir(source)
+	if err != nil {
+		return fmt.Errorf("read client workspace root: %w", err)
+	}
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("inspect client workspace file %s: %w", entry.Name(), err)
+		}
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(source, entry.Name()))
+		if err != nil {
+			return fmt.Errorf("read client workspace file %s: %w", entry.Name(), err)
+		}
+		target := filepath.Join(destination, entry.Name())
+		if err := os.WriteFile(target, data, info.Mode().Perm()); err != nil {
+			return fmt.Errorf("copy client workspace file %s: %w", entry.Name(), err)
+		}
+		if err := os.Chmod(target, info.Mode().Perm()); err != nil {
+			return fmt.Errorf("preserve client workspace file permissions %s: %w", entry.Name(), err)
+		}
+	}
+	return nil
+}
+
+func (plan *GeneratePlan) publishRoot() error {
+	plan.rootBackups = nil
+	for _, entry := range plan.Entries {
+		if entry.Selected.Present && samePathValue(entry.Output, entry.Selected) {
+			continue
+		}
+		if entry.Output.Kind != "file" {
+			return errors.Join(fmt.Errorf("cannot publish shared root %s as %s", entry.Path, entry.Output.Kind), plan.rollbackRoot())
+		}
+		target := filepath.Join(plan.workspaceRoot, filepath.FromSlash(entry.Path))
+		if info, err := os.Lstat(target); err == nil && info.IsDir() {
+			return errors.Join(fmt.Errorf("cannot replace workspace directory %s with a shared file", entry.Path), plan.rollbackRoot())
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return errors.Join(err, plan.rollbackRoot())
+		}
+		backup := entry.Selected
+		backup.Data = append([]byte(nil), backup.Data...)
+		plan.rootBackups = append(plan.rootBackups, MergeEntry{Path: entry.Path, Selected: backup})
+		if err := os.WriteFile(target, entry.Output.Data, entry.Output.Mode.Perm()); err != nil {
+			return errors.Join(fmt.Errorf("write workspace root file %s: %w", entry.Path, err), plan.rollbackRoot())
+		}
+		if err := os.Chmod(target, entry.Output.Mode.Perm()); err != nil {
+			return errors.Join(fmt.Errorf("preserve workspace root file permissions %s: %w", entry.Path, err), plan.rollbackRoot())
+		}
+	}
+	return nil
+}
+
+func removeGeneratedDestination(destination string) error {
+	if err := os.RemoveAll(destination); err != nil {
+		return fmt.Errorf("rollback generation destination: %w", err)
+	}
+	return nil
+}
+
+func (plan *GeneratePlan) rollbackRoot() error {
+	var failures []error
+	for index := len(plan.rootBackups) - 1; index >= 0; index-- {
+		backup := plan.rootBackups[index]
+		target := filepath.Join(plan.workspaceRoot, filepath.FromSlash(backup.Path))
+		if !backup.Selected.Present {
+			if err := os.Remove(target); err != nil && !errors.Is(err, os.ErrNotExist) {
+				failures = append(failures, fmt.Errorf("remove published workspace root file %s: %w", backup.Path, err))
+			}
+			continue
+		}
+		if backup.Selected.Kind != "file" {
+			failures = append(failures, fmt.Errorf("cannot restore workspace root %s as %s", backup.Path, backup.Selected.Kind))
+			continue
+		}
+		if err := os.WriteFile(target, backup.Selected.Data, backup.Selected.Mode.Perm()); err != nil {
+			failures = append(failures, fmt.Errorf("restore workspace root file %s: %w", backup.Path, err))
+			continue
+		}
+		if err := os.Chmod(target, backup.Selected.Mode.Perm()); err != nil {
+			failures = append(failures, fmt.Errorf("restore workspace root file permissions %s: %w", backup.Path, err))
+		}
+	}
+	plan.rootBackups = nil
+	return errors.Join(failures...)
 }
 
 func readSharedValues(root string, replacer *strings.Replacer) (map[string]PathValue, error) {
@@ -583,52 +758,6 @@ func readSharedValues(root string, replacer *strings.Replacer) (map[string]PathV
 	return values, nil
 }
 
-func readTreeValues(root string, replacer *strings.Replacer) (map[string]PathValue, fs.FileMode, error) {
-	values := make(map[string]PathValue)
-	var rootMode fs.FileMode
-	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		relative, err := filepath.Rel(root, path)
-		if err != nil || escapesRoot(relative) {
-			return fmt.Errorf("source entry escapes generation root: %s", path)
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return fmt.Errorf("inspect generation entry %s: %w", path, err)
-		}
-		if relative == "." {
-			if !info.IsDir() {
-				return fmt.Errorf("generation root %s is not a directory", path)
-			}
-			rootMode = info.Mode().Perm()
-			return nil
-		}
-		key := filepath.ToSlash(relative)
-		if info.IsDir() {
-			values[key] = PathValue{Kind: "dir", Mode: info.Mode().Perm()}
-			return nil
-		}
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("unsupported merge entry %s", relative)
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("read generation file %s: %w", relative, err)
-		}
-		if replacer != nil && isText(data) {
-			data = []byte(replacer.Replace(string(data)))
-		}
-		values[key] = PathValue{Kind: "file", Mode: info.Mode().Perm(), Data: data}
-		return nil
-	})
-	if err != nil {
-		return nil, 0, fmt.Errorf("read template tree: %w", err)
-	}
-	return values, rootMode, nil
-}
-
 func unionPathKeys(left, right map[string]PathValue) []string {
 	seen := make(map[string]struct{}, len(left)+len(right))
 	for path := range left {
@@ -643,21 +772,4 @@ func unionPathKeys(left, right map[string]PathValue) []string {
 	}
 	sort.Strings(paths)
 	return paths
-}
-
-func pruneOutputFileDescendants(entries []MergeEntry) []MergeEntry {
-	output := make([]MergeEntry, 0, len(entries))
-	for _, entry := range entries {
-		prune := false
-		for _, ancestor := range output {
-			if ancestor.Output.Kind == "file" && strings.HasPrefix(entry.Path, ancestor.Path+"/") {
-				prune = true
-				break
-			}
-		}
-		if !prune {
-			output = append(output, entry)
-		}
-	}
-	return output
 }

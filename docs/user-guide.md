@@ -55,19 +55,19 @@ pm template ls
 
 Each init command creates `templates/<kind>/mise.toml` and adds a matching declaration to `premise.yaml`. Omit the kind to select it interactively. `pm template ls` prints declared template names in stable alphabetical order. Premise rejects template initialization in a monorepo.
 
-Files placed directly under `templates/` are shared scaffold files. Premise compares these files with the selected `templates/<name>/` tree after it applies questionnaire substitutions. Directories under `templates/` are template sources and are not copied as shared content. See the [Generation Architecture](generation.md) for the implementation boundary and merge flow.
+Files placed directly under `templates/` are client workspace-root inputs. Premise compares these files with matching files in the current workspace root after it applies questionnaire substitutions. Directories under `templates/` are template sources and are not copied as shared content. The selected `templates/<name>/` tree is copied separately to `apps/<name>` or `libs/<name>`. See the [Generation Architecture](generation.md) for the implementation boundary and merge flow.
 
-Premise resolves root conflicts before it creates the destination. Interactive prompts (or a supplied resolver) choose among the supported three tiers; no technical conflict report is printed:
+Premise resolves client-root conflicts before it creates the project destination. Interactive prompts (or a supplied resolver) choose among the supported three tiers; no technical conflict report is printed:
 
-| Tier                                      | Merge behavior                                                                    |
-| ----------------------------------------- | --------------------------------------------------------------------------------- |
-| Tier 1: `mise.toml`                       | Parse typed Mise data and apply semantic rules for tools and environment values.  |
-| Tier 2: `.gitignore` and `.gitattributes` | Keep shared lines first and selected lines second because line order has meaning. |
-| Tier 3: any other differing root file     | Keep the complete shared file, use the complete selected file, or abort.          |
+| Tier                                      | Merge behavior                                                                             |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Tier 1: `mise.toml`                       | Parse typed registry and client Mise data and apply semantic rules.                        |
+| Tier 2: `.gitignore` and `.gitattributes` | Keep registry lines first and existing client lines second because line order has meaning. |
+| Tier 3: any other differing root file     | Keep the complete registry file, retain the complete client file, or abort.                |
 
-Equal files need no decision. Premise does not parse editor configuration, Prettier files, package manifests, or arbitrary ignore files as smart merge formats.
+Equal files need no decision. A root file and a selected-project file with the same name do not conflict because their destinations differ. Premise does not parse editor configuration, Prettier files, package manifests, or arbitrary ignore files as smart merge formats.
 
-When contract tasks collide, Premise keeps the selected task metadata and appends shared commands before selected commands. Root contract tasks are expected to be argument-free. When a non-contract task collides, the shared task keeps its name and the selected task is copied to `<registry-prefix>:<task>`. Premise prints a notice naming that namespace. Only the contract task command sequence is combined; other task fields remain one-sided.
+When root contract tasks collide, Premise keeps the existing client task metadata and appends registry commands before client commands. Root contract tasks are expected to be argument-free. When a non-contract root task collides, the registry task keeps its name and the client task is copied to `<registry-prefix>:<task>`. Premise prints a notice naming that namespace. Only the contract task command sequence is combined; other task fields remain one-sided.
 
 The initial Mise tasks echo their contract names. Replace each echo with the real implementation while keeping the task name stable.
 
@@ -96,9 +96,9 @@ pm generate ../my-registry:app
 pm generate ../my-registry:lib
 ```
 
-Premise asks the selected template's questions and creates `apps/<name>` or `libs/<name>` according to its kind. It shows all root collisions and resolves each conflict before it writes the destination. Premise records the project, source-qualified template selector, path, answers, and declared template version under `workspace.projects`.
+Premise asks the selected template's questions, plans direct registry files against the current workspace root, and creates `apps/<name>` or `libs/<name>` according to the template kind. It resolves each client-root conflict before publication. Premise records the project, source-qualified template selector, path, answers, and declared template version under `workspace.projects`.
 
-Before materializing the full merge, Premise runs a dependency preflight for each selected-template tool version that the shared `mise.toml` would change. Each preflight uses a disposable copy, `mise install`, and every required template contract. Premise then materializes the merge privately and runs final validation in another disposable copy with `mise install` and every required contract under `PREMISE_TEMPLATE_TEST=1`. Only a completely validated candidate is renamed into the destination; a failed decision, preflight, or final validation leaves the destination and `premise.yaml` unchanged.
+Before publication, Premise preflights each existing client-root tool selector that the registry's root `mise.toml` would change. It then builds a disposable complete workspace candidate containing the planned root files and selected project at its final relative path. It installs root Mise tools and runs complete root and selected-project contracts under `PREMISE_TEMPLATE_TEST=1`. Successful command output stays hidden, and validation stops at the first failure. Only a completely validated candidate is published; a failed decision, preflight, or final validation leaves root files, the project destination, and `premise.yaml` unchanged.
 
 ### Choose from the default registry
 

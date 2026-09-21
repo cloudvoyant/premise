@@ -22,10 +22,7 @@ func TestDetectReleaseProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	cargoRoot := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(cargoRoot, "templates"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(cargoRoot, "templates", "Cargo.toml"), []byte("[workspace]\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(cargoRoot, "Cargo.toml"), []byte("[workspace]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -234,7 +231,7 @@ func writeTaggedCargoReleaseFixture(t *testing.T) string {
 	if err := os.MkdirAll(filepath.Join(root, "templates"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "templates", "Cargo.toml"), []byte("[workspace]\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "Cargo.toml"), []byte("[workspace]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	repository, err := git.PlainInit(root, false)
@@ -351,6 +348,7 @@ case "$*" in
     [ -z "${CARGO_REGISTRY_TOKEN:-}" ]
     [ -z "${CARGO_TOKEN:-}" ]
     [ -z "${CRATES_TOKEN:-}" ]
+    [ -z "${EXPECTED_INSTALL_DIRECTORY:-}" ] || [ "$(pwd -P)" = "$(cd "$EXPECTED_INSTALL_DIRECTORY" && pwd -P)" ]
     printf 'install\n' >> "$CAPTURE"
     ;;
   exec*)
@@ -435,6 +433,7 @@ printf '%s\n' "$*" >> "$CAPTURE"
 	if err := os.WriteFile(capture, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("EXPECTED_INSTALL_DIRECTORY", cargoRoot)
 	if err := runGoReleaser(t.Context(), cargoRoot, ReleaseProfileCargo, true, &output, &output); err != nil {
 		t.Fatal(err)
 	}

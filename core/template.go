@@ -186,10 +186,31 @@ func runTemplateContracts(ctx context.Context, directory, kind, label string, st
 	return errors.Join(failures...)
 }
 
+func runGenerationMiseInstall(ctx context.Context, directory, label string, failureOutput io.Writer) error {
+	if failureOutput == nil {
+		failureOutput = io.Discard
+	}
+	var commandOutput bytes.Buffer
+	mise := miseRunner{
+		Stdout:  &commandOutput,
+		Stderr:  &commandOutput,
+		Ceiling: filepath.Dir(filepath.Clean(directory)),
+	}
+	if err := mise.run(ctx, directory, []string{"PREMISE_TEMPLATE_TEST=1"}, "install"); err != nil {
+		_, _ = io.Copy(failureOutput, &commandOutput)
+		return fmt.Errorf("template %s tool install failed: %w", label, err)
+	}
+	return nil
+}
+
 // runGenerationTemplateContracts validates a generated candidate without
 // exposing successful command output. Failed command output is written to
 // failureOutput so generation errors retain the useful Mise diagnostics.
 func runGenerationTemplateContracts(ctx context.Context, directory, kind, label string, failureOutput io.Writer) error {
+	return runGenerationTemplateContractsWithCeiling(ctx, directory, kind, label, filepath.Dir(filepath.Clean(directory)), failureOutput)
+}
+
+func runGenerationTemplateContractsWithCeiling(ctx context.Context, directory, kind, label, ceiling string, failureOutput io.Writer) error {
 	if failureOutput == nil {
 		failureOutput = io.Discard
 	}
@@ -203,7 +224,7 @@ func runGenerationTemplateContracts(ctx context.Context, directory, kind, label 
 		mise := miseRunner{
 			Stdout:  &commandOutput,
 			Stderr:  &commandOutput,
-			Ceiling: filepath.Dir(filepath.Clean(directory)),
+			Ceiling: ceiling,
 		}
 		if err := mise.run(ctx, directory, testEnvironment, arguments...); err != nil {
 			_, _ = io.Copy(failureOutput, &commandOutput)

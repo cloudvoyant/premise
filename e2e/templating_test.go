@@ -211,7 +211,7 @@ func cargoRegistryFixture(t *testing.T, root string) {
 	writeFixtureFile(t, filepath.Join(shared, ".gitignore"), "# shared rust\n/target\n", 0o644)
 	writeFixtureFile(t, filepath.Join(shared, ".gitattributes"), "*.rs text eol=lf\n", 0o644)
 	writeFixtureFile(t, filepath.Join(shared, "NOTICE"), "shared Rust notice\n", 0o640)
-	writeFixtureFile(t, filepath.Join(shared, "mise.toml"), "[tools]\nrust = '1.82'\n\n[tasks.shared]\nrun = 'echo shared-rust'\n\n[env]\nSHARED_ROOT = 'cargo'\n", 0o644)
+	writeFixtureFile(t, filepath.Join(shared, "mise.toml"), "[tools]\nrust = '1.82'\n\n[tasks.shared]\nrun = 'echo shared-rust'\n\n[env]\nCARGO_SHARED_ROOT = 'cargo'\n", 0o644)
 	writeFixtureFile(t, filepath.Join(selected, ".gitignore"), "# rust cli\n*.profraw\n", 0o644)
 	writeFixtureFile(t, filepath.Join(selected, ".gitattributes"), "Cargo.lock -diff\n", 0o644)
 	writeFixtureFile(t, filepath.Join(selected, "NOTICE"), "selected Rust notice\n", 0o600)
@@ -243,7 +243,8 @@ func bunRegistryFixture(t *testing.T, root string) {
 	writeFixtureFile(t, filepath.Join(shared, ".gitignore"), "# shared bun\nnode_modules/\n", 0o644)
 	writeFixtureFile(t, filepath.Join(shared, ".gitattributes"), "*.ts text eol=lf\n", 0o644)
 	writeFixtureFile(t, filepath.Join(shared, "NOTICE"), "shared Bun notice\n", 0o640)
-	writeFixtureFile(t, filepath.Join(shared, "mise.toml"), "[tools]\nbun = '1.2'\n\n[tasks.shared]\nrun = 'echo shared-bun'\n\n[env]\nSHARED_ROOT = 'bun'\n", 0o644)
+	writeFixtureFile(t, filepath.Join(shared, "package.json"), "{\"private\":true,\"workspaces\":[\"apps/*\",\"libs/*\"]}\n", 0o644)
+	writeFixtureFile(t, filepath.Join(shared, "mise.toml"), "[tools]\nbun = '1.2'\n\n[tasks.shared]\nrun = 'echo shared-bun'\n\n[env]\nBUN_SHARED_ROOT = 'bun'\n", 0o644)
 	writeFixtureFile(t, filepath.Join(selected, ".gitignore"), "# hono api\n.env\n", 0o644)
 	writeFixtureFile(t, filepath.Join(selected, ".gitattributes"), "bun.lock -diff\n", 0o644)
 	writeFixtureFile(t, filepath.Join(selected, "NOTICE"), "selected Bun notice\n", 0o600)
@@ -269,7 +270,7 @@ func TestGenerateFromCargoAndBunRegistries(t *testing.T) {
 	log := installMiseTaskShim(t)
 	base := t.TempDir()
 	workspace := filepath.Join(base, "workspace")
-	if _, err := core.InitializeWorkspace(workspace, workspaceMiseTemplate(t)); err != nil {
+	if _, err := core.InitializeWorkspace(workspace, workspaceMiseTemplate(t)+"\n[tools]\nbun = '1.1'\n"); err != nil {
 		t.Fatal(err)
 	}
 	cargoRegistry := filepath.Join(base, "cargo-fixture")
@@ -302,18 +303,28 @@ func TestGenerateFromCargoAndBunRegistries(t *testing.T) {
 
 	orders := filepath.Join(workspace, "apps", "orders-cli")
 	gateway := filepath.Join(workspace, "apps", "gateway-api")
-	assertFileContent(t, filepath.Join(orders, ".gitignore"), "# shared rust\n/target\n# rust cli\n*.profraw\n")
-	assertFileContent(t, filepath.Join(orders, ".gitattributes"), "*.rs text eol=lf\nCargo.lock -diff\n")
-	assertFileContent(t, filepath.Join(orders, "NOTICE"), "shared Rust notice\n")
+	assertFileContent(t, filepath.Join(workspace, ".gitignore"), "# shared bun\nnode_modules/\n# shared rust\n/target\n")
+	assertFileContent(t, filepath.Join(workspace, ".gitattributes"), "*.ts text eol=lf\n*.rs text eol=lf\n")
+	assertFileContent(t, filepath.Join(workspace, "NOTICE"), "shared Rust notice\n")
+	assertFileContains(t, filepath.Join(workspace, "package.json"), `"apps/*"`)
+	assertFileContent(t, filepath.Join(orders, ".gitignore"), "# rust cli\n*.profraw\n")
+	assertFileContent(t, filepath.Join(orders, ".gitattributes"), "Cargo.lock -diff\n")
+	assertFileContent(t, filepath.Join(orders, "NOTICE"), "selected Rust notice\n")
 	assertFileContains(t, filepath.Join(orders, "Cargo.toml"), "name = \"orders-cli\"")
 	assertFileContains(t, filepath.Join(orders, "src", "main.rs"), "orders-cli")
-	assertFileContent(t, filepath.Join(gateway, ".gitignore"), "# shared bun\nnode_modules/\n# hono api\n.env\n")
-	assertFileContent(t, filepath.Join(gateway, ".gitattributes"), "*.ts text eol=lf\nbun.lock -diff\n")
+	assertFileContent(t, filepath.Join(gateway, ".gitignore"), "# hono api\n.env\n")
+	assertFileContent(t, filepath.Join(gateway, ".gitattributes"), "bun.lock -diff\n")
 	assertFileContent(t, filepath.Join(gateway, "NOTICE"), "selected Bun notice\n")
 	assertFileContains(t, filepath.Join(gateway, "package.json"), "gateway-api")
 	assertFileContains(t, filepath.Join(gateway, "src", "index.ts"), "gateway-api")
-	assertMergedMise(t, filepath.Join(orders, "mise.toml"), "rust", "1.83", "cargo", "orders-cli")
-	assertMergedMise(t, filepath.Join(gateway, "mise.toml"), "bun", "1.2", "bun", "gateway-api")
+	if content, err := os.ReadFile(filepath.Join(workspace, "package.json")); err != nil {
+		t.Fatal(err)
+	} else if strings.Contains(string(content), "gateway-api") {
+		t.Fatalf("selected package.json was merged into workspace root:\n%s", content)
+	}
+	assertWorkspaceMise(t, filepath.Join(workspace, "mise.toml"))
+	assertProjectMise(t, filepath.Join(orders, "mise.toml"), "rust", "1.83", "orders-cli")
+	assertProjectMise(t, filepath.Join(gateway, "mise.toml"), "bun", "1.1", "gateway-api")
 
 	manifest, err := core.LoadManifest(filepath.Join(workspace, core.ManifestFilename))
 	if err != nil {
@@ -353,16 +364,26 @@ func TestGenerateFromCargoAndBunRegistries(t *testing.T) {
 			preflights++
 		}
 	}
-	if len(groups) != 3 {
-		t.Fatalf("validation directories = %#v, want Rust candidate, Bun preflight, Bun candidate", groups)
+	if len(groups) != 6 {
+		t.Fatalf("validation directories = %#v, want workspace and project checks for Rust candidate, Bun preflight, and Bun candidate", groups)
 	}
+	rootChecks := 0
+	projectChecks := 0
 	for directory, count := range groups {
-		if count != wantPerValidation {
-			t.Fatalf("Mise calls in %s = %d, want %d", directory, count, wantPerValidation)
+		switch count {
+		case 1:
+			rootChecks++
+		case wantPerValidation:
+			projectChecks++
+		default:
+			t.Fatalf("Mise calls in %s = %d, want 1 root install or %d project contract calls", directory, count, wantPerValidation)
 		}
 	}
-	if preflights != wantPerValidation {
-		t.Fatalf("preflight calls = %d, want exactly one %d-call preflight", preflights, wantPerValidation)
+	if rootChecks != 3 || projectChecks != 3 {
+		t.Fatalf("validation split = %d root and %d project checks, want 3 each", rootChecks, projectChecks)
+	}
+	if preflights != 1+wantPerValidation {
+		t.Fatalf("preflight calls = %d, want one root install plus one %d-call project preflight", preflights, wantPerValidation)
 	}
 	if strings.Count(output.String(), "Validating tool bun 1.1 -> 1.2...\n") != 1 {
 		t.Fatalf("Bun preflight output =\n%s", output.String())
@@ -391,26 +412,44 @@ func assertFileContains(t *testing.T, path, want string) {
 	}
 }
 
-func assertMergedMise(t *testing.T, path, tool, version, sharedRoot, appKind string) {
+func assertWorkspaceMise(t *testing.T, path string) {
 	t.Helper()
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	config, err := core.ExtractMiseConfig("generated", content)
+	config, err := core.ExtractMiseConfig("generated workspace", content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Tools["rust"].Selector != "1.82" || config.Tools["bun"].Selector != "1.2" {
+		t.Fatalf("%s tools = %#v", path, config.Tools)
+	}
+	if config.Env["CARGO_SHARED_ROOT"] != "cargo" || config.Env["BUN_SHARED_ROOT"] != "bun" {
+		t.Fatalf("%s environment = %#v", path, config.Env)
+	}
+}
+
+func assertProjectMise(t *testing.T, path, tool, version, appKind string) {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := core.ExtractMiseConfig("generated project", content)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := config.Tools[tool].Selector; got != version {
 		t.Fatalf("%s tool %s = %q, want %q", path, tool, got, version)
 	}
-	if _, ok := config.Tasks["shared"]; !ok {
-		t.Fatalf("%s missing shared task", path)
+	if _, ok := config.Tasks["shared"]; ok {
+		t.Fatalf("%s unexpectedly contains workspace shared task", path)
 	}
 	if _, ok := config.Tasks["build"]; !ok {
 		t.Fatalf("%s missing selected build task", path)
 	}
-	if config.Env["SHARED_ROOT"] != sharedRoot || config.Env["APP_KIND"] != appKind {
+	if config.Env["APP_KIND"] != appKind {
 		t.Fatalf("%s environment = %#v", path, config.Env)
 	}
 }
@@ -455,7 +494,11 @@ func TestGenerateValidationFailuresLeaveNoLiveState(t *testing.T) {
 
 			base := t.TempDir()
 			workspace := filepath.Join(base, "workspace")
-			manifestPath, err := core.InitializeWorkspace(workspace, workspaceMiseTemplate(t))
+			workspaceMise := workspaceMiseTemplate(t)
+			if test.name == "selective tool update" {
+				workspaceMise += "\n[tools]\nbun = '1.1'\n"
+			}
+			manifestPath, err := core.InitializeWorkspace(workspace, workspaceMise)
 			if err != nil {
 				t.Fatal(err)
 			}

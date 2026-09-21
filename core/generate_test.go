@@ -79,21 +79,31 @@ func TestGenerateMergesSharedFilesWithSelectedTemplate(t *testing.T) {
 	}
 
 	destination := filepath.Join(workspace, "libs", "orders")
-	shared, err := os.ReadFile(filepath.Join(destination, ".shared-config"))
+	shared, err := os.ReadFile(filepath.Join(workspace, ".shared-config"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got, want := string(shared), "name=orders\n"; got != want {
-		t.Fatalf("shared file = %q, want %q", got, want)
+		t.Fatalf("workspace shared file = %q, want %q", got, want)
 	}
-	overlay, err := os.ReadFile(filepath.Join(destination, "mise.toml"))
+	workspaceMise, err := os.ReadFile(filepath.Join(workspace, "mise.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(overlay), "[tasks]\n[tasks.build]\nrun = ['echo shared', 'echo ok']\n"; got != want {
-		t.Fatalf("merged mise.toml = %q, want %q", got, want)
+	if got, want := string(workspaceMise), "[tasks]\n[tasks.build]\nrun = ['echo shared', 'echo ok']\n"; got != want {
+		t.Fatalf("workspace mise.toml = %q, want %q", got, want)
 	}
-	if _, err := os.Stat(filepath.Join(destination, "premise-rust-lib")); err == nil {
+	projectMise, err := os.ReadFile(filepath.Join(destination, "mise.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(projectMise), "[tasks.build]\nrun = 'echo ok'\n"; got != want {
+		t.Fatalf("selected project mise.toml = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(destination, ".shared-config")); !os.IsNotExist(err) {
+		t.Fatalf("shared root file was copied into selected project: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "premise-rust-lib")); err == nil {
 		t.Fatal("template directory was copied as shared content")
 	} else if !os.IsNotExist(err) {
 		t.Fatalf("inspect unexpected shared directory: %v", err)
@@ -106,10 +116,10 @@ func TestGenerateToolPreflightFailureLeavesDestinationAndManifestUntouched(t *te
 	shared := filepath.Join(registry, "templates")
 	selected := filepath.Join(shared, "app")
 	writeTestFile(t, filepath.Join(shared, "mise.toml"), "[tools]\nbun = '1.2'\n", 0o644)
-	writeTestFile(t, filepath.Join(selected, "mise.toml"), "[tools]\nbun = '1.1'\n", 0o644)
+	writeTestFile(t, filepath.Join(selected, "mise.toml"), "[tasks.install]\nrun = 'true'\n", 0o644)
 
 	workspace := filepath.Join(t.TempDir(), "workspace")
-	manifestPath, err := InitializeWorkspace(workspace, "monorepo_root = true\n")
+	manifestPath, err := InitializeWorkspace(workspace, "monorepo_root = true\n[tools]\nbun = '1.1'\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,6 +168,7 @@ func TestGenerateCandidateFailureLeavesDestinationAndManifestUntouched(t *testin
 func TestGenerateProjectRegistrationFailureRemovesCommittedDestination(t *testing.T) {
 	installMiseTestShim(t, false)
 	registry := writeRegistryFixture(t, templateFixture("app", "app"))
+	writeTestFile(t, filepath.Join(registry, "templates", ".shared-config"), "shared\n", 0o640)
 	workspace := filepath.Join(t.TempDir(), "workspace")
 	manifestPath, err := InitializeWorkspace(workspace, "monorepo_root = true\n")
 	if err != nil {
@@ -183,6 +194,9 @@ func TestGenerateProjectRegistrationFailureRemovesCommittedDestination(t *testin
 	if _, err := os.Stat(filepath.Join(workspace, "apps", "orders")); !os.IsNotExist(err) {
 		t.Fatalf("destination exists after registration failure: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(workspace, ".shared-config")); !os.IsNotExist(err) {
+		t.Fatalf("shared workspace file exists after registration failure: %v", err)
+	}
 	after, err := os.ReadFile(manifestPath)
 	if err != nil {
 		t.Fatal(err)
@@ -198,21 +212,25 @@ func TestGenerateProjectRegistrationFailureRemovesCommittedDestination(t *testin
 
 func TestBuildGeneratePlanSortsAndResolvesFocusedConflicts(t *testing.T) {
 	root := t.TempDir()
-	shared := filepath.Join(root, "templates")
+	shared := filepath.Join(root, "registry", "templates")
 	selected := filepath.Join(shared, "app")
+	workspace := filepath.Join(root, "workspace")
 	if err := os.MkdirAll(filepath.Join(selected, "empty"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeTestFile(t, filepath.Join(shared, ".gitignore"), "shared-placeholder\n", 0o644)
 	writeTestFile(t, filepath.Join(shared, "NOTICE"), "shared\n", 0o640)
-	writeTestFile(t, filepath.Join(selected, ".gitignore"), "!shared-placeholder\n", 0o644)
-	writeTestFile(t, filepath.Join(selected, "NOTICE"), "selected\n", 0o600)
+	writeTestFile(t, filepath.Join(workspace, ".gitignore"), "!shared-placeholder\n", 0o644)
+	writeTestFile(t, filepath.Join(workspace, "NOTICE"), "client\n", 0o600)
 	writeTestFile(t, filepath.Join(selected, "main.txt"), "hello shared-placeholder\n", 0o644)
 	writeTestFile(t, filepath.Join(shared, "sibling", "ignored.txt"), "ignored\n", 0o644)
 	resolver := MergeDecisions{"NOTICE": {Choice: MergeChoiceKeepShared}}
-	destination := filepath.Join(root, "output")
+	destination := filepath.Join(workspace, "apps", "orders")
 
-	plan, err := BuildGeneratePlan(GenerateParameters{RegistryTemplatesRoot: shared, TemplateRoot: selected, ClientRepoRoot: root, ProjectPath: "output", Substitutions: map[string]string{"shared-placeholder": "orders"}, TemplateKind: "app", TemplateIdentity: "app", ResolveConflict: resolver.Resolve})
+	plan, err := BuildGeneratePlan(GenerateParameters{RegistryTemplatesRoot: shared, TemplateRoot: selected, ClientRepoRoot: workspace, ProjectPath: "apps/orders", Substitutions: map[string]string{"shared-placeholder": "orders"}, TemplateKind: "app", TemplateIdentity: "app", ResolveConflict: resolver.Resolve})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,12 +238,12 @@ func TestBuildGeneratePlanSortsAndResolvesFocusedConflicts(t *testing.T) {
 	for index, entry := range plan.Entries {
 		paths[index] = entry.Path
 	}
-	wantPaths := []string{".gitignore", "NOTICE", "empty", "main.txt"}
+	wantPaths := []string{".gitignore", "NOTICE"}
 	if !reflect.DeepEqual(paths, wantPaths) {
-		t.Fatalf("paths = %#v, want %#v", paths, wantPaths)
+		t.Fatalf("root paths = %#v, want %#v", paths, wantPaths)
 	}
-	if got := string(plan.Entries[0].Output.Data); got != "orders\n!orders\n" {
-		t.Fatalf("merged .gitignore = %q", got)
+	if got := string(plan.Entries[0].Output.Data); got != "orders\n!shared-placeholder\n" {
+		t.Fatalf("merged root .gitignore = %q", got)
 	}
 	if plan.Entries[0].Strategy != MergeStrategyOrderedLines || plan.Entries[1].Strategy != MergeStrategyWholeFile {
 		t.Fatalf("unexpected strategies: %#v", plan.Entries)
@@ -242,25 +260,36 @@ func TestBuildGeneratePlanSortsAndResolvesFocusedConflicts(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := string(content); got != "hello orders\n" {
-		t.Fatalf("main.txt = %q", got)
+		t.Fatalf("selected main.txt = %q", got)
 	}
 	if info, err := os.Stat(filepath.Join(destination, "empty")); err != nil || !info.IsDir() {
-		t.Fatalf("empty directory missing: %v", err)
+		t.Fatalf("selected empty directory missing: %v", err)
+	}
+	if err := materializeRootEntries(plan.Entries, workspace, false); err != nil {
+		t.Fatal(err)
+	}
+	rootNotice, err := os.ReadFile(filepath.Join(workspace, "NOTICE"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(rootNotice); got != "shared\n" {
+		t.Fatalf("workspace NOTICE = %q", got)
 	}
 }
 
-func TestBuildGeneratePlanPrunesSelectedDirectoryWhenSharedFileWins(t *testing.T) {
+func TestBuildGeneratePlanKeepsSharedRootSeparateFromSelectedTree(t *testing.T) {
 	root := t.TempDir()
-	shared := filepath.Join(root, "shared")
-	selected := filepath.Join(root, "selected")
+	shared := filepath.Join(root, "registry", "templates")
+	selected := filepath.Join(shared, "app")
+	workspace := filepath.Join(root, "workspace")
 	writeTestFile(t, filepath.Join(shared, "config"), "shared\n", 0o644)
 	writeTestFile(t, filepath.Join(selected, "config", "nested.txt"), "selected\n", 0o644)
-	resolver := MergeDecisions{
-		"config": {Choice: MergeChoiceKeepShared},
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	destination := filepath.Join(root, "output")
+	destination := filepath.Join(workspace, "apps", "orders")
 
-	plan, err := BuildGeneratePlan(GenerateParameters{RegistryTemplatesRoot: shared, TemplateRoot: selected, ClientRepoRoot: root, ProjectPath: "output", TemplateIdentity: "selected", ResolveConflict: resolver.Resolve})
+	plan, err := BuildGeneratePlan(GenerateParameters{RegistryTemplatesRoot: shared, TemplateRoot: selected, ClientRepoRoot: workspace, ProjectPath: "apps/orders", TemplateIdentity: "selected"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,18 +297,28 @@ func TestBuildGeneratePlanPrunesSelectedDirectoryWhenSharedFileWins(t *testing.T
 		t.Fatalf("entries = %#v, want %d entry", plan.Entries, want)
 	}
 	if entry := plan.Entries[0]; entry.Path != "config" || entry.Output.Kind != "file" {
-		t.Fatalf("config entry = %#v", entry)
+		t.Fatalf("root config entry = %#v", entry)
 	}
 
 	if err := materializeGeneratePlan(plan, destination); err != nil {
 		t.Fatal(err)
 	}
-	content, err := os.ReadFile(filepath.Join(destination, "config"))
+	selectedContent, err := os.ReadFile(filepath.Join(destination, "config", "nested.txt"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := string(content); got != "shared\n" {
-		t.Fatalf("config = %q, want shared", got)
+	if got := string(selectedContent); got != "selected\n" {
+		t.Fatalf("selected config = %q", got)
+	}
+	if err := materializeRootEntries(plan.Entries, workspace, false); err != nil {
+		t.Fatal(err)
+	}
+	sharedContent, err := os.ReadFile(filepath.Join(workspace, "config"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(sharedContent); got != "shared\n" {
+		t.Fatalf("workspace config = %q", got)
 	}
 }
 
@@ -294,7 +333,8 @@ func TestBuildGeneratePlanDoesNotCoalesceEqualBytesWithDifferentModes(t *testing
 		t.Fatal(err)
 	}
 	writeTestFile(t, filepath.Join(shared, "same"), "same\n", 0o600)
-	writeTestFile(t, filepath.Join(selected, "same"), "same\n", 0o644)
+	writeTestFile(t, filepath.Join(root, "same"), "same\n", 0o644)
+	writeTestFile(t, filepath.Join(selected, "project.txt"), "selected\n", 0o644)
 	decisions := MergeDecisions{"same": {Choice: MergeChoiceUseSelected}}
 	calls := []MergeConflict{}
 	var resolver MergeConflictResolver = func(conflict MergeConflict) (MergeDecision, error) {
@@ -470,15 +510,52 @@ func TestApplyGeneratePlanCreatesDestinationAndCleansStages(t *testing.T) {
 	}
 }
 
+func TestApplyGeneratePlanRestoresEarlierRootFilesWhenPublicationFails(t *testing.T) {
+	installMiseTestShim(t, false)
+	root := t.TempDir()
+	shared := filepath.Join(root, "registry", "templates")
+	selected := filepath.Join(shared, "app")
+	workspace := filepath.Join(root, "workspace")
+	writeTestFile(t, filepath.Join(shared, "A"), "published first\n", 0o644)
+	writeTestFile(t, filepath.Join(shared, "B"), "cannot replace directory\n", 0o644)
+	writeTestFile(t, filepath.Join(selected, "main.txt"), "orders\n", 0o644)
+	if err := os.MkdirAll(filepath.Join(workspace, "B"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := BuildGeneratePlan(GenerateParameters{
+		RegistryTemplatesRoot: shared,
+		TemplateRoot:          selected,
+		ClientRepoRoot:        workspace,
+		ProjectPath:           filepath.Join("apps", "orders"),
+		TemplateKind:          "app",
+		ResolveConflict:       MergeDecisions{"B": {Choice: MergeChoiceKeepShared}}.Resolve,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = ApplyGeneratePlan(context.Background(), plan, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "cannot replace workspace directory B") {
+		t.Fatalf("error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "A")); !os.IsNotExist(err) {
+		t.Fatalf("earlier root publication was not rolled back: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "apps", "orders")); !os.IsNotExist(err) {
+		t.Fatalf("destination exists after root publication failure: %v", err)
+	}
+}
+
 func TestBuildGeneratePlanCleansStagesWhenConflictResolutionFails(t *testing.T) {
 	root := t.TempDir()
 	shared := filepath.Join(root, "registry", "templates")
 	selected := filepath.Join(shared, "app")
-	destination := filepath.Join(root, "workspace", "apps", "orders")
+	workspace := filepath.Join(root, "workspace")
+	destination := filepath.Join(workspace, "apps", "orders")
 	writeTestFile(t, filepath.Join(shared, "NOTICE"), "shared\n", 0o644)
-	writeTestFile(t, filepath.Join(selected, "NOTICE"), "selected\n", 0o644)
+	writeTestFile(t, filepath.Join(selected, "project.txt"), "selected\n", 0o644)
+	writeTestFile(t, filepath.Join(workspace, "NOTICE"), "client\n", 0o644)
 	if _, err := BuildGeneratePlan(GenerateParameters{
-		RegistryTemplatesRoot: shared, TemplateRoot: selected, ClientRepoRoot: root, ProjectPath: filepath.Join("workspace", "apps", "orders"),
+		RegistryTemplatesRoot: shared, TemplateRoot: selected, ClientRepoRoot: workspace, ProjectPath: filepath.Join("apps", "orders"),
 		ResolveConflict: func(MergeConflict) (MergeDecision, error) { return MergeDecision{Choice: MergeChoiceAbort}, nil },
 	}); err == nil {
 		t.Fatal("build succeeded, want conflict abort")
@@ -496,152 +573,30 @@ func TestBuildGeneratePlanCleansStagesWhenConflictResolutionFails(t *testing.T) 
 // Dependency and candidate validation
 // -----------------------------------------------------------------------------
 
-func TestValidateGenerationToolChangesRunsEachChangeInDisposableCopy(t *testing.T) {
-	selected := filepath.Join(t.TempDir(), "selected")
-	if err := os.MkdirAll(selected, 0o755); err != nil {
+func TestGeneratePlanCandidateDiscardsSuccessOutputAndStopsAfterFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a shell fixture")
+	}
+	root := t.TempDir()
+	selected := filepath.Join(root, "selected")
+	workspace := filepath.Join(root, "workspace")
+	writeTestFile(t, filepath.Join(selected, "mise.toml"), "[tasks.build]\nrun = 'echo build'\n", 0o644)
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeTestFile(t, filepath.Join(selected, "mise.toml"), "[tools]\nbun = '1.1'\n", 0o644)
-	log := installMiseTestShim(t, false)
-	if err := validateGenerationToolChanges(context.Background(), selected, "lib", []ToolChange{{Name: "bun", From: "1.1", To: "1.2"}}, os.Stderr); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(log)
+	plan, err := BuildGeneratePlan(GenerateParameters{TemplateRoot: selected, ClientRepoRoot: workspace, ProjectPath: "libs/orders", TemplateKind: "lib"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	tasks, err := ContractTasks("lib")
-	if err != nil {
+	defer plan.close()
+	if err := materializeGeneratePlan(plan, plan.stage); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := len(lines), 1+len(tasks); got != want {
-		t.Fatalf("mise calls = %d, want %d:\n%s", got, want, data)
-	}
-	for _, line := range lines {
-		parts := strings.SplitN(line, "|", 3)
-		if len(parts) != 3 || parts[1] != "1" || parts[0] == selected {
-			t.Fatalf("unexpected isolated invocation %q", line)
-		}
-	}
-	original, err := os.ReadFile(filepath.Join(selected, "mise.toml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(original) != "[tools]\nbun = '1.1'\n" {
-		t.Fatalf("selected template mutated:\n%s", original)
-	}
-}
-
-func TestValidateGenerationToolChangesAppliesCompleteStructuredValue(t *testing.T) {
-	selected := filepath.Join(t.TempDir(), "selected")
-	if err := os.MkdirAll(selected, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeTestFile(t, filepath.Join(selected, "mise.toml"), "[tools]\nnode = { version = '20', os = ['linux'] }\n", 0o644)
-	captured := filepath.Join(t.TempDir(), "mise.toml")
-	t.Setenv("MISE_CONFIG_LOG", captured)
-	installMiseTestShim(t, false)
-	change := ToolChange{
-		Name: "node",
-		From: map[string]any{"version": "20", "os": []any{"linux"}},
-		To:   map[string]any{"version": "22", "os": []any{"linux", "macos"}},
-	}
-	if err := validateGenerationToolChanges(context.Background(), selected, "lib", []ToolChange{change}, os.Stderr); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(captured)
-	if err != nil {
-		t.Fatal(err)
-	}
-	config, err := ExtractMiseConfig("captured preflight", data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := config.Tools["node"].Raw; !reflect.DeepEqual(got, change.To) {
-		t.Fatalf("preflight node = %#v, want %#v", got, change.To)
-	}
-}
-
-func TestValidateGenerationToolChangesAttributesFailureAndCleansCopy(t *testing.T) {
-	selected := filepath.Join(t.TempDir(), "selected")
-	if err := os.MkdirAll(selected, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeTestFile(t, filepath.Join(selected, "mise.toml"), "[tools]\nbun = '1.1'\n", 0o644)
-	temp := filepath.Join(t.TempDir(), "preflights")
-	if err := os.MkdirAll(temp, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("TMPDIR", temp)
-	installMiseTestShim(t, true)
-	err := validateGenerationToolChanges(context.Background(), selected, "lib", []ToolChange{{Name: "bun", From: "1.1", To: "1.2"}}, os.Stderr)
-	if err == nil || !strings.Contains(err.Error(), "tool update bun 1.1 -> 1.2 failed") {
-		t.Fatalf("error = %v", err)
-	}
-	entries, readErr := os.ReadDir(temp)
-	if readErr != nil {
-		t.Fatal(readErr)
-	}
-	if len(entries) != 0 {
-		t.Fatalf("preflight copies leaked: %v", entries)
-	}
-}
-
-func TestValidateGeneratedCandidateRunsContractsInDisposableCopy(t *testing.T) {
-	stage := filepath.Join(t.TempDir(), "stage")
-	if err := os.MkdirAll(stage, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeTestFile(t, filepath.Join(stage, "mise.toml"), "[tasks.build]\nrun = 'echo build'\n", 0o644)
-	writeTestFile(t, filepath.Join(stage, "marker.txt"), "unchanged\n", 0o600)
 	temporary := filepath.Join(t.TempDir(), "candidates")
 	if err := os.MkdirAll(temporary, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("TMPDIR", temporary)
-	log := installMiseTestShim(t, false)
-
-	if err := validateGeneratedCandidate(context.Background(), stage, "app", os.Stderr); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(log)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	tasks, err := ContractTasks("app")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := len(lines), 1+len(tasks); got != want {
-		t.Fatalf("mise calls = %d, want %d:\n%s", got, want, data)
-	}
-	for _, line := range lines {
-		parts := strings.SplitN(line, "|", 3)
-		if len(parts) != 3 || parts[1] != "1" || parts[0] == stage || !strings.Contains(parts[0], "premise-candidate-validation-") {
-			t.Fatalf("unexpected candidate invocation %q", line)
-		}
-	}
-	assertDirectoryEmpty(t, temporary)
-	marker, err := os.ReadFile(filepath.Join(stage, "marker.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(marker) != "unchanged\n" {
-		t.Fatalf("stage changed: %q", marker)
-	}
-}
-
-func TestValidateGeneratedCandidateDiscardsSuccessOutputAndStopsAfterFailure(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("test uses a shell fixture")
-	}
-	stage := filepath.Join(t.TempDir(), "stage")
-	if err := os.MkdirAll(stage, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeTestFile(t, filepath.Join(stage, "mise.toml"), "[tasks.build]\nrun = 'echo build'\n", 0o644)
 	bin := filepath.Join(t.TempDir(), "bin")
 	if err := os.MkdirAll(bin, 0o755); err != nil {
 		t.Fatal(err)
@@ -658,8 +613,8 @@ func TestValidateGeneratedCandidateDiscardsSuccessOutputAndStopsAfterFailure(t *
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	var output bytes.Buffer
-	err := validateGeneratedCandidate(context.Background(), stage, "lib", &output)
-	if err == nil || !strings.Contains(err.Error(), "template generated candidate task clean failed") {
+	err = validateGeneratePlanCandidate(context.Background(), plan, &output)
+	if err == nil || !strings.Contains(err.Error(), "template generated candidate project task clean failed") {
 		t.Fatalf("error = %v", err)
 	}
 	if !strings.Contains(output.String(), "Validating generated candidate...\n") ||
@@ -675,34 +630,66 @@ func TestValidateGeneratedCandidateDiscardsSuccessOutputAndStopsAfterFailure(t *
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if got, want := len(lines), 4; got != want {
-		t.Fatalf("mise calls = %d, want %d: %s", got, want, data)
-	}
 	for index, want := range []string{"1|install", "1|run install", "1|run build", "1|run clean"} {
-		if lines[index] != want {
-			t.Fatalf("mise call %d = %q, want %q", index, lines[index], want)
+		if index >= len(lines) || lines[index] != want {
+			t.Fatalf("mise calls = %q, want first failure sequence through %q", data, want)
 		}
 	}
-}
-
-func TestValidateGeneratedCandidateCleansCopyOnFailure(t *testing.T) {
-	stage := filepath.Join(t.TempDir(), "stage")
-	if err := os.MkdirAll(stage, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeTestFile(t, filepath.Join(stage, "mise.toml"), "[tasks.build]\nrun = 'echo build'\n", 0o644)
-	temporary := filepath.Join(t.TempDir(), "candidates")
-	if err := os.MkdirAll(temporary, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("TMPDIR", temporary)
-	installMiseTestShim(t, true)
-
-	err := validateGeneratedCandidate(context.Background(), stage, "lib", os.Stderr)
-	if err == nil || !strings.Contains(err.Error(), "generated candidate validation failed") {
-		t.Fatalf("error = %v", err)
+	if len(lines) != 4 {
+		t.Fatalf("mise calls continued after failure: %q", data)
 	}
 	assertDirectoryEmpty(t, temporary)
+}
+
+func TestWorkspaceCandidateProjectValidationIncludesRootMiseConfig(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a shell fixture")
+	}
+	candidate := filepath.Join(t.TempDir(), "candidate")
+	project := filepath.Join(candidate, "apps", "orders")
+	writeTestFile(t, filepath.Join(candidate, "mise.toml"), "[tools]\nbun = '1.2'\n", 0o644)
+	writeTestFile(t, filepath.Join(project, "mise.toml"), "[tasks.build]\nrun = 'true'\n", 0o644)
+	bin := filepath.Join(t.TempDir(), "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(t.TempDir(), "mise.log")
+	script := "#!/bin/sh\nprintf '%s|%s|%s\\n' \"$PWD\" \"$MISE_CEILING_PATHS\" \"$*\" >> \"$MISE_LOG\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "mise"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MISE_LOG", log)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	if err := validateWorkspaceCandidateContracts(context.Background(), candidate, "apps/orders", "app", "candidate", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("mise calls = %q", data)
+	}
+	resolvedCandidate, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedProject, err := filepath.EvalSymlinks(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootFields := strings.SplitN(lines[0], "|", 3)
+	if rootFields[0] != resolvedCandidate || rootFields[1] != filepath.Dir(candidate) {
+		t.Fatalf("root validation = %q", lines[0])
+	}
+	for _, line := range lines[1:] {
+		fields := strings.SplitN(line, "|", 3)
+		if fields[0] != resolvedProject || fields[1] != candidate {
+			t.Fatalf("project validation does not include workspace root: %q", line)
+		}
+	}
 }
 
 // -----------------------------------------------------------------------------

@@ -65,7 +65,7 @@ func DetectReleaseProfile(root string) (ReleaseProfile, error) {
 	if cargoWorkspace {
 		return ReleaseProfileCargo, nil
 	}
-	return "", fmt.Errorf("unsupported release repository: expected go.mod or templates/Cargo.toml at %s", root)
+	return "", fmt.Errorf("unsupported release repository: expected go.mod or Cargo.toml at %s", root)
 }
 
 func publishReleaseCandidate(ctx context.Context, root string, kind ProjectKind, stdout, stderr io.Writer) error {
@@ -368,7 +368,6 @@ release:
 func runGoReleaser(ctx context.Context, root string, profile ReleaseProfile, snapshot bool, stdout, stderr io.Writer) error {
 	workingDirectory := root
 	if profile == ReleaseProfileCargo {
-		workingDirectory = filepath.Join(root, "templates")
 		if err := installReleaseTools(ctx, workingDirectory, stdout, stderr); err != nil {
 			return fmt.Errorf("prepare Cargo release toolchain: %w", err)
 		}

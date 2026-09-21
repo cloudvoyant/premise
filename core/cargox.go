@@ -42,7 +42,7 @@ type cargoPublication struct {
 
 // isCargoRegistry reports whether root follows Premise's Cargo registry convention.
 func isCargoRegistry(root string) (bool, error) {
-	path := filepath.Join(root, "templates", "Cargo.toml")
+	path := filepath.Join(root, "Cargo.toml")
 	info, err := os.Stat(path)
 	if err == nil {
 		return info.Mode().IsRegular(), nil
@@ -89,7 +89,7 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 		}
 		backups = append(backups, backup)
 	}
-	lockPath := filepath.Join(root, "templates", "Cargo.lock")
+	lockPath := filepath.Join(root, "Cargo.lock")
 	lockBackup, err := backupCargoFile(lockPath)
 	if err != nil {
 		return err
@@ -105,8 +105,7 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 		}
 	}
 	lockRunner := miseRunner{Stdout: stdout, Stderr: stderr}
-	templatesRoot := filepath.Join(root, "templates")
-	if err := lockRunner.run(ctx, templatesRoot, nil, "exec", "--", "cargo", "generate-lockfile"); err != nil {
+	if err := lockRunner.run(ctx, root, nil, "exec", "--", "cargo", "generate-lockfile"); err != nil {
 		return fmt.Errorf("regenerate Cargo lockfile: %w", err)
 	}
 
