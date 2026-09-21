@@ -8,7 +8,7 @@ Technical Story: [PR #10](https://github.com/cloudvoyant/premise/pull/10)
 
 ## Context and Problem Statement
 
-Template registries contain client-root files directly under `templates/` and selected-project files under `templates/<name>/`. Generation must merge the direct files into the client workspace root and copy the selected tree to `apps/<name>` or `libs/<name>` without conflating those two target locations.
+Template registries declare repository-root files under `template_registry.workspace_files` and give each selected project an explicit repository-relative path under `template_registry.templates`. Generation must merge only the declared direct root files into the client workspace and copy the selected `templates/<name>` tree to `apps/<name>` or `libs/<name>` without conflating those destinations.
 
 ## Decision Drivers
 
@@ -30,25 +30,27 @@ Template registries contain client-root files directly under `templates/` and se
 
 Chosen option: "Focused three-tier root merge," because it provides useful semantics for the formats the registry contract understands, exposes genuinely unresolved choices to the user, and avoids pretending that arbitrary configuration files have safe universal merge rules.
 
-Generation first substitutes the direct registry files and selected template independently. It compares direct files only with matching paths in the client workspace root. The selected template is staged only at its final project path and never participates in root-file conflicts. For typed root `mise.toml` data, Mise-specific rules apply: compatible tool version selectors within one major version choose the greater version, incompatible major versions fail, and other scalar conflicts require an explicit choice. Environment conflicts may keep the registry value, use the client value, rename the client key with client references updated, or abort.
+Generation first expands the declared basename patterns against direct regular files at the registry repository root, then substitutes those files and the selected template independently. It compares declared files only with matching paths in the client workspace root. The selected template is staged only at its final project path and never participates in root-file conflicts. For typed root `mise.toml` data, Mise-specific rules apply: compatible tool version selectors within one major version choose the greater version, incompatible major versions fail, and other scalar conflicts require an explicit choice. Environment conflicts may keep the registry value, use the client value, rename the client key with client references updated, or abort.
 
 Root contract task collisions retain the existing client task metadata and run registry commands first followed by client commands. Root contract tasks are expected to be argument-free. A non-contract collision keeps the registry task under its original name, namespaces the client task as `<registry-prefix>:<task>`, and reports that choice to the user.
 
 For `.gitignore` and `.gitattributes`, registry lines are emitted first and existing client lines second, with only adjacent duplicate lines removed. For ordinary differing root files, the complete registry file is kept, the complete client file is retained, or generation is aborted; no partial file merge is attempted.
 
-Before publication, changed client-root tool values are preflighted in disposable workspace candidates. The complete candidate contains the planned workspace-root files and the selected project at its final relative path. Generation validates this layout before publishing root changes and renaming the project destination. Generation is create-only and does not provide existing-project migration.
+Patterns cannot select nested paths or directories, and every pattern must match at least one eligible file. `premise.yaml` is always excluded. Before publication, changed client-root tool values are preflighted in disposable workspace candidates. The complete candidate contains the planned workspace-root files and the selected project at its final relative path. Generation validates this layout before publishing root changes and renaming the project destination. Generation is create-only and does not provide existing-project migration.
 
 ### Positive Consequences
 
 - Typed `mise.toml` conflicts retain relevant Mise semantics instead of being treated as opaque text.
 - Ordered Git policy remains meaningful because registry rules precede existing client rules and adjacent duplicates are removed without reordering other lines.
 - Complete-file decisions make ordinary client-root collisions explicit, while client task metadata and registry-then-client commands preserve root contract behavior.
+- Explicit manifest patterns prevent unrelated registry files from leaking into client workspaces.
 - Selected-template files remain isolated in their project destination and cannot collide with workspace-root files.
 - Dependency preflight and complete candidate validation happen before destination publication, reducing the chance of leaving a partial generated project.
 - The policy is narrow enough to add focused tests and new format-specific rules deliberately.
 
 ### Negative Consequences
 
+- Registry authors must maintain an explicit workspace-file list, and stale or unmatched patterns stop generation.
 - The implementation contains format-specific code for `mise.toml`, `.gitignore`, and `.gitattributes` rather than one uniform merger.
 - Unresolved ordinary client-root differences require interactive decisions, and an aborted decision prevents generation.
 - Generation is create-only, so there is no update or migration support for projects generated previously.

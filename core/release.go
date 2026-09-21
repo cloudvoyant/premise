@@ -306,8 +306,9 @@ archives:
       {{- if eq .Os "darwin" }}macos{{- else }}{{ .Os }}{{- end }}
 `)
 	case ReleaseProfileCargo:
-		applications := make([]string, 0, len(manifest.Templates))
-		for _, template := range manifest.Templates {
+		templates := manifest.DeclaredTemplates()
+		applications := make([]string, 0, len(templates))
+		for _, template := range templates {
 			if template.Kind == "app" {
 				applications = append(applications, template.Name)
 			}

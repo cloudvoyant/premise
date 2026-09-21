@@ -57,13 +57,13 @@ func TestGenerateMergesSharedFilesWithSelectedTemplate(t *testing.T) {
 	template := templateFixture("premise-rust-lib", "lib")
 	template.Substitutions = map[string]string{"shared-placeholder": "name"}
 	cargoRegistry := writeRegistryFixture(t, template)
-	templatesRoot := filepath.Join(cargoRegistry, "templates")
-	if err := os.WriteFile(filepath.Join(templatesRoot, ".shared-config"), []byte("name=shared-placeholder\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(cargoRegistry, ".shared-config"), []byte("name=shared-placeholder\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(templatesRoot, "mise.toml"), []byte("[tasks.build]\nrun = 'echo shared'\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(cargoRegistry, "mise.toml"), []byte("[tasks.build]\nrun = 'echo shared'\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	setRegistryWorkspaceFiles(t, cargoRegistry, ".shared-config", "mise.toml")
 	defer overrideResolveRepository(map[string]string{
 		"cloudvoyant/premise-cargo": cargoRegistry,
 	})()
@@ -113,9 +113,9 @@ func TestGenerateMergesSharedFilesWithSelectedTemplate(t *testing.T) {
 func TestGenerateToolPreflightFailureLeavesDestinationAndManifestUntouched(t *testing.T) {
 	installScopedMiseTestShim(t, "premise-tool-preflight-")
 	registry := writeRegistryFixture(t, templateFixture("app", "app"))
-	shared := filepath.Join(registry, "templates")
-	selected := filepath.Join(shared, "app")
-	writeTestFile(t, filepath.Join(shared, "mise.toml"), "[tools]\nbun = '1.2'\n", 0o644)
+	selected := filepath.Join(registry, "templates", "app")
+	writeTestFile(t, filepath.Join(registry, "mise.toml"), "[tools]\nbun = '1.2'\n", 0o644)
+	setRegistryWorkspaceFiles(t, registry, "mise.toml")
 	writeTestFile(t, filepath.Join(selected, "mise.toml"), "[tasks.install]\nrun = 'true'\n", 0o644)
 
 	workspace := filepath.Join(t.TempDir(), "workspace")
@@ -168,7 +168,8 @@ func TestGenerateCandidateFailureLeavesDestinationAndManifestUntouched(t *testin
 func TestGenerateProjectRegistrationFailureRemovesCommittedDestination(t *testing.T) {
 	installMiseTestShim(t, false)
 	registry := writeRegistryFixture(t, templateFixture("app", "app"))
-	writeTestFile(t, filepath.Join(registry, "templates", ".shared-config"), "shared\n", 0o640)
+	writeTestFile(t, filepath.Join(registry, ".shared-config"), "shared\n", 0o640)
+	setRegistryWorkspaceFiles(t, registry, ".shared-config")
 	workspace := filepath.Join(t.TempDir(), "workspace")
 	manifestPath, err := InitializeWorkspace(workspace, "monorepo_root = true\n")
 	if err != nil {
@@ -212,8 +213,8 @@ func TestGenerateProjectRegistrationFailureRemovesCommittedDestination(t *testin
 
 func TestBuildGeneratePlanSortsAndResolvesFocusedConflicts(t *testing.T) {
 	root := t.TempDir()
-	shared := filepath.Join(root, "registry", "templates")
-	selected := filepath.Join(shared, "app")
+	registry := filepath.Join(root, "registry")
+	selected := filepath.Join(registry, "templates", "app")
 	workspace := filepath.Join(root, "workspace")
 	if err := os.MkdirAll(filepath.Join(selected, "empty"), 0o755); err != nil {
 		t.Fatal(err)
@@ -221,16 +222,16 @@ func TestBuildGeneratePlanSortsAndResolvesFocusedConflicts(t *testing.T) {
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeTestFile(t, filepath.Join(shared, ".gitignore"), "shared-placeholder\n", 0o644)
-	writeTestFile(t, filepath.Join(shared, "NOTICE"), "shared\n", 0o640)
+	writeTestFile(t, filepath.Join(registry, ".gitignore"), "shared-placeholder\n", 0o644)
+	writeTestFile(t, filepath.Join(registry, "NOTICE"), "shared\n", 0o640)
 	writeTestFile(t, filepath.Join(workspace, ".gitignore"), "!shared-placeholder\n", 0o644)
 	writeTestFile(t, filepath.Join(workspace, "NOTICE"), "client\n", 0o600)
 	writeTestFile(t, filepath.Join(selected, "main.txt"), "hello shared-placeholder\n", 0o644)
-	writeTestFile(t, filepath.Join(shared, "sibling", "ignored.txt"), "ignored\n", 0o644)
+	writeTestFile(t, filepath.Join(registry, "templates", "sibling", "ignored.txt"), "ignored\n", 0o644)
 	resolver := MergeDecisions{"NOTICE": {Choice: MergeChoiceKeepShared}}
 	destination := filepath.Join(workspace, "apps", "orders")
 
-	plan, err := BuildGeneratePlan(GenerateParameters{RegistryTemplatesRoot: shared, TemplateRoot: selected, ClientRepoRoot: workspace, ProjectPath: "apps/orders", Substitutions: map[string]string{"shared-placeholder": "orders"}, TemplateKind: "app", TemplateIdentity: "app", ResolveConflict: resolver.Resolve})
+	plan, err := BuildGeneratePlan(GenerateParameters{RegistryRoot: registry, RegistryWorkspaceFiles: []string{".gitignore", "NOTICE"}, TemplateRoot: selected, ClientRepoRoot: workspace, ProjectPath: "apps/orders", Substitutions: map[string]string{"shared-placeholder": "orders"}, TemplateKind: "app", TemplateIdentity: "app", ResolveConflict: resolver.Resolve})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,19 +278,90 @@ func TestBuildGeneratePlanSortsAndResolvesFocusedConflicts(t *testing.T) {
 	}
 }
 
+func TestBuildGeneratePlanExpandsOnlyDeclaredRegistryRootFiles(t *testing.T) {
+	root := t.TempDir()
+	registry := filepath.Join(root, "registry")
+	selected := filepath.Join(registry, "templates", "app")
+	workspace := filepath.Join(root, "workspace")
+	writeTestFile(t, filepath.Join(registry, "mise.toml"), "[tools]\nbun = '1.2'\n", 0o644)
+	writeTestFile(t, filepath.Join(registry, "package.json"), "{}\n", 0o644)
+	writeTestFile(t, filepath.Join(registry, ManifestFilename), "registry metadata\n", 0o644)
+	writeTestFile(t, filepath.Join(registry, "nested", "ignored.toml"), "ignored\n", 0o644)
+	writeTestFile(t, filepath.Join(selected, "main.txt"), "selected\n", 0o644)
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := BuildGeneratePlan(GenerateParameters{
+		RegistryRoot:           registry,
+		RegistryWorkspaceFiles: []string{"*.toml", "package.json"},
+		TemplateRoot:           selected,
+		ClientRepoRoot:         workspace,
+		ProjectPath:            "apps/orders",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer plan.close()
+	paths := make([]string, len(plan.Entries))
+	for index, entry := range plan.Entries {
+		paths[index] = entry.Path
+	}
+	if want := []string{"mise.toml", "package.json"}; !reflect.DeepEqual(paths, want) {
+		t.Fatalf("workspace files = %#v, want %#v", paths, want)
+	}
+
+	_, err = BuildGeneratePlan(GenerateParameters{
+		RegistryRoot:           registry,
+		RegistryWorkspaceFiles: []string{"*.yaml"},
+		TemplateRoot:           selected,
+		ClientRepoRoot:         workspace,
+		ProjectPath:            "apps/other",
+	})
+	if err == nil || !strings.Contains(err.Error(), "matched no direct regular root files") {
+		t.Fatalf("premise.yaml exclusion error = %v", err)
+	}
+}
+
+func TestBuildGeneratePlanRejectsDeclaredWorkspaceSymlink(t *testing.T) {
+	root := t.TempDir()
+	registry := filepath.Join(root, "registry")
+	selected := filepath.Join(registry, "templates", "app")
+	workspace := filepath.Join(root, "workspace")
+	writeTestFile(t, filepath.Join(registry, "actual.toml"), "[tools]\n", 0o644)
+	writeTestFile(t, filepath.Join(selected, "main.txt"), "selected\n", 0o644)
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("actual.toml", filepath.Join(registry, "linked.toml")); err != nil {
+		t.Skipf("create symlink: %v", err)
+	}
+
+	_, err := BuildGeneratePlan(GenerateParameters{
+		RegistryRoot:           registry,
+		RegistryWorkspaceFiles: []string{"linked.toml"},
+		TemplateRoot:           selected,
+		ClientRepoRoot:         workspace,
+		ProjectPath:            "apps/orders",
+	})
+	if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("workspace symlink error = %v", err)
+	}
+}
+
 func TestBuildGeneratePlanKeepsSharedRootSeparateFromSelectedTree(t *testing.T) {
 	root := t.TempDir()
-	shared := filepath.Join(root, "registry", "templates")
-	selected := filepath.Join(shared, "app")
+	registry := filepath.Join(root, "registry")
+	selected := filepath.Join(registry, "templates", "app")
 	workspace := filepath.Join(root, "workspace")
-	writeTestFile(t, filepath.Join(shared, "config"), "shared\n", 0o644)
+	writeTestFile(t, filepath.Join(registry, "config"), "shared\n", 0o644)
 	writeTestFile(t, filepath.Join(selected, "config", "nested.txt"), "selected\n", 0o644)
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	destination := filepath.Join(workspace, "apps", "orders")
 
-	plan, err := BuildGeneratePlan(GenerateParameters{RegistryTemplatesRoot: shared, TemplateRoot: selected, ClientRepoRoot: workspace, ProjectPath: "apps/orders", TemplateIdentity: "selected"})
+	plan, err := BuildGeneratePlan(GenerateParameters{RegistryRoot: registry, RegistryWorkspaceFiles: []string{"config"}, TemplateRoot: selected, ClientRepoRoot: workspace, ProjectPath: "apps/orders", TemplateIdentity: "selected"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,15 +396,15 @@ func TestBuildGeneratePlanKeepsSharedRootSeparateFromSelectedTree(t *testing.T) 
 
 func TestBuildGeneratePlanDoesNotCoalesceEqualBytesWithDifferentModes(t *testing.T) {
 	root := t.TempDir()
-	shared := filepath.Join(root, "shared")
+	registry := filepath.Join(root, "registry")
 	selected := filepath.Join(root, "selected")
-	if err := os.MkdirAll(shared, 0o755); err != nil {
+	if err := os.MkdirAll(registry, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(selected, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeTestFile(t, filepath.Join(shared, "same"), "same\n", 0o600)
+	writeTestFile(t, filepath.Join(registry, "same"), "same\n", 0o600)
 	writeTestFile(t, filepath.Join(root, "same"), "same\n", 0o644)
 	writeTestFile(t, filepath.Join(selected, "project.txt"), "selected\n", 0o644)
 	decisions := MergeDecisions{"same": {Choice: MergeChoiceUseSelected}}
@@ -341,7 +413,7 @@ func TestBuildGeneratePlanDoesNotCoalesceEqualBytesWithDifferentModes(t *testing
 		calls = append(calls, conflict)
 		return decisions.Resolve(conflict)
 	}
-	plan, err := BuildGeneratePlan(GenerateParameters{RegistryTemplatesRoot: shared, TemplateRoot: selected, ClientRepoRoot: root, ProjectPath: "output", TemplateIdentity: "selected", ResolveConflict: resolver})
+	plan, err := BuildGeneratePlan(GenerateParameters{RegistryRoot: registry, RegistryWorkspaceFiles: []string{"same"}, TemplateRoot: selected, ClientRepoRoot: root, ProjectPath: "output", TemplateIdentity: "selected", ResolveConflict: resolver})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -513,22 +585,23 @@ func TestApplyGeneratePlanCreatesDestinationAndCleansStages(t *testing.T) {
 func TestApplyGeneratePlanRestoresEarlierRootFilesWhenPublicationFails(t *testing.T) {
 	installMiseTestShim(t, false)
 	root := t.TempDir()
-	shared := filepath.Join(root, "registry", "templates")
-	selected := filepath.Join(shared, "app")
+	registry := filepath.Join(root, "registry")
+	selected := filepath.Join(registry, "templates", "app")
 	workspace := filepath.Join(root, "workspace")
-	writeTestFile(t, filepath.Join(shared, "A"), "published first\n", 0o644)
-	writeTestFile(t, filepath.Join(shared, "B"), "cannot replace directory\n", 0o644)
+	writeTestFile(t, filepath.Join(registry, "A"), "published first\n", 0o644)
+	writeTestFile(t, filepath.Join(registry, "B"), "cannot replace directory\n", 0o644)
 	writeTestFile(t, filepath.Join(selected, "main.txt"), "orders\n", 0o644)
 	if err := os.MkdirAll(filepath.Join(workspace, "B"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	plan, err := BuildGeneratePlan(GenerateParameters{
-		RegistryTemplatesRoot: shared,
-		TemplateRoot:          selected,
-		ClientRepoRoot:        workspace,
-		ProjectPath:           filepath.Join("apps", "orders"),
-		TemplateKind:          "app",
-		ResolveConflict:       MergeDecisions{"B": {Choice: MergeChoiceKeepShared}}.Resolve,
+		RegistryRoot:           registry,
+		RegistryWorkspaceFiles: []string{"A", "B"},
+		TemplateRoot:           selected,
+		ClientRepoRoot:         workspace,
+		ProjectPath:            filepath.Join("apps", "orders"),
+		TemplateKind:           "app",
+		ResolveConflict:        MergeDecisions{"B": {Choice: MergeChoiceKeepShared}}.Resolve,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -547,15 +620,15 @@ func TestApplyGeneratePlanRestoresEarlierRootFilesWhenPublicationFails(t *testin
 
 func TestBuildGeneratePlanCleansStagesWhenConflictResolutionFails(t *testing.T) {
 	root := t.TempDir()
-	shared := filepath.Join(root, "registry", "templates")
-	selected := filepath.Join(shared, "app")
+	registry := filepath.Join(root, "registry")
+	selected := filepath.Join(registry, "templates", "app")
 	workspace := filepath.Join(root, "workspace")
 	destination := filepath.Join(workspace, "apps", "orders")
-	writeTestFile(t, filepath.Join(shared, "NOTICE"), "shared\n", 0o644)
+	writeTestFile(t, filepath.Join(registry, "NOTICE"), "shared\n", 0o644)
 	writeTestFile(t, filepath.Join(selected, "project.txt"), "selected\n", 0o644)
 	writeTestFile(t, filepath.Join(workspace, "NOTICE"), "client\n", 0o644)
 	if _, err := BuildGeneratePlan(GenerateParameters{
-		RegistryTemplatesRoot: shared, TemplateRoot: selected, ClientRepoRoot: workspace, ProjectPath: filepath.Join("apps", "orders"),
+		RegistryRoot: registry, RegistryWorkspaceFiles: []string{"NOTICE"}, TemplateRoot: selected, ClientRepoRoot: workspace, ProjectPath: filepath.Join("apps", "orders"),
 		ResolveConflict: func(MergeConflict) (MergeDecision, error) { return MergeDecision{Choice: MergeChoiceAbort}, nil },
 	}); err == nil {
 		t.Fatal("build succeeded, want conflict abort")
@@ -755,6 +828,22 @@ func assertGenerationFailureCleanup(t *testing.T, workspace, relativeDestination
 				t.Fatalf("temporary directory leaked at %s", filepath.Join(root, entry.Name()))
 			}
 		}
+	}
+}
+
+func setRegistryWorkspaceFiles(t *testing.T, root string, patterns ...string) {
+	t.Helper()
+	path := filepath.Join(root, ManifestFilename)
+	manifest, err := LoadManifest(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.TemplateRegistry == nil {
+		t.Fatal("fixture does not configure template_registry")
+	}
+	manifest.TemplateRegistry.WorkspaceFiles = append([]string(nil), patterns...)
+	if err := SaveManifest(path, manifest); err != nil {
+		t.Fatal(err)
 	}
 }
 

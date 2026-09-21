@@ -68,7 +68,7 @@ The action only sets up Mise, installs Premise, and calls `pm ci flow`. Set `ins
     install-premise: build
 ```
 
-Premise supports `on-commit`, `on-merge`, and `on-release` flows. A root Mise task with the same name overrides the convention-based fallback lifecycle. The flow command still owns guarded RC or stable publication after that lifecycle. Without an override, Premise detects either a monorepo or a template registry and runs the matching lifecycle. A root cannot be both kinds.
+Premise supports `on-commit`, `on-merge`, and `on-release` flows. A root Mise task with the same name overrides the convention-based fallback lifecycle. The flow command still owns guarded RC or stable publication after that lifecycle. Without an override, Premise uses `workspace.kind` to select the monorepo or template-registry lifecycle. A root can contain both generated projects and template declarations; the kind controls lifecycle behavior rather than content.
 
 ## Adding Dependencies
 

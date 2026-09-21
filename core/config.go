@@ -15,7 +15,7 @@ import (
 
 const (
 	ManifestFilename = "premise.yaml"
-	SchemaVersion    = "0.1"
+	SchemaVersion    = "0.2"
 )
 
 var (
@@ -25,8 +25,13 @@ var (
 
 // Config is the validated in-memory form of premise.yaml.
 type Config struct {
-	Workspace Workspace  `yaml:"workspace"`
-	Templates []Template `yaml:"templates,omitempty"`
+	Workspace        Workspace         `yaml:"workspace"`
+	TemplateRegistry *TemplateRegistry `yaml:"template_registry,omitempty"`
+}
+
+type TemplateRegistry struct {
+	WorkspaceFiles []string   `yaml:"workspace_files"`
+	Templates      []Template `yaml:"templates"`
 }
 
 type Workspace struct {
@@ -56,6 +61,7 @@ type Project struct {
 type Template struct {
 	Name          string            `yaml:"name"`
 	Kind          string            `yaml:"kind"`
+	Path          string            `yaml:"path"`
 	Version       string            `yaml:"version,omitempty"`
 	Questions     []Question        `yaml:"questions"`
 	Substitutions map[string]string `yaml:"substitutions,omitempty"`
@@ -82,7 +88,6 @@ func NewManifest(name string) Config {
 			},
 			Projects: []Project{},
 		},
-		Templates: []Template{},
 	}
 }
 
@@ -112,8 +117,8 @@ func LoadManifest(path string) (Config, error) {
 	if manifest.Workspace.Projects == nil {
 		manifest.Workspace.Projects = []Project{}
 	}
-	if manifest.Templates == nil {
-		manifest.Templates = []Template{}
+	if manifest.TemplateRegistry != nil && manifest.TemplateRegistry.Templates == nil {
+		manifest.TemplateRegistry.Templates = []Template{}
 	}
 	if err := manifest.Validate(); err != nil {
 		return Config{}, err
@@ -171,13 +176,6 @@ func InitializeTemplateRegistry(root string) (string, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("inspect manifest: %w", err)
 	}
-	monorepo, err := hasMonorepoRoot(root)
-	if err != nil {
-		return "", fmt.Errorf("detect project kind: %w", err)
-	}
-	if monorepo {
-		return "", errors.New("cannot initialize a template registry from a monorepo root")
-	}
 	name := filepath.Base(filepath.Clean(root))
 	if err := ValidateProjectName(name); err != nil {
 		return "", fmt.Errorf("registry directory name: %w", err)
@@ -187,6 +185,7 @@ func InitializeTemplateRegistry(root string) (string, error) {
 	}
 	manifest := NewManifest(name)
 	manifest.Workspace.Kind = ProjectKindTemplateRegistry
+	manifest.TemplateRegistry = &TemplateRegistry{WorkspaceFiles: []string{}, Templates: []Template{}}
 	if err := SaveManifest(manifestPath, manifest); err != nil {
 		return "", err
 	}
@@ -303,40 +302,61 @@ func (manifest Config) Validate() error {
 		return fmt.Errorf("workspace.schema-version must be %q", SchemaVersion)
 	}
 	switch manifest.Workspace.Kind {
-	case "":
-		// Older manifests are classified from their conventions.
-	case ProjectKindMonorepo:
-		if len(manifest.Templates) > 0 {
-			return errors.New("monorepo manifests cannot declare registry templates")
-		}
+	case "", ProjectKindMonorepo:
 	case ProjectKindTemplateRegistry:
-		if len(manifest.Workspace.Projects) > 0 {
-			return errors.New("template registry manifests cannot declare generated projects")
+		if manifest.TemplateRegistry == nil {
+			return errors.New("template-registry workspace requires template_registry configuration")
 		}
 	default:
 		return fmt.Errorf("workspace.kind must be %q or %q", ProjectKindMonorepo, ProjectKindTemplateRegistry)
 	}
 
+	var templates []Template
+	if manifest.TemplateRegistry != nil {
+		if manifest.TemplateRegistry.WorkspaceFiles == nil {
+			return errors.New("template_registry.workspace_files is required; use [] when no workspace files are shared")
+		}
+		seenPatterns := make(map[string]struct{}, len(manifest.TemplateRegistry.WorkspaceFiles))
+		for index, pattern := range manifest.TemplateRegistry.WorkspaceFiles {
+			if err := validateWorkspaceFilePattern(pattern); err != nil {
+				return fmt.Errorf("template_registry.workspace_files[%d]: %w", index, err)
+			}
+			if _, duplicate := seenPatterns[pattern]; duplicate {
+				return fmt.Errorf("template_registry.workspace_files contains duplicate pattern %q", pattern)
+			}
+			seenPatterns[pattern] = struct{}{}
+		}
+		templates = manifest.TemplateRegistry.Templates
+	}
+
 	templateNames := map[string]struct{}{}
-	for index, template := range manifest.Templates {
+	templatePaths := map[string]struct{}{}
+	for index, template := range templates {
 		if err := ValidateTemplateName(template.Name); err != nil {
-			return fmt.Errorf("templates[%d].name: %w", index, err)
+			return fmt.Errorf("template_registry.templates[%d].name: %w", index, err)
 		}
 		if _, exists := templateNames[template.Name]; exists {
 			return fmt.Errorf("duplicate template name %q", template.Name)
 		}
 		if _, err := KindDirectory(template.Kind); err != nil {
-			return fmt.Errorf("templates[%d]: %w", index, err)
+			return fmt.Errorf("template_registry.templates[%d]: %w", index, err)
+		}
+		if err := validateTemplatePath(template.Path); err != nil {
+			return fmt.Errorf("template_registry.templates[%d].path: %w", index, err)
+		}
+		if _, exists := templatePaths[template.Path]; exists {
+			return fmt.Errorf("duplicate template path %q", template.Path)
 		}
 		templateNames[template.Name] = struct{}{}
+		templatePaths[template.Path] = struct{}{}
 
 		answers := map[string]struct{}{}
 		for questionIndex, question := range template.Questions {
 			if strings.TrimSpace(question.Prompt) == "" {
-				return fmt.Errorf("templates[%d].questions[%d].prompt is required", index, questionIndex)
+				return fmt.Errorf("template_registry.templates[%d].questions[%d].prompt is required", index, questionIndex)
 			}
 			if strings.TrimSpace(question.Populate) == "" {
-				return fmt.Errorf("templates[%d].questions[%d].populate is required", index, questionIndex)
+				return fmt.Errorf("template_registry.templates[%d].questions[%d].populate is required", index, questionIndex)
 			}
 			if _, exists := answers[question.Populate]; exists {
 				return fmt.Errorf("template %q has duplicate answer %q", template.Name, question.Populate)
@@ -392,8 +412,15 @@ func (manifest Config) Validate() error {
 	return nil
 }
 
+func (manifest Config) DeclaredTemplates() []Template {
+	if manifest.TemplateRegistry == nil {
+		return nil
+	}
+	return manifest.TemplateRegistry.Templates
+}
+
 func (manifest Config) FindTemplate(name string) (Template, error) {
-	for _, template := range manifest.Templates {
+	for _, template := range manifest.DeclaredTemplates() {
 		if template.Name == name {
 			return template, nil
 		}
@@ -415,6 +442,36 @@ func (manifest *Config) AddProject(project Project) error {
 		return manifest.Workspace.Projects[i].Path < manifest.Workspace.Projects[j].Path
 	})
 	return manifest.Validate()
+}
+
+func validateTemplatePath(templatePath string) error {
+	if strings.TrimSpace(templatePath) == "" {
+		return errors.New("path is required")
+	}
+	if filepath.IsAbs(templatePath) || strings.Contains(templatePath, `\`) {
+		return errors.New("path must be relative to the registry root and use forward slashes")
+	}
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(templatePath)))
+	if clean != templatePath || clean == "." || escapesRoot(clean) {
+		return errors.New("path must be a normalized directory below the registry root")
+	}
+	return nil
+}
+
+func validateWorkspaceFilePattern(pattern string) error {
+	if strings.TrimSpace(pattern) == "" {
+		return errors.New("pattern is required")
+	}
+	if filepath.IsAbs(pattern) || strings.ContainsAny(pattern, `/\\`) || pattern == "." || pattern == ".." {
+		return errors.New("pattern must match direct files in the registry root")
+	}
+	if _, err := filepath.Match(pattern, "workspace-file"); err != nil {
+		return fmt.Errorf("invalid glob %q: %w", pattern, err)
+	}
+	if pattern == ManifestFilename {
+		return fmt.Errorf("%s is registry metadata and cannot be copied", ManifestFilename)
+	}
+	return nil
 }
 
 func ValidateProjectName(name string) error {

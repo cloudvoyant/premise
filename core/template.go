@@ -38,27 +38,35 @@ func ResolveTemplateSource(ctx context.Context, workspaceRoot, selector string) 
 	return root, selection, nil
 }
 
-func TemplateDirectory(sourceRoot, name string) (string, error) {
-	if err := ValidateTemplateName(name); err != nil {
-		return "", fmt.Errorf("validate template directory name: %w", err)
+func TemplateDirectory(sourceRoot, templatePath string) (string, error) {
+	if err := validateTemplatePath(templatePath); err != nil {
+		return "", fmt.Errorf("validate template path: %w", err)
 	}
 	root, err := filepath.Abs(sourceRoot)
 	if err != nil {
 		return "", fmt.Errorf("resolve template root: %w", err)
 	}
-	path := filepath.Join(root, "templates", name)
-	relative, err := filepath.Rel(root, path)
-	if err != nil || escapesRoot(relative) {
-		return "", fmt.Errorf("template path escapes source root")
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve template root symlinks: %w", err)
 	}
-	info, err := os.Stat(path)
+	declaredPath := filepath.Join(root, filepath.FromSlash(templatePath))
+	info, err := os.Stat(declaredPath)
 	if err != nil {
 		return "", fmt.Errorf("inspect template directory: %w", err)
 	}
 	if !info.IsDir() {
-		return "", fmt.Errorf("template path %s is not a directory", path)
+		return "", fmt.Errorf("template path %s is not a directory", declaredPath)
 	}
-	return path, nil
+	resolvedPath, err := filepath.EvalSymlinks(declaredPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve template directory symlinks: %w", err)
+	}
+	relative, err := filepath.Rel(resolvedRoot, resolvedPath)
+	if err != nil || escapesRoot(relative) {
+		return "", errors.New("template path escapes source root")
+	}
+	return declaredPath, nil
 }
 
 func RenderTemplateMise(kind string) (string, error) {
@@ -78,13 +86,6 @@ func RenderTemplateMise(kind string) (string, error) {
 }
 
 func InitializeTemplate(root, kind string) (string, error) {
-	monorepo, err := hasMonorepoRoot(root)
-	if err != nil {
-		return "", fmt.Errorf("detect project kind: %w", err)
-	}
-	if monorepo {
-		return "", errors.New("cannot add registry templates to a monorepo project")
-	}
 	manifestPath := filepath.Join(root, ManifestFilename)
 	manifest, err := LoadManifest(manifestPath)
 	if err != nil {
@@ -120,9 +121,13 @@ func InitializeTemplate(root, kind string) (string, error) {
 	if err := os.WriteFile(filepath.Join(templatePath, "mise.toml"), []byte(mise), 0o644); err != nil {
 		return "", fmt.Errorf("write template mise.toml: %w", err)
 	}
-	manifest.Templates = append(manifest.Templates, Template{
+	if manifest.TemplateRegistry == nil {
+		manifest.TemplateRegistry = &TemplateRegistry{WorkspaceFiles: []string{}, Templates: []Template{}}
+	}
+	manifest.TemplateRegistry.Templates = append(manifest.TemplateRegistry.Templates, Template{
 		Name:    kind,
 		Kind:    kind,
+		Path:    filepath.ToSlash(filepath.Join("templates", kind)),
 		Version: "0.1.0",
 		Questions: []Question{{
 			Prompt:   kindLabel(kind) + " name:",
@@ -139,12 +144,13 @@ func InitializeTemplate(root, kind string) (string, error) {
 }
 
 func TestTemplateContracts(ctx context.Context, root string, manifest Config, stdout, stderr io.Writer) error {
-	if len(manifest.Templates) == 0 {
+	templates := manifest.DeclaredTemplates()
+	if len(templates) == 0 {
 		return errors.New("manifest declares no templates")
 	}
 	var failures []error
-	for _, template := range manifest.Templates {
-		directory, err := TemplateDirectory(root, template.Name)
+	for _, template := range templates {
+		directory, err := TemplateDirectory(root, template.Path)
 		if err != nil {
 			failures = append(failures, fmt.Errorf("template %s: %w", template.Name, err))
 			continue

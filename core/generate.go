@@ -26,20 +26,21 @@ type GenerateOptions struct {
 
 // GenerateParameters contains roots and choices resolved for one generated project.
 type GenerateParameters struct {
-	RegistryTemplatesRoot string
-	TemplateRoot          string
-	ClientRepoRoot        string
-	ProjectPath           string
-	Substitutions         map[string]string
-	TemplateKind          string
-	RegistryIdentity      string
-	TemplateIdentity      string
-	ResolveConflict       MergeConflictResolver
+	RegistryRoot           string
+	RegistryWorkspaceFiles []string
+	TemplateRoot           string
+	ClientRepoRoot         string
+	ProjectPath            string
+	Substitutions          map[string]string
+	TemplateKind           string
+	RegistryIdentity       string
+	TemplateIdentity       string
+	ResolveConflict        MergeConflictResolver
 }
 
 type generationSources struct {
-	registryTemplatesRoot string
-	templateRoot          string
+	registryRoot string
+	templateRoot string
 }
 
 type generationStages struct {
@@ -116,7 +117,7 @@ func Generate(ctx context.Context, cwd, selector string, options GenerateOptions
 	if err != nil {
 		return err
 	}
-	source, err := TemplateDirectory(sourceRoot, template.Name)
+	source, err := TemplateDirectory(sourceRoot, template.Path)
 	if err != nil {
 		return err
 	}
@@ -126,16 +127,20 @@ func Generate(ctx context.Context, cwd, selector string, options GenerateOptions
 	if err != nil {
 		return err
 	}
+	if templateManifest.TemplateRegistry == nil {
+		return fmt.Errorf("template source %q does not configure template_registry", sourceRoot)
+	}
 	plan, err := BuildGeneratePlan(GenerateParameters{
-		RegistryTemplatesRoot: filepath.Join(sourceRoot, "templates"),
-		TemplateRoot:          source,
-		ClientRepoRoot:        workspaceRoot,
-		ProjectPath:           relativeDestination,
-		Substitutions:         replacements,
-		TemplateIdentity:      selector,
-		TemplateKind:          template.Kind,
-		RegistryIdentity:      selection.Source,
-		ResolveConflict:       options.ConflictResolver,
+		RegistryRoot:           sourceRoot,
+		RegistryWorkspaceFiles: templateManifest.TemplateRegistry.WorkspaceFiles,
+		TemplateRoot:           source,
+		ClientRepoRoot:         workspaceRoot,
+		ProjectPath:            relativeDestination,
+		Substitutions:          replacements,
+		TemplateIdentity:       selector,
+		TemplateKind:           template.Kind,
+		RegistryIdentity:       selection.Source,
+		ResolveConflict:        options.ConflictResolver,
 	})
 	if err != nil {
 		return err
@@ -320,25 +325,23 @@ func validateGenerationSources(request GenerateParameters, destination string) (
 	}
 
 	sources := generationSources{templateRoot: templateRoot}
-	if request.RegistryTemplatesRoot != "" {
-		sources.registryTemplatesRoot, err = filepath.Abs(request.RegistryTemplatesRoot)
+	if request.RegistryRoot != "" {
+		sources.registryRoot, err = filepath.Abs(request.RegistryRoot)
 		if err != nil {
-			return generationSources{}, fmt.Errorf("resolve registry templates root: %w", err)
+			return generationSources{}, fmt.Errorf("resolve registry root: %w", err)
 		}
-		if info, err := os.Stat(sources.registryTemplatesRoot); err != nil {
-			return generationSources{}, fmt.Errorf("inspect registry templates root: %w", err)
+		if info, err := os.Stat(sources.registryRoot); err != nil {
+			return generationSources{}, fmt.Errorf("inspect registry root: %w", err)
 		} else if !info.IsDir() {
-			return generationSources{}, fmt.Errorf("registry templates root %s is not a directory", sources.registryTemplatesRoot)
+			return generationSources{}, fmt.Errorf("registry root %s is not a directory", sources.registryRoot)
 		}
-		sources.registryTemplatesRoot, err = filepath.EvalSymlinks(sources.registryTemplatesRoot)
+		sources.registryRoot, err = filepath.EvalSymlinks(sources.registryRoot)
 		if err != nil {
-			return generationSources{}, fmt.Errorf("resolve registry templates root: %w", err)
+			return generationSources{}, fmt.Errorf("resolve registry root: %w", err)
 		}
 	}
-	for _, source := range []string{sources.templateRoot, sources.registryTemplatesRoot} {
-		if source != "" && inside(source, destination) {
-			return generationSources{}, fmt.Errorf("generation destination %s is inside source %s", destination, source)
-		}
+	if inside(sources.templateRoot, destination) {
+		return generationSources{}, fmt.Errorf("generation destination %s is inside source %s", destination, sources.templateRoot)
 	}
 	return sources, nil
 }
@@ -392,7 +395,7 @@ func resolveFuturePath(path string) (string, error) {
 }
 
 func buildGenerationEntries(plan *GeneratePlan, sources generationSources, request GenerateParameters) error {
-	shared, err := readSharedValues(sources.registryTemplatesRoot, literalReplacer(request.Substitutions))
+	shared, err := readSharedValues(sources.registryRoot, request.RegistryWorkspaceFiles, literalReplacer(request.Substitutions))
 	if err != nil {
 		return err
 	}
@@ -726,34 +729,51 @@ func (plan *GeneratePlan) rollbackRoot() error {
 	return errors.Join(failures...)
 }
 
-func readSharedValues(root string, replacer *strings.Replacer) (map[string]PathValue, error) {
+func readSharedValues(root string, patterns []string, replacer *strings.Replacer) (map[string]PathValue, error) {
 	values := make(map[string]PathValue)
-	if root == "" {
+	if root == "" || len(patterns) == 0 {
 		return values, nil
 	}
 	entries, err := os.ReadDir(root)
 	if err != nil {
-		return nil, fmt.Errorf("read shared registry root: %w", err)
+		return nil, fmt.Errorf("read template registry root: %w", err)
 	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
+	for _, pattern := range patterns {
+		if err := validateWorkspaceFilePattern(pattern); err != nil {
+			return nil, fmt.Errorf("workspace file pattern %q: %w", pattern, err)
 		}
-		info, err := entry.Info()
-		if err != nil {
-			return nil, fmt.Errorf("inspect shared entry %s: %w", entry.Name(), err)
+		matched := false
+		for _, entry := range entries {
+			match, err := filepath.Match(pattern, entry.Name())
+			if err != nil {
+				return nil, fmt.Errorf("match workspace file pattern %q: %w", pattern, err)
+			}
+			if !match || entry.Name() == ManifestFilename || entry.IsDir() {
+				continue
+			}
+			info, err := entry.Info()
+			if err != nil {
+				return nil, fmt.Errorf("inspect registry workspace file %s: %w", entry.Name(), err)
+			}
+			if !info.Mode().IsRegular() {
+				return nil, fmt.Errorf("registry workspace file %s is not a regular file", entry.Name())
+			}
+			matched = true
+			if _, exists := values[entry.Name()]; exists {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(root, entry.Name()))
+			if err != nil {
+				return nil, fmt.Errorf("read registry workspace file %s: %w", entry.Name(), err)
+			}
+			if replacer != nil && isText(data) {
+				data = []byte(replacer.Replace(string(data)))
+			}
+			values[entry.Name()] = PathValue{Kind: "file", Mode: info.Mode().Perm(), Data: data}
 		}
-		if !info.Mode().IsRegular() {
-			return nil, fmt.Errorf("unsupported shared entry %s", entry.Name())
+		if !matched {
+			return nil, fmt.Errorf("template registry workspace file pattern %q matched no direct regular root files", pattern)
 		}
-		data, err := os.ReadFile(filepath.Join(root, entry.Name()))
-		if err != nil {
-			return nil, fmt.Errorf("read shared file %s: %w", entry.Name(), err)
-		}
-		if replacer != nil && isText(data) {
-			data = []byte(replacer.Replace(string(data)))
-		}
-		values[filepath.ToSlash(entry.Name())] = PathValue{Kind: "file", Mode: info.Mode().Perm(), Data: data}
 	}
 	return values, nil
 }

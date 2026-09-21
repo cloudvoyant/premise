@@ -262,7 +262,7 @@ func runRegistryCIFlow(ctx context.Context, root string, flow CIFlow, target str
 }
 
 func runRegistryTemplateCIFlow(ctx context.Context, root string, template Template, flow CIFlow, target string, runner ciRunner) error {
-	directory, err := TemplateDirectory(root, template.Name)
+	directory, err := TemplateDirectory(root, template.Path)
 	if err != nil {
 		return err
 	}

@@ -8,7 +8,7 @@ import (
 
 // workspaceMiseTemplate is copied into each workspace initialized by pm.
 //
-//go:embed templates/mise.toml
+//go:embed assets/workspace-mise.toml
 var workspaceMiseTemplate string
 
 func main() {

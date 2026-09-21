@@ -46,19 +46,16 @@ func isCargoRegistry(root string) (bool, error) {
 	return found, err
 }
 
-// cargoWorkspaceDirectory resolves the aggregate Cargo workspace. New registries
-// keep it at the repository root; the templates location remains supported while
-// existing registries migrate.
+// cargoWorkspaceDirectory resolves the aggregate Cargo workspace at the
+// registry repository root. Template source directories are independent.
 func cargoWorkspaceDirectory(root string) (string, bool, error) {
-	for _, directory := range []string{root, filepath.Join(root, "templates")} {
-		path := filepath.Join(directory, "Cargo.toml")
-		info, err := os.Stat(path)
-		if err == nil {
-			return directory, info.Mode().IsRegular(), nil
-		}
-		if !errors.Is(err, os.ErrNotExist) {
-			return "", false, err
-		}
+	path := filepath.Join(root, "Cargo.toml")
+	info, err := os.Stat(path)
+	if err == nil {
+		return root, info.Mode().IsRegular(), nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return "", false, err
 	}
 	return "", false, nil
 }
@@ -93,14 +90,20 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 	if err != nil {
 		return fmt.Errorf("load Cargo registry manifest: %w", err)
 	}
-	if len(manifest.Templates) == 0 {
+	templates := manifest.DeclaredTemplates()
+	if len(templates) == 0 {
 		return errors.New("Cargo registry manifest declares no templates")
 	}
 
-	backups := make([]cargoFileBackup, 0, len(manifest.Templates)+1)
-	for _, template := range manifest.Templates {
-		path := filepath.Join(root, "templates", template.Name, "Cargo.toml")
-		backup, err := backupCargoFile(path)
+	templateDirectories := make([]string, 0, len(templates))
+	backups := make([]cargoFileBackup, 0, len(templates)+1)
+	for _, template := range templates {
+		directory, err := TemplateDirectory(root, template.Path)
+		if err != nil {
+			return fmt.Errorf("resolve Cargo template %s: %w", template.Name, err)
+		}
+		templateDirectories = append(templateDirectories, directory)
+		backup, err := backupCargoFile(filepath.Join(directory, "Cargo.toml"))
 		if err != nil {
 			return err
 		}
@@ -116,7 +119,7 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 		resultErr = errors.Join(resultErr, restoreCargoFiles(backups))
 	}()
 
-	for _, backup := range backups[:len(manifest.Templates)] {
+	for _, backup := range backups[:len(templates)] {
 		if err := setCargoPackageVersion(backup.path, version); err != nil {
 			return err
 		}
@@ -133,9 +136,9 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 	client := &http.Client{Timeout: 30 * time.Second}
 	preflight := miseRunner{Stderr: stderr}
 	publisher := miseRunner{Stdout: stdout, Stderr: stderr}
-	publications := make([]cargoPublication, 0, len(manifest.Templates))
-	for _, template := range manifest.Templates {
-		directory := filepath.Join(root, "templates", template.Name)
+	publications := make([]cargoPublication, 0, len(templates))
+	for index, template := range templates {
+		directory := templateDirectories[index]
 		name, err := cargoPackageName(filepath.Join(directory, "Cargo.toml"))
 		if err != nil {
 			return err

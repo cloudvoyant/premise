@@ -24,7 +24,7 @@ The architecture has four cooperating components:
 | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Development Environment (`pm install` / Mise)**         | Mise owns declared tools, versions, environment resolution, and installation. Premise provides the workspace entry point and conventions around that environment.                                                                 |
 | **Monorepo and Task Runner (`pm run` layered over Mise)** | Premise discovers the workspace and its projects, applies `apps/` and `libs/` conventions, and routes root or project task requests to Mise. Package managers remain responsible for package dependencies and workspace behavior. |
-| **Scaffolding and Template Management**                   | Registries declare templates in `premise.yaml`; generation resolves a template, applies answers, and creates a project using the expected monorepo structure. Template migration is planned separately.                           |
+| **Scaffolding and Template Management**                   | `template_registry` declares selectable templates and explicit repository-root workspace files. A repository can also contain generated projects. Generation applies answers and creates one nested project.                      |
 | **Automatic CI (GitHub Action and task contracts)**       | The GitHub Action installs the required environment and invokes `pm ci flow`. Contract task names give the CI flow a stable interface while each project owns the task implementation.                                            |
 
 ```mermaid
@@ -45,7 +45,7 @@ Premise currently implements environment setup, monorepo task routing, scaffoldi
 
 Mise owns tools, environments, and task execution. Premise manages monorepo conventions on top of Mise and uses task contracts for CI.
 
-Generation relies on the expected monorepo structure, including the workspace manifest and project locations, when it selects a destination and records provenance.
+Generation relies on the expected monorepo structure when it selects a destination and records provenance. Template registry and generated-project capabilities may coexist; `workspace.kind` selects default CI behavior rather than enforcing exclusive repository contents.
 
 Premise imposes conventions around secret management and artifact publishing. These conventions protect credentials and provide consistent release interfaces, but they do not yet constitute a complete standardized secret-management or infrastructure platform.
 

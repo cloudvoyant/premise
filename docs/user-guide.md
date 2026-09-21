@@ -28,13 +28,13 @@ pm template ls
 pm template test
 ```
 
-A Premise root is either a monorepo or a template registry. It cannot be both.
+A Premise root can contain generated projects, a template registry, or both. `workspace.kind` selects the default CI lifecycle; it does not prohibit the other capability.
 
 ## Usage
 
 ### Initialize a workspace
 
-Run `pm init` at the repository root. The default `monorepo` kind creates `premise.yaml`, a root `mise.toml`, `apps/`, and `libs/`. The root Mise configuration discovers app and library projects and layers their tools and environment. Use `pm init --kind template-registry` to create a registry manifest and `templates/` directory without monorepo conventions. Premise preserves existing files and refuses to replace an existing manifest.
+Run `pm init` at the repository root. The default `monorepo` kind creates `premise.yaml`, a root `mise.toml`, `apps/`, and `libs/`. The root Mise configuration discovers app and library projects and layers their tools and environment. Use `pm init --kind template-registry` to start with an empty `template_registry` configuration and a `templates/` directory. Either kind can later add templates or generated projects. Premise preserves existing files and refuses to replace an existing manifest.
 
 Use `pm install` or `pm i` to install mise tools declared by the workspace and its generated projects. It does not install package-manager dependencies yet. Run project lifecycle tasks directly through mise's monorepo pattern:
 
@@ -45,7 +45,7 @@ mise run --jobs 1 '//...:test'
 
 ### Initialize and list templates
 
-Run these commands in a project initialized with `--kind template-registry`:
+Run these commands in any Premise project:
 
 ```bash
 pm template init app
@@ -53,9 +53,9 @@ pm template init lib
 pm template ls
 ```
 
-Each init command creates `templates/<kind>/mise.toml` and adds a matching declaration to `premise.yaml`. Omit the kind to select it interactively. `pm template ls` prints declared template names in stable alphabetical order. Premise rejects template initialization in a monorepo.
+Each init command creates `templates/<kind>/mise.toml`, creates `template_registry` when needed, and adds a matching declaration to `premise.yaml`. Omit the kind to select it interactively. `pm template ls` prints declared template names in stable alphabetical order.
 
-Files placed directly under `templates/` are client workspace-root inputs. Premise compares these files with matching files in the current workspace root after it applies questionnaire substitutions. Directories under `templates/` are template sources and are not copied as shared content. The selected `templates/<name>/` tree is copied separately to `apps/<name>` or `libs/<name>`. See the [Generation Architecture](generation.md) for the implementation boundary and merge flow.
+`template_registry.workspace_files` explicitly lists repository-root files that Premise copies or merges into a client workspace root. Entries can use basename globs, but cannot contain path separators or select directories. Every pattern must match at least one direct regular file. `premise.yaml` is always excluded. Direct files inside the physical `templates/` directory have no special meaning. The selected `templates/<name>` tree is copied separately to `apps/<name>` or `libs/<name>`. See the [Generation Architecture](generation.md) for the implementation boundary and merge flow.
 
 Premise resolves client-root conflicts before it creates the project destination. Interactive prompts (or a supplied resolver) choose among the supported three tiers; no technical conflict report is printed:
 
@@ -96,7 +96,7 @@ pm generate ../my-registry:app
 pm generate ../my-registry:lib
 ```
 
-Premise asks the selected template's questions, plans direct registry files against the current workspace root, and creates `apps/<name>` or `libs/<name>` according to the template kind. It resolves each client-root conflict before publication. Premise records the project, source-qualified template selector, path, answers, and declared template version under `workspace.projects`.
+Premise asks the selected template's questions, expands its registry's declared `workspace_files` against the registry repository root, plans those files against the current client workspace root, and creates `apps/<name>` or `libs/<name>` according to the template kind. It resolves each client-root conflict before publication. Premise records the project, source-qualified template selector, path, answers, and declared template version under `workspace.projects`.
 
 Before publication, Premise preflights each existing client-root tool selector that the registry's root `mise.toml` would change. It then builds a disposable complete workspace candidate containing the planned root files and selected project at its final relative path. It installs root Mise tools and runs complete root and selected-project contracts under `PREMISE_TEMPLATE_TEST=1`. Successful command output stays hidden, and validation stops at the first failure. Only a completely validated candidate is published; a failed decision, preflight, or final validation leaves root files, the project destination, and `premise.yaml` unchanged.
 
@@ -142,7 +142,7 @@ Remote selectors follow the repository's default branch and do not accept a bran
 workspace:
   name: example
   kind: monorepo
-  schema-version: "0.1"
+  schema-version: "0.2"
   providers:
     ci: github
     tools: mise
@@ -150,17 +150,25 @@ workspace:
     infra: pulumi
     versioning: svu
   projects: []
-templates:
-  - name: premise-app
-    kind: app
-    version: 0.1.0
-    questions:
-      - prompt: "App name:"
-        type: string
-        populate: name
-    substitutions:
-      premise-app: name
+template_registry:
+  workspace_files:
+    - .gitignore
+    - package.json
+    - "*.config.js"
+  templates:
+    - name: premise-app
+      kind: app
+      path: templates/premise-app
+      version: 0.1.0
+      questions:
+        - prompt: "App name:"
+          type: string
+          populate: name
+      substitutions:
+        premise-app: name
 ```
+
+Each `workspace_files` entry is an explicit repository-root filename or basename glob. Use `[]` when the registry shares no root files. Premise rejects missing matches, nested paths, directories, and `premise.yaml`. Every template also declares a normalized repository-relative `path`, independent of the workspace-file sources.
 
 Each key under `substitutions` is literal text that exists in the live template. Its value names the questionnaire answer that replaces it. In this example, generation replaces every `premise-app` occurrence in UTF-8 text files with the app name; binary files remain unchanged.
 

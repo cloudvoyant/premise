@@ -94,7 +94,7 @@ func TestCLIWorkspaceAndTemplateLifecycle(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(workspace, "premise.yaml")); err != nil {
 		t.Fatal(err)
 	}
-	expectedMise, err := os.ReadFile(filepath.Join(repositoryRoot, "templates", "mise.toml"))
+	expectedMise, err := os.ReadFile(filepath.Join(repositoryRoot, "assets", "workspace-mise.toml"))
 	if err != nil {
 		t.Fatalf("read embedded workspace mise template: %v", err)
 	}
@@ -111,15 +111,11 @@ func TestCLIWorkspaceAndTemplateLifecycle(t *testing.T) {
 		t.Fatalf("expected overwrite refusal, got %v\n%s", err, output)
 	}
 
-	command = exec.Command(binary, "template", "init", "app")
-	command.Dir = workspace
-	if output, err := command.CombinedOutput(); err == nil || !strings.Contains(string(output), "cannot add registry templates to a monorepo project") {
-		t.Fatalf("expected hybrid-project refusal, got %v\n%s", err, output)
-	}
+	runCLI(t, binary, workspace, "template", "init", "app")
 	command = exec.Command(binary, "template", "ls")
 	command.Dir = workspace
-	if output, err := command.CombinedOutput(); err == nil || !strings.Contains(string(output), "template ls requires a template registry") {
-		t.Fatalf("expected template-registry requirement, got %v\n%s", err, output)
+	if output, err := command.CombinedOutput(); err != nil || string(output) != "app\n" {
+		t.Fatalf("list hybrid workspace templates: %v\n%s", err, output)
 	}
 
 	registryRoot := filepath.Join(t.TempDir(), "registry")

@@ -5,7 +5,7 @@ premise is an opinionated monorepo lifecycle toolkit built on mise: scaffold, up
 ## Features
 
 - **Monorepo scaffolding** — Scaffold monorepo projects from templates driven by interactive questionnaires
-- **Safe workspace-root merging** — Merge direct registry files into the client workspace root while copying the selected template to `apps/<name>` or `libs/<name>`. Root conflicts use typed `mise.toml` rules, ordered registry-first Git policy, or complete-file choices. Premise preflights changed root tools and validates the complete two-level workspace before publication
+- **Safe workspace-root merging** — Expand explicit `template_registry.workspace_files` patterns against registry-root files, merge those files into the client workspace, and copy the selected template to `apps/<name>` or `libs/<name>`. Root conflicts use typed `mise.toml` rules, ordered registry-first Git policy, or complete-file choices
 - **Future template migration** — Planned support for updating existing projects from newer template versions; generation remains create-only today
 - **mise tooling** — Convenience tools around mise-based monorepo management, including vendoring scripts
 - **Opinionated CI conventions** — Standardized setup and conventions for CI: variable naming and storage for artifact repositories, registries, Terraform backends, and more

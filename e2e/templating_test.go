@@ -85,7 +85,7 @@ func installMiseTaskShim(t *testing.T) *miseInvocationLog {
 
 func workspaceMiseTemplate(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join(repositoryRoot(t), "templates", "mise.toml")
+	path := filepath.Join(repositoryRoot(t), "assets", "workspace-mise.toml")
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read workspace mise template: %v", err)
@@ -149,7 +149,7 @@ func TestWorkspaceTemplateAndGenerationWorkflow(t *testing.T) {
 		t.Fatalf("unexpected generation output: %s", output.String())
 	}
 	destination := filepath.Join(root, "apps", "orders")
-	source, err := core.TemplateDirectory(registryRoot, "app")
+	source, err := core.TemplateDirectory(registryRoot, "templates/app")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,9 +192,10 @@ func TestWorkspaceTemplateAndGenerationWorkflow(t *testing.T) {
 func cargoRegistryFixture(t *testing.T, root string) {
 	t.Helper()
 	manifest := core.NewManifest("cargo")
-	manifest.Templates = []core.Template{{
+	manifest.TemplateRegistry = &core.TemplateRegistry{WorkspaceFiles: []string{".gitignore", ".gitattributes", "NOTICE", "mise.toml"}, Templates: []core.Template{{
 		Name:    "rust-cli",
 		Kind:    "app",
+		Path:    "templates/rust-cli",
 		Version: "0.1.0",
 		Questions: []core.Question{{
 			Prompt:   "CLI name:",
@@ -202,16 +203,15 @@ func cargoRegistryFixture(t *testing.T, root string) {
 			Populate: "name",
 		}},
 		Substitutions: map[string]string{"rust-cli": "name"},
-	}}
+	}}}
 	if err := core.SaveManifest(filepath.Join(root, core.ManifestFilename), manifest); err != nil {
 		t.Fatal(err)
 	}
-	shared := filepath.Join(root, "templates")
-	selected := filepath.Join(shared, "rust-cli")
-	writeFixtureFile(t, filepath.Join(shared, ".gitignore"), "# shared rust\n/target\n", 0o644)
-	writeFixtureFile(t, filepath.Join(shared, ".gitattributes"), "*.rs text eol=lf\n", 0o644)
-	writeFixtureFile(t, filepath.Join(shared, "NOTICE"), "shared Rust notice\n", 0o640)
-	writeFixtureFile(t, filepath.Join(shared, "mise.toml"), "[tools]\nrust = '1.82'\n\n[tasks.shared]\nrun = 'echo shared-rust'\n\n[env]\nCARGO_SHARED_ROOT = 'cargo'\n", 0o644)
+	selected := filepath.Join(root, "templates", "rust-cli")
+	writeFixtureFile(t, filepath.Join(root, ".gitignore"), "# shared rust\n/target\n", 0o644)
+	writeFixtureFile(t, filepath.Join(root, ".gitattributes"), "*.rs text eol=lf\n", 0o644)
+	writeFixtureFile(t, filepath.Join(root, "NOTICE"), "shared Rust notice\n", 0o640)
+	writeFixtureFile(t, filepath.Join(root, "mise.toml"), "[tools]\nrust = '1.82'\n\n[tasks.shared]\nrun = 'echo shared-rust'\n\n[env]\nCARGO_SHARED_ROOT = 'cargo'\n", 0o644)
 	writeFixtureFile(t, filepath.Join(selected, ".gitignore"), "# rust cli\n*.profraw\n", 0o644)
 	writeFixtureFile(t, filepath.Join(selected, ".gitattributes"), "Cargo.lock -diff\n", 0o644)
 	writeFixtureFile(t, filepath.Join(selected, "NOTICE"), "selected Rust notice\n", 0o600)
@@ -224,9 +224,10 @@ func cargoRegistryFixture(t *testing.T, root string) {
 func bunRegistryFixture(t *testing.T, root string) {
 	t.Helper()
 	manifest := core.NewManifest("bun")
-	manifest.Templates = []core.Template{{
+	manifest.TemplateRegistry = &core.TemplateRegistry{WorkspaceFiles: []string{".gitignore", ".gitattributes", "NOTICE", "mise.toml", "package.json"}, Templates: []core.Template{{
 		Name:    "hono-api",
 		Kind:    "app",
+		Path:    "templates/hono-api",
 		Version: "0.2.0",
 		Questions: []core.Question{{
 			Prompt:   "API name:",
@@ -234,17 +235,16 @@ func bunRegistryFixture(t *testing.T, root string) {
 			Populate: "name",
 		}},
 		Substitutions: map[string]string{"hono-api": "name"},
-	}}
+	}}}
 	if err := core.SaveManifest(filepath.Join(root, core.ManifestFilename), manifest); err != nil {
 		t.Fatal(err)
 	}
-	shared := filepath.Join(root, "templates")
-	selected := filepath.Join(shared, "hono-api")
-	writeFixtureFile(t, filepath.Join(shared, ".gitignore"), "# shared bun\nnode_modules/\n", 0o644)
-	writeFixtureFile(t, filepath.Join(shared, ".gitattributes"), "*.ts text eol=lf\n", 0o644)
-	writeFixtureFile(t, filepath.Join(shared, "NOTICE"), "shared Bun notice\n", 0o640)
-	writeFixtureFile(t, filepath.Join(shared, "package.json"), "{\"private\":true,\"workspaces\":[\"apps/*\",\"libs/*\"]}\n", 0o644)
-	writeFixtureFile(t, filepath.Join(shared, "mise.toml"), "[tools]\nbun = '1.2'\n\n[tasks.shared]\nrun = 'echo shared-bun'\n\n[env]\nBUN_SHARED_ROOT = 'bun'\n", 0o644)
+	selected := filepath.Join(root, "templates", "hono-api")
+	writeFixtureFile(t, filepath.Join(root, ".gitignore"), "# shared bun\nnode_modules/\n", 0o644)
+	writeFixtureFile(t, filepath.Join(root, ".gitattributes"), "*.ts text eol=lf\n", 0o644)
+	writeFixtureFile(t, filepath.Join(root, "NOTICE"), "shared Bun notice\n", 0o640)
+	writeFixtureFile(t, filepath.Join(root, "package.json"), "{\"private\":true,\"workspaces\":[\"apps/*\",\"libs/*\"]}\n", 0o644)
+	writeFixtureFile(t, filepath.Join(root, "mise.toml"), "[tools]\nbun = '1.2'\n\n[tasks.shared]\nrun = 'echo shared-bun'\n\n[env]\nBUN_SHARED_ROOT = 'bun'\n", 0o644)
 	writeFixtureFile(t, filepath.Join(selected, ".gitignore"), "# hono api\n.env\n", 0o644)
 	writeFixtureFile(t, filepath.Join(selected, ".gitattributes"), "bun.lock -diff\n", 0o644)
 	writeFixtureFile(t, filepath.Join(selected, "NOTICE"), "selected Bun notice\n", 0o600)
@@ -668,10 +668,10 @@ func TestTemplateContractsCollectAllFailures(t *testing.T) {
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	manifest := core.NewManifest("example")
-	manifest.Templates = []core.Template{
-		{Name: "app", Kind: "app", Questions: []core.Question{{Prompt: "App name:", Type: "string", Populate: "name"}}},
-		{Name: "lib", Kind: "lib", Questions: []core.Question{{Prompt: "Library name:", Type: "string", Populate: "name"}}},
-	}
+	manifest.TemplateRegistry = &core.TemplateRegistry{WorkspaceFiles: []string{}, Templates: []core.Template{
+		{Name: "app", Kind: "app", Path: "templates/app", Questions: []core.Question{{Prompt: "App name:", Type: "string", Populate: "name"}}},
+		{Name: "lib", Kind: "lib", Path: "templates/lib", Questions: []core.Question{{Prompt: "Library name:", Type: "string", Populate: "name"}}},
+	}}
 	var output bytes.Buffer
 	err := core.TestTemplateContracts(context.Background(), root, manifest, &output, io.Discard)
 	if err == nil {
