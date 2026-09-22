@@ -67,11 +67,11 @@ func TestUpdatePremiseRunsInstallerForCurrentExecutableDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	canonicalInstallDirectory, err := filepath.EvalSymlinks(installDirectory)
+	resolvedInstallDirectory, err := filepath.EvalSymlinks(installDirectory)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(data), canonicalInstallDirectory+"|v1.2.3\n"; got != want {
+	if got, want := string(data), resolvedInstallDirectory+"|v1.2.3\n"; got != want {
 		t.Fatalf("installer environment = %q, want %q", got, want)
 	}
 	if !strings.Contains(output.String(), "updated") {

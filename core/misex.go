@@ -28,6 +28,7 @@ import (
 // Types -----------------------------------------------------------------------
 
 type miseRunner struct {
+	Stdin             io.Reader
 	Stdout            io.Writer
 	Stderr            io.Writer
 	Ceiling           string
@@ -159,6 +160,7 @@ func (runner miseRunner) run(ctx context.Context, directory string, additions []
 	command := exec.CommandContext(ctx, "mise", arguments...)
 	command.Dir = directory
 	command.Env = runner.environment(additions)
+	command.Stdin = runner.Stdin
 	command.Stdout = runner.Stdout
 	command.Stderr = runner.Stderr
 	return command.Run()

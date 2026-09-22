@@ -13,10 +13,10 @@ func TestRunRootTaskPassesArguments(t *testing.T) {
 	root := t.TempDir()
 	capture := installMiseTaskShim(t)
 
-	if err := RunRootTask(t.Context(), root, "lint:fix", nil, nil, "--check"); err != nil {
+	if err := RunRootTask(t.Context(), root, "lint:fix", nil, nil, nil, "--check"); err != nil {
 		t.Fatal(err)
 	}
-	want := canonicalTaskPath(t, root) + "|run lint:fix --check\n"
+	want := resolvedTaskPath(t, root) + "|run lint:fix --check\n"
 	if got := readTaskCapture(t, capture); got != want {
 		t.Fatalf("RunRootTask() = %q, want %q", got, want)
 	}
@@ -36,10 +36,10 @@ func TestRunProjectTaskRunsFromDeclaredProject(t *testing.T) {
 	}
 	capture := installMiseTaskShim(t)
 
-	if err := RunProjectTask(t.Context(), root, "api", "test", nil, nil, "--all"); err != nil {
+	if err := RunProjectTask(t.Context(), root, "api", "test", nil, nil, nil, "--all"); err != nil {
 		t.Fatal(err)
 	}
-	want := canonicalTaskPath(t, projectRoot) + "|run test --all\n"
+	want := resolvedTaskPath(t, projectRoot) + "|run test --all\n"
 	if got := readTaskCapture(t, capture); got != want {
 		t.Fatalf("RunProjectTask() = %q, want %q", got, want)
 	}
@@ -51,7 +51,7 @@ func TestRunProjectTaskRejectsUnknownProject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := RunProjectTask(t.Context(), root, "missing", "test", nil, nil)
+	err := RunProjectTask(t.Context(), root, "missing", "test", nil, nil, nil)
 	if !errors.Is(err, ErrProjectNotFound) {
 		t.Fatalf("RunProjectTask() error = %v, want ErrProjectNotFound", err)
 	}
@@ -71,8 +71,8 @@ func TestInstallDevToolsInstallsWorkspaceAndProjects(t *testing.T) {
 	if err := InstallDevTools(t.Context(), root, &output, &output); err != nil {
 		t.Fatal(err)
 	}
-	canonicalRoot := canonicalTaskPath(t, root)
-	want := canonicalRoot + "|install\n" + canonicalRoot + "|install --monorepo\n"
+	resolvedRoot := resolvedTaskPath(t, root)
+	want := resolvedRoot + "|install\n" + resolvedRoot + "|install --monorepo\n"
 	if got := readTaskCapture(t, capture); got != want {
 		t.Fatalf("InstallDevTools() = %q, want %q", got, want)
 	}
@@ -100,7 +100,7 @@ func readTaskCapture(t *testing.T, path string) string {
 	return strings.ReplaceAll(string(data), "\\", "/")
 }
 
-func canonicalTaskPath(t *testing.T, path string) string {
+func resolvedTaskPath(t *testing.T, path string) string {
 	t.Helper()
 	resolved, err := filepath.EvalSymlinks(path)
 	if err != nil {
