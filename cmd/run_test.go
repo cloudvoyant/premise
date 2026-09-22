@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,44 +14,58 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRunCommandForwardsStdin(t *testing.T) {
-	capture := setupRunCommandTest(t)
-	runCommandWithInput(t, []string{"dev"}, "root-command-sentinel\n")
-	runCommandWithInput(t, []string{"api:run"}, "project-command-sentinel\n")
+// Setup -----------------------------------------------------------------------
 
-	data, err := os.ReadFile(capture)
-	require.NoError(t, err)
-	assert.Equal(t,
-		"run dev|root-command-sentinel\nrun run|project-command-sentinel\n",
-		string(data),
-	)
-}
-
-func setupRunCommandTest(t *testing.T) string {
+func setupRunCommandTest(t *testing.T) {
 	t.Helper()
 	root := t.TempDir()
-	manifest := core.NewManifest("fixture")
-	manifest.Workspace.Kind = core.ProjectKindMonorepo
-	manifest.Workspace.Projects = []core.Project{{Name: "api", Template: "example:app", Path: "apps/api"}}
+	manifest := core.Config{
+		Workspace: core.Workspace{
+			Name:          "fixture",
+			Kind:          core.ProjectKindMonorepo,
+			SchemaVersion: core.SchemaVersion,
+			Projects: []core.Project{{
+				Name:     "api",
+				Template: "example:app",
+				Path:     "apps/api",
+			}},
+		},
+	}
 	require.NoError(t, core.SaveManifest(filepath.Join(root, core.ManifestFilename), manifest))
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "apps", "api"), 0o755))
 
-	bin := t.TempDir()
-	capture := filepath.Join(t.TempDir(), "mise-stdin")
-	shim := "#!/bin/sh\nIFS= read -r input\nprintf '%s|%s\\n' \"$*\" \"$input\" >> \"$CAPTURE\"\n"
-	require.NoError(t, os.WriteFile(filepath.Join(bin, "mise"), []byte(shim), 0o755))
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("CAPTURE", capture)
+	setupFakeMise(t)
 	t.Chdir(root)
-	return capture
 }
 
-func runCommandWithInput(t *testing.T, arguments []string, input string) {
+// Tests -----------------------------------------------------------------------
+
+func TestRunCommandForwardsStdin(t *testing.T) {
+	setupRunCommandTest(t)
+
+	var output bytes.Buffer
+	runCommandWithInput(t, []string{"dev"}, "root-command-sentinel\n", &output)
+	runCommandWithInput(t, []string{"api:run"}, "project-command-sentinel\n", &output)
+
+	assert.Equal(t, "root-command-sentinel\nproject-command-sentinel\n", output.String())
+}
+
+// Helpers ---------------------------------------------------------------------
+
+func runCommandWithInput(t *testing.T, arguments []string, input string, output io.Writer) {
 	t.Helper()
 	command := &cobra.Command{}
 	command.SetContext(t.Context())
 	command.SetIn(strings.NewReader(input))
-	command.SetOut(io.Discard)
+	command.SetOut(output)
 	command.SetErr(io.Discard)
 	require.NoError(t, runCmd.RunE(command, arguments))
+}
+
+func setupFakeMise(t *testing.T) {
+	t.Helper()
+	bin := t.TempDir()
+	shim := "#!/bin/sh\ncat\n"
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "mise"), []byte(shim), 0o755))
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
