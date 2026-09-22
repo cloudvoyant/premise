@@ -7,6 +7,7 @@ premise is an opinionated monorepo lifecycle toolkit built on mise: scaffold, up
 - **Monorepo scaffolding** — Scaffold monorepo projects from templates driven by interactive questionnaires
 - **Safe workspace-root merging** — Expand explicit `template_registry.workspace_files` patterns against registry-root files, merge those files into the client workspace, and copy the selected template to `apps/<name>` or `libs/<name>`. Root conflicts use typed `mise.toml` rules, ordered registry-first Git policy, or complete-file choices
 - **Future template migration** — Planned support for updating existing projects from newer template versions; generation remains create-only today
+- **Self-updates** — Update the installed CLI to the latest release with `pm update`, or install a specific release with `pm update vX.Y.Z`
 - **mise tooling** — Convenience tools around mise-based monorepo management, including vendoring scripts
 - **Opinionated CI conventions** — Standardized setup and conventions for CI: variable naming and storage for artifact repositories, registries, Terraform backends, and more
 - **CI backends** — Provider-specific CI configuration for correct builds, releases, and deployments by default. premise invokes the named mise tasks that each project provides, so projects do not maintain provider glue.
@@ -48,6 +49,13 @@ Build, run, and test with `mise run`:
 mise run dev -- --help
 mise run test
 mise run e2e
+```
+
+Update an installed release in place:
+
+```bash
+pm update
+pm update v0.2.1
 ```
 
 Stable releases are planned, tagged, and published by `pm release` after merges to `main`; see [Infrastructure](docs/infrastructure.md) for the release pipeline.

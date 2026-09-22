@@ -4,7 +4,7 @@ premise creates applications and libraries from live templates and records where
 
 ## Requirements
 
-- Install premise with `install.sh`; the installer adds both `premise` and its `pm` alias. `go install` adds only `premise`.
+- Install premise with `install.sh`; the installer adds both `premise` and its `pm` alias. `go install` adds only `premise`. Use `pm update` for installations created by `install.sh`.
 - Install mise and trust the repository configuration.
 - Use a terminal for interactive questionnaires.
 - Allow network access when premise fetches a remote template repository for the first time.
@@ -31,6 +31,22 @@ pm template test
 A Premise root can contain generated projects, a template registry, or both. `workspace.kind` selects the default CI lifecycle; it does not prohibit the other capability.
 
 ## Usage
+
+### Update premise
+
+Update the current CLI installation to the latest GitHub release:
+
+```bash
+pm update
+```
+
+Pass a version to install a specific release:
+
+```bash
+pm update v0.2.1
+```
+
+Premise resolves the current executable, follows the `pm` symlink when needed, and installs the replacement in the same directory. The directory must be writable by the current user. The installer stages the new executable in that directory and atomically renames it over the previous version, so the running process is not overwritten in place.
 
 ### Initialize a workspace
 

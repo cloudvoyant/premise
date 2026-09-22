@@ -59,11 +59,17 @@ DOWNLOAD_URL="https://github.com/$REPO/releases/download/$TAG/$ASSET_NAME"
 
 echo "Downloading $ASSET_NAME..."
 TMP_DIR=$(mktemp -d)
-trap 'rm -rf "$TMP_DIR"' EXIT
+STAGED_BINARY="$INSTALL_DIR/.$PROJECT.tmp.$$"
+cleanup() {
+    rm -rf "$TMP_DIR"
+    rm -f "$STAGED_BINARY"
+}
+trap cleanup EXIT
 curl -fsSL "$DOWNLOAD_URL" | tar -xz -C "$TMP_DIR"
 
-cp "$TMP_DIR/$PROJECT" "$INSTALL_DIR/$PROJECT"
-chmod +x "$INSTALL_DIR/$PROJECT"
+cp "$TMP_DIR/$PROJECT" "$STAGED_BINARY"
+chmod +x "$STAGED_BINARY"
+mv -f "$STAGED_BINARY" "$INSTALL_DIR/$PROJECT"
 ln -sf "$PROJECT" "$INSTALL_DIR/pm"
 
 echo "Installed $PROJECT $TAG to $INSTALL_DIR/$PROJECT"
