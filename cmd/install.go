@@ -52,6 +52,6 @@ var installCmd = &cobra.Command{
 		if !hasProjectConfigs {
 			return nil
 		}
-		return core.RunRootTask(cmd.Context(), workspaceRoot, "install", cmd.OutOrStdout(), cmd.ErrOrStderr())
+		return core.RunRootTask(cmd.Context(), workspaceRoot, "install", nil, cmd.OutOrStdout(), cmd.ErrOrStderr())
 	},
 }

@@ -23,11 +23,11 @@ var runCmd = &cobra.Command{
 			if project == "" || task == "" {
 				return fmt.Errorf("invalid project task %q: expected project:task", selector)
 			}
-			err := core.RunProjectTask(cmd.Context(), root, project, task, cmd.OutOrStdout(), cmd.ErrOrStderr(), taskArguments...)
+			err := core.RunProjectTask(cmd.Context(), root, project, task, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr(), taskArguments...)
 			if !errors.Is(err, core.ErrProjectNotFound) {
 				return err
 			}
 		}
-		return core.RunRootTask(cmd.Context(), root, selector, cmd.OutOrStdout(), cmd.ErrOrStderr(), taskArguments...)
+		return core.RunRootTask(cmd.Context(), root, selector, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr(), taskArguments...)
 	},
 }

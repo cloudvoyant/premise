@@ -59,6 +59,17 @@ mise run --jobs 1 '//...:build'
 mise run --jobs 1 '//...:test'
 ```
 
+### Run tasks
+
+Use `pm run <task>` to run a root Mise task. Use `pm run <project>:<task>` to run a task from a generated project:
+
+```bash
+pm run build
+pm run api:dev
+```
+
+Arguments after the task selector are passed to Mise. Premise forwards standard input, output, and error to the child task, so interactive commands and terminal applications can use the controlling terminal.
+
 ### Initialize and list templates
 
 Run these commands in any Premise project:

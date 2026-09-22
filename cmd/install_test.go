@@ -48,11 +48,11 @@ func TestInstallRunsDevToolAndRootTaskInstallation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	canonicalRoot, err := filepath.EvalSymlinks(root)
+	resolvedRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := canonicalRoot + "|install\n" + canonicalRoot + "|install --monorepo\n" + canonicalRoot + "|run install\n"
+	want := resolvedRoot + "|install\n" + resolvedRoot + "|install --monorepo\n" + resolvedRoot + "|run install\n"
 	if got := string(data); got != want {
 		t.Fatalf("pm install Mise calls = %q, want %q", got, want)
 	}
@@ -95,11 +95,11 @@ func TestInstallSkipsRootTaskInstallationWhenNoProjects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	canonicalRoot, err := filepath.EvalSymlinks(root)
+	resolvedRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := canonicalRoot + "|install\n"
+	want := resolvedRoot + "|install\n"
 	if got := string(data); got != want {
 		t.Fatalf("pm install Mise calls = %q, want %q", got, want)
 	}
