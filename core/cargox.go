@@ -24,8 +24,16 @@ import (
 var (
 	cargoPackageNamePattern    = regexp.MustCompile(`^(\s*name\s*=\s*)"[^"]*"`)
 	cargoPackageVersionPattern = regexp.MustCompile(`^(\s*version\s*=\s*)"[^"]*"`)
+	cargoPublishFalsePattern   = regexp.MustCompile(`^\s*publish\s*=\s*false\s*(?:#.*)?$`)
 	cratesAPIBaseURL           = "https://crates.io/api/v1"
 )
+
+type cargoTemplatePackage struct {
+	Template        Template
+	Directory       string
+	Name            string
+	RegistryPublish bool
+}
 
 type cargoFileBackup struct {
 	path   string
@@ -60,6 +68,67 @@ func cargoWorkspaceDirectory(root string) (string, bool, error) {
 	return "", false, nil
 }
 
+func inspectCargoTemplatePackage(root string, template Template) (cargoTemplatePackage, bool, error) {
+	directory, err := TemplateDirectory(root, template.Path)
+	if err != nil {
+		return cargoTemplatePackage{}, false, fmt.Errorf("resolve Cargo template %s: %w", template.Name, err)
+	}
+	manifestPath := filepath.Join(directory, "Cargo.toml")
+	data, err := os.ReadFile(manifestPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return cargoTemplatePackage{}, false, nil
+	}
+	if err != nil {
+		return cargoTemplatePackage{}, false, fmt.Errorf("read Cargo manifest %s: %w", manifestPath, err)
+	}
+
+	inPackage := false
+	packageFound := false
+	name := ""
+	versionFound := false
+	registryPublish := true
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			inPackage = trimmed == "[package]"
+			packageFound = packageFound || inPackage
+			continue
+		}
+		if !inPackage {
+			continue
+		}
+		if cargoPackageNamePattern.MatchString(line) {
+			match := cargoPackageNamePattern.FindStringSubmatch(line)
+			quoted := strings.TrimSpace(strings.TrimPrefix(match[0], match[1]))
+			name = strings.Trim(quoted, `"`)
+		}
+		if cargoPackageVersionPattern.MatchString(line) {
+			versionFound = true
+		}
+		if cargoPublishFalsePattern.MatchString(line) {
+			registryPublish = false
+		}
+	}
+	if !packageFound {
+		return cargoTemplatePackage{}, false, nil
+	}
+	if name == "" {
+		return cargoTemplatePackage{}, false, fmt.Errorf("Cargo manifest %s has no [package] name", manifestPath)
+	}
+	if !versionFound {
+		return cargoTemplatePackage{}, false, fmt.Errorf("Cargo manifest %s has no [package] version", manifestPath)
+	}
+	if name != template.Name {
+		return cargoTemplatePackage{}, false, fmt.Errorf("Cargo package %q does not match declared template %q", name, template.Name)
+	}
+	return cargoTemplatePackage{
+		Template:        template,
+		Directory:       directory,
+		Name:            name,
+		RegistryPublish: registryPublish,
+	}, true, nil
+}
+
 func publishCargoPackages(ctx context.Context, root, version, task string, stdout, stderr io.Writer) (resultErr error) {
 	version = strings.TrimPrefix(version, "v")
 	parsed, err := semver.StrictNewVersion(version)
@@ -79,13 +148,6 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 		return fmt.Errorf("unsupported Cargo publication task %q", task)
 	}
 
-	workspaceDirectory, found, err := cargoWorkspaceDirectory(root)
-	if err != nil {
-		return fmt.Errorf("inspect Cargo registry workspace: %w", err)
-	}
-	if !found {
-		return errors.New("Cargo registry workspace is missing Cargo.toml")
-	}
 	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
 	if err != nil {
 		return fmt.Errorf("load Cargo registry manifest: %w", err)
@@ -95,15 +157,40 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 		return errors.New("Cargo registry manifest declares no templates")
 	}
 
-	templateDirectories := make([]string, 0, len(templates))
-	backups := make([]cargoFileBackup, 0, len(templates)+1)
+	packages := make([]cargoTemplatePackage, 0, len(templates))
 	for _, template := range templates {
-		directory, err := TemplateDirectory(root, template.Path)
+		pkg, found, err := inspectCargoTemplatePackage(root, template)
 		if err != nil {
-			return fmt.Errorf("resolve Cargo template %s: %w", template.Name, err)
+			return err
 		}
-		templateDirectories = append(templateDirectories, directory)
-		backup, err := backupCargoFile(filepath.Join(directory, "Cargo.toml"))
+		if !found {
+			fmt.Fprintf(stdout, "skip: %s has no direct Cargo package\n", template.Name)
+			continue
+		}
+		if !pkg.RegistryPublish {
+			fmt.Fprintf(stdout, "skip: %s Cargo registry publication disabled\n", pkg.Name)
+			continue
+		}
+		packages = append(packages, pkg)
+	}
+	if len(packages) == 0 {
+		return nil
+	}
+
+	token := os.Getenv("CRATES_TOKEN")
+	if token == "" {
+		return errors.New("CRATES_TOKEN is required for Cargo publication")
+	}
+	workspaceDirectory, found, err := cargoWorkspaceDirectory(root)
+	if err != nil {
+		return fmt.Errorf("inspect Cargo registry workspace: %w", err)
+	}
+	if !found {
+		return errors.New("Cargo registry workspace is missing Cargo.toml")
+	}
+	backups := make([]cargoFileBackup, 0, len(packages)+1)
+	for _, pkg := range packages {
+		backup, err := backupCargoFile(filepath.Join(pkg.Directory, "Cargo.toml"))
 		if err != nil {
 			return err
 		}
@@ -119,7 +206,7 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 		resultErr = errors.Join(resultErr, restoreCargoFiles(backups))
 	}()
 
-	for _, backup := range backups[:len(templates)] {
+	for _, backup := range backups[:len(packages)] {
 		if err := setCargoPackageVersion(backup.path, version); err != nil {
 			return err
 		}
@@ -129,35 +216,23 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 		return fmt.Errorf("regenerate Cargo lockfile: %w", err)
 	}
 
-	token := os.Getenv("CRATES_TOKEN")
-	if token == "" {
-		return errors.New("CRATES_TOKEN is required for Cargo publication")
-	}
 	client := &http.Client{Timeout: 30 * time.Second}
 	preflight := miseRunner{Stderr: stderr}
 	publisher := miseRunner{Stdout: stdout, Stderr: stderr}
-	publications := make([]cargoPublication, 0, len(templates))
-	for index, template := range templates {
-		directory := templateDirectories[index]
-		name, err := cargoPackageName(filepath.Join(directory, "Cargo.toml"))
+	publications := make([]cargoPublication, 0, len(packages))
+	for _, pkg := range packages {
+		taskExists, err := preflight.taskExists(ctx, pkg.Directory, task)
 		if err != nil {
-			return err
-		}
-		if name != template.Name {
-			return fmt.Errorf("Cargo package %q does not match declared template %q", name, template.Name)
-		}
-		taskExists, err := preflight.taskExists(ctx, directory, task)
-		if err != nil {
-			return fmt.Errorf("inspect Cargo package %s task %s: %w", name, task, err)
+			return fmt.Errorf("inspect Cargo package %s task %s: %w", pkg.Name, task, err)
 		}
 		if !taskExists {
-			return fmt.Errorf("Cargo package %s does not define task %s", name, task)
+			return fmt.Errorf("Cargo package %s does not define task %s", pkg.Name, task)
 		}
-		versionExists, err := cargoVersionExists(ctx, client, name, version)
+		versionExists, err := cargoVersionExists(ctx, client, pkg.Name, version)
 		if err != nil {
 			return err
 		}
-		publications = append(publications, cargoPublication{directory: directory, name: name, exists: versionExists})
+		publications = append(publications, cargoPublication{directory: pkg.Directory, name: pkg.Name, exists: versionExists})
 	}
 	for _, publication := range publications {
 		if publication.exists {
@@ -234,27 +309,6 @@ func setCargoPackageVersion(path, version string) error {
 		return fmt.Errorf("write Cargo manifest %s: %w", path, err)
 	}
 	return nil
-}
-
-func cargoPackageName(path string) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("read Cargo manifest %s: %w", path, err)
-	}
-	inPackage := false
-	for _, line := range strings.Split(string(data), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
-			inPackage = trimmed == "[package]"
-			continue
-		}
-		if inPackage && cargoPackageNamePattern.MatchString(line) {
-			match := cargoPackageNamePattern.FindStringSubmatch(line)
-			quoted := strings.TrimSpace(strings.TrimPrefix(match[0], match[1]))
-			return strings.Trim(quoted, `"`), nil
-		}
-	}
-	return "", fmt.Errorf("Cargo manifest %s has no [package] name", path)
 }
 
 func cargoVersionExists(ctx context.Context, client *http.Client, name, version string) (bool, error) {

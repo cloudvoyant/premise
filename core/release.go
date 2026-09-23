@@ -309,8 +309,15 @@ archives:
 		templates := manifest.DeclaredTemplates()
 		applications := make([]string, 0, len(templates))
 		for _, template := range templates {
-			if template.Kind == "app" {
-				applications = append(applications, template.Name)
+			if template.Kind != "app" {
+				continue
+			}
+			pkg, found, err := inspectCargoTemplatePackage(root, template)
+			if err != nil {
+				return nil, err
+			}
+			if found {
+				applications = append(applications, pkg.Name)
 			}
 		}
 		if len(applications) == 0 {

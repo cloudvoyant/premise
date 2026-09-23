@@ -71,8 +71,34 @@ func TestGoReleaserConfigIsConventionDriven(t *testing.T) {
 		templateFixture("premise-rust-app", "app"),
 		templateFixture("premise-clap-cli", "app"),
 		templateFixture("premise-ratatui-app", "app"),
+		templateFixture("premise-tauri-app", "app"),
 	}}
 	if err := SaveManifest(filepath.Join(cargoRoot, ManifestFilename), cargoManifest); err != nil {
+		t.Fatal(err)
+	}
+	for name, publish := range map[string]bool{
+		"premise-rust-lib":    true,
+		"premise-rust-app":    true,
+		"premise-clap-cli":    false,
+		"premise-ratatui-app": true,
+	} {
+		directory := filepath.Join(cargoRoot, "templates", name)
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		content := "[package]\nname = \"" + name + "\"\nversion = \"0.1.0\"\n"
+		if !publish {
+			content += "publish = false\n"
+		}
+		if err := os.WriteFile(filepath.Join(directory, "Cargo.toml"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	nestedDirectory := filepath.Join(cargoRoot, "templates", "premise-tauri-app", "src-tauri")
+	if err := os.MkdirAll(nestedDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nestedDirectory, "Cargo.toml"), []byte("[package]\nname = \"premise-tauri-app\"\nversion = \"0.1.0\"\npublish = false\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cargoConfig, err := GoReleaserConfig(cargoRoot, ReleaseProfileCargo)
@@ -96,8 +122,10 @@ func TestGoReleaserConfigIsConventionDriven(t *testing.T) {
 			t.Errorf("Cargo config does not contain %q", want)
 		}
 	}
-	if strings.Contains(text, "premise-rust-lib") {
-		t.Error("Cargo library unexpectedly included in binary release config")
+	for _, unwanted := range []string{"premise-rust-lib", "premise-tauri-app"} {
+		if strings.Contains(text, unwanted) {
+			t.Errorf("Cargo config unexpectedly contains %q", unwanted)
+		}
 	}
 	if count := strings.Count(text, "builder: rust"); count != 3 {
 		t.Fatalf("Cargo config contains %d Rust builds, want 3", count)
@@ -107,6 +135,36 @@ func TestGoReleaserConfigIsConventionDriven(t *testing.T) {
 	}
 	if count := strings.Count(text, "    name_template:"); count != 3 {
 		t.Fatalf("Cargo config contains %d archive templates, want 3", count)
+	}
+}
+
+func TestGoReleaserConfigRequiresDirectCargoApp(t *testing.T) {
+	root := t.TempDir()
+	manifest := NewManifest("premise-cargo")
+	manifest.TemplateRegistry = &TemplateRegistry{WorkspaceFiles: []string{}, Templates: []Template{
+		templateFixture("premise-rust-lib", "lib"),
+		templateFixture("premise-tauri-app", "app"),
+	}}
+	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
+		t.Fatal(err)
+	}
+	libraryRoot := filepath.Join(root, "templates", "premise-rust-lib")
+	nestedRoot := filepath.Join(root, "templates", "premise-tauri-app", "src-tauri")
+	for _, directory := range []string{libraryRoot, nestedRoot} {
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(libraryRoot, "Cargo.toml"), []byte("[package]\nname = \"premise-rust-lib\"\nversion = \"0.1.0\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nestedRoot, "Cargo.toml"), []byte("[package]\nname = \"premise-tauri-app\"\nversion = \"0.1.0\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := GoReleaserConfig(root, ReleaseProfileCargo)
+	if err == nil || err.Error() != "cargo release profile requires at least one app template" {
+		t.Fatalf("GoReleaserConfig() error = %v", err)
 	}
 }
 
@@ -227,7 +285,11 @@ func writeTaggedCargoReleaseFixture(t *testing.T) string {
 	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(root, "templates"), 0o755); err != nil {
+	appRoot := filepath.Join(root, "templates", "premise-rust-app")
+	if err := os.MkdirAll(appRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appRoot, "Cargo.toml"), []byte("[package]\nname = \"premise-rust-app\"\nversion = \"0.1.0\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "Cargo.toml"), []byte("[workspace]\n"), 0o644); err != nil {
@@ -426,7 +488,11 @@ printf '%s\n' "$*" >> "$CAPTURE"
 	if err := SaveManifest(filepath.Join(cargoRoot, ManifestFilename), cargoManifest); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(cargoRoot, "templates"), 0o755); err != nil {
+	cargoAppRoot := filepath.Join(cargoRoot, "templates", "premise-rust-app")
+	if err := os.MkdirAll(cargoAppRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cargoAppRoot, "Cargo.toml"), []byte("[package]\nname = \"premise-rust-app\"\nversion = \"0.1.0\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(cargoRoot, "Cargo.toml"), []byte("[workspace]\n"), 0o644); err != nil {

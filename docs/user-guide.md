@@ -275,6 +275,14 @@ Stable releases happen on pushes to `main`. The workflow calls `pm ci flow on-me
 
 Registries that publish language packages can keep credentials in separate CI steps with `pm release prepare`, `pm release github`, and `pm release packages`. `pm release snapshot` builds the complete artifact matrix without tagging or publishing.
 
+Cargo templates have three independent publication paths:
+
+- A direct Cargo package can publish to crates.io. Set `[package] publish = false` for an internal library that must not enter the registry. PM prints `skip: <package> Cargo registry publication disabled` and does not require Cargo credentials for that package.
+- A declared `kind: app` with a matching direct Cargo package can use the generic GoReleaser archives. This path does not use the Cargo `publish` value, so a direct application can produce GitHub binaries without entering crates.io.
+- A template can own custom publication through its `publish` task and repository workflow. A nested Tauri package at `src-tauri/Cargo.toml` is not a direct package. PM prints `skip: <template> has no direct Cargo package` and delegates publication to that custom path.
+
+A template that has no eligible direct package and no custom publication remains unpublished. These rules add no PM command, release destination field, or provider-specific configuration to `premise.yaml`. They also add no Bun artifact or container publication.
+
 Release-candidate publication is opt-in for Go: a feature-branch push whose HEAD commit message contains the exact marker `[publish-rc]` runs `mise run publish:rc`, which succeeds and prints only `Skipping RC publish: Go supports prerelease installs through commit hashes.` Go needs no prerelease artifact because installs resolve through commit hashes, so no RC tag or release is ever created.
 
 ### Current limitations

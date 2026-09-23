@@ -36,6 +36,14 @@ The action delegates lifecycle and publication policy to `pm ci flow`. The suppo
 
 The action accepts one `install-premise` mode. `pre-built` uses `install.sh`, `build` compiles the checked-out action source, and `skip` requires an existing `pm` on `PATH`. Real RC and stable publication remain in separate credential-bearing workflow steps.
 
+### Cargo Publication Boundaries
+
+PM separates Cargo registry publication from application artifacts. A declared template reaches crates.io only when its template directory contains a direct Cargo package and `[package] publish` is not `false`. PM prints `skip: <package> Cargo registry publication disabled` for an internal direct package and does not expose Cargo credentials to its tasks.
+
+A declared Cargo application reaches generic GoReleaser only when its template directory contains a matching direct package. The Cargo `publish` value does not control this GitHub artifact path. A nested Tauri package at `src-tauri/Cargo.toml` is not a direct package, so PM excludes it from crates.io and generic GoReleaser. PM prints `skip: <template> has no direct Cargo package`, then leaves publication to the template's `publish` task and repository workflow.
+
+A template without an eligible direct package or a custom publication path remains unpublished. These boundaries do not add a PM command, a release destination field, or provider-specific configuration. This work adds no Bun artifact or container publication.
+
 ### CI/CD Secrets
 
 Org-level secrets are utilized to avoid the need for setting up secrets for every new project. This means setup is only needed once.
