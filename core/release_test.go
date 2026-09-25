@@ -25,12 +25,19 @@ func TestDetectReleaseProfile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(cargoRoot, "Cargo.toml"), []byte("[workspace]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	bunRoot := t.TempDir()
+	for _, name := range []string{"package.json", "bunfig.toml"} {
+		if err := os.WriteFile(filepath.Join(bunRoot, name), []byte("{}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, test := range []struct {
 		root string
 		want ReleaseProfile
 	}{
 		{root: goRoot, want: ReleaseProfileGo},
 		{root: cargoRoot, want: ReleaseProfileCargo},
+		{root: bunRoot, want: ReleaseProfileBun},
 	} {
 		got, err := DetectReleaseProfile(test.root)
 		if err != nil {

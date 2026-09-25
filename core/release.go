@@ -40,6 +40,7 @@ type ReleaseProfile string
 const (
 	ReleaseProfileGo    ReleaseProfile = "go"
 	ReleaseProfileCargo ReleaseProfile = "cargo"
+	ReleaseProfileBun   ReleaseProfile = "bun"
 )
 
 // ReleasePlan describes the stable release decision for the current HEAD.
@@ -51,38 +52,28 @@ type ReleasePlan struct {
 
 // DetectReleaseProfile returns the convention-driven release profile for root.
 func DetectReleaseProfile(root string) (ReleaseProfile, error) {
-	goModule, err := isRegularFile(filepath.Join(root, "go.mod"))
+	plugin, err := releasePluginForRoot(root)
 	if err != nil {
-		return "", fmt.Errorf("inspect Go release convention: %w", err)
+		return "", err
 	}
-	if goModule {
-		return ReleaseProfileGo, nil
-	}
-	cargoWorkspace, err := isCargoRegistry(root)
-	if err != nil {
-		return "", fmt.Errorf("inspect Cargo release convention: %w", err)
-	}
-	if cargoWorkspace {
-		return ReleaseProfileCargo, nil
-	}
-	return "", fmt.Errorf("unsupported release repository: expected go.mod, Cargo.toml, or templates/Cargo.toml at %s", root)
+	return plugin.Profile(), nil
 }
 
 func publishReleaseCandidate(ctx context.Context, root string, kind ProjectKind, stdout, stderr io.Writer) error {
-	cargoRegistry, err := isCargoRegistry(root)
+	plugin, err := releasePluginForRoot(root)
 	if err != nil {
-		return fmt.Errorf("inspect Cargo RC convention: %w", err)
+		return err
 	}
-	if cargoRegistry {
+	if plugin.SupportsPackages() {
 		identifier := os.Getenv("GITHUB_RUN_NUMBER")
 		if err := ValidateRCIdentifier(identifier); err != nil {
-			return fmt.Errorf("resolve Cargo RC identifier: %w", err)
+			return fmt.Errorf("resolve %s RC identifier: %w", plugin.Profile(), err)
 		}
 		version, err := ReleaseCandidateVersion(root, identifier)
 		if err != nil {
 			return err
 		}
-		return publishCargoPackages(ctx, root, version, "publish:rc", stdout, stderr)
+		return plugin.PublishPackages(ctx, root, version, "publish:rc", stdout, stderr)
 	}
 
 	if kind == "" {
@@ -191,7 +182,7 @@ func PublishGitHubRelease(ctx context.Context, root string, stdout, stderr io.Wr
 	return plan, nil
 }
 
-// PublishLanguagePackages publishes a Cargo registry's packages for a stable
+// PublishLanguagePackages publishes eligible registry packages for a stable
 // tag already at HEAD. GitHub credentials are removed from the task environment.
 func PublishLanguagePackages(ctx context.Context, root string, stdout, stderr io.Writer) (ReleasePlan, error) {
 	plan, err := requirePreparedRelease(ctx, root, stdout)
@@ -202,11 +193,15 @@ func PublishLanguagePackages(ctx context.Context, root string, stdout, stderr io
 	if err != nil {
 		return ReleasePlan{}, fmt.Errorf("detect release profile: %w", err)
 	}
-	if profile != ReleaseProfileCargo {
+	plugin, err := releasePluginForProfile(profile)
+	if err != nil {
+		return ReleasePlan{}, err
+	}
+	if !plugin.SupportsPackages() {
 		return ReleasePlan{}, fmt.Errorf("release profile %q does not publish language packages", profile)
 	}
-	if err := executeCargoPublish(ctx, root, plan.Version, stdout, stderr); err != nil {
-		return ReleasePlan{}, fmt.Errorf("publish Cargo release: %w", err)
+	if err := plugin.PublishPackages(ctx, root, plan.Version, "publish", stdout, stderr); err != nil {
+		return ReleasePlan{}, fmt.Errorf("publish %s packages: %w", profile, err)
 	}
 	return plan, nil
 }
@@ -225,9 +220,13 @@ func PublishStableRelease(ctx context.Context, root string, stdout, stderr io.Wr
 	if err := executeGoReleaser(ctx, root, profile, false, stdout, stderr); err != nil {
 		return ReleasePlan{}, fmt.Errorf("publish GitHub release: %w", err)
 	}
-	if profile == ReleaseProfileCargo {
-		if err := executeCargoPublish(ctx, root, plan.Version, stdout, stderr); err != nil {
-			return ReleasePlan{}, fmt.Errorf("publish Cargo release: %w", err)
+	plugin, err := releasePluginForProfile(profile)
+	if err != nil {
+		return ReleasePlan{}, err
+	}
+	if plugin.SupportsPackages() {
+		if err := plugin.PublishPackages(ctx, root, plan.Version, "publish", stdout, stderr); err != nil {
+			return ReleasePlan{}, fmt.Errorf("publish %s packages: %w", profile, err)
 		}
 	}
 	return plan, nil
@@ -274,86 +273,17 @@ func GoReleaserConfig(root string, profile ReleaseProfile) ([]byte, error) {
 		project = filepath.Base(filepath.Clean(root))
 	}
 
+	plugin, err := releasePluginForProfile(profile)
+	if err != nil {
+		return nil, err
+	}
+	builds, err := plugin.CreateGoReleaserConfig(root, manifest)
+	if err != nil || builds == "" {
+		return nil, err
+	}
 	var builder strings.Builder
 	fmt.Fprintf(&builder, "version: 2\n\nproject_name: %s\n\n", project)
-	switch profile {
-	case ReleaseProfileGo:
-		fmt.Fprintf(&builder, `builds:
-  - id: %s
-    main: .
-    binary: %s
-    goos:`, project, project)
-		builder.WriteString(`
-      - linux
-      - darwin
-    goarch:
-      - amd64
-      - arm64
-    env:
-      - CGO_ENABLED=0
-    flags:
-      - -trimpath
-    ldflags:
-      - -s -w
-    mod_timestamp: "{{ .CommitTimestamp }}"
-
-archives:
-  - formats:
-      - tar.gz
-    name_template: >-
-      {{ .ProjectName }}-{{ .Tag }}-
-      {{- if eq .Arch "amd64" }}x86_64{{- else }}aarch64{{- end }}-
-      {{- if eq .Os "darwin" }}macos{{- else }}{{ .Os }}{{- end }}
-`)
-	case ReleaseProfileCargo:
-		templates := manifest.DeclaredTemplates()
-		applications := make([]string, 0, len(templates))
-		for _, template := range templates {
-			if template.Kind != "app" {
-				continue
-			}
-			pkg, found, err := inspectCargoTemplatePackage(root, template)
-			if err != nil {
-				return nil, err
-			}
-			if found {
-				applications = append(applications, pkg.Name)
-			}
-		}
-		if len(applications) == 0 {
-			return nil, errors.New("cargo release profile requires at least one app template")
-		}
-		builder.WriteString("builds:\n")
-		for _, application := range applications {
-			fmt.Fprintf(&builder, `  - id: %s
-    builder: rust
-    binary: %s
-    dir: .
-    targets:
-      - x86_64-unknown-linux-gnu
-      - aarch64-unknown-linux-gnu
-      - x86_64-apple-darwin
-      - aarch64-apple-darwin
-    flags:
-      - --release
-      - -p=%s
-
-`, application, application, application)
-		}
-		builder.WriteString("archives:\n")
-		for _, application := range applications {
-			fmt.Fprintf(&builder, `  - id: %s
-    ids:
-      - %s
-    formats:
-      - tar.gz
-    name_template: "{{ .Binary }}-{{ .Version }}-{{ .Os }}-{{ .Arch }}"
-
-`, application, application)
-		}
-	default:
-		return nil, fmt.Errorf("unsupported release profile %q", profile)
-	}
+	builder.WriteString(builds)
 	builder.WriteString(`checksum:
   name_template: "checksums.txt"
 
@@ -374,24 +304,21 @@ release:
 }
 
 func runGoReleaser(ctx context.Context, root string, profile ReleaseProfile, snapshot bool, stdout, stderr io.Writer) error {
-	workingDirectory := root
-	if profile == ReleaseProfileCargo {
-		workspaceDirectory, found, err := cargoWorkspaceDirectory(root)
-		if err != nil {
-			return fmt.Errorf("inspect Cargo release workspace: %w", err)
-		}
-		if !found {
-			return errors.New("Cargo release workspace is missing Cargo.toml")
-		}
-		workingDirectory = workspaceDirectory
-		if err := installReleaseTools(ctx, workingDirectory, stdout, stderr); err != nil {
-			return fmt.Errorf("prepare Cargo release toolchain: %w", err)
-		}
-	}
-
 	configuration, err := GoReleaserConfig(root, profile)
 	if err != nil {
 		return fmt.Errorf("generate GoReleaser configuration: %w", err)
+	}
+	if len(configuration) == 0 {
+		fmt.Fprintf(stdout, "skip: %s has no downloadable release artifacts\n", profile)
+		return nil
+	}
+	plugin, err := releasePluginForProfile(profile)
+	if err != nil {
+		return err
+	}
+	workingDirectory, serial, err := plugin.ReleaseWorkspace(ctx, root, stdout, stderr)
+	if err != nil {
+		return err
 	}
 	temporary, err := os.CreateTemp("", "premise-goreleaser-*.yml")
 	if err != nil {
@@ -411,7 +338,7 @@ func runGoReleaser(ctx context.Context, root string, profile ReleaseProfile, sna
 	if snapshot {
 		arguments = append(arguments, "--snapshot")
 	}
-	if profile == ReleaseProfileCargo {
+	if serial {
 		arguments = append(arguments, "--parallelism", "1")
 	}
 	mise := miseRunner{Stderr: stderr}

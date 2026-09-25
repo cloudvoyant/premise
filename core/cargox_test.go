@@ -44,12 +44,16 @@ func TestInspectCargoTemplatePackage(t *testing.T) {
 		wantError       string
 	}{
 		{name: "default-package", kind: "lib", manifest: "[package]\nname = \"default-package\"\nversion = \"0.1.0\"\n", found: true, registryPublish: true},
-		{name: "internal-package", kind: "lib", manifest: "[package]\nname = \"internal-package\"\nversion = \"0.1.0\"\npublish = false\n", found: true},
+		{name: "internal-package", kind: "lib", manifest: "[package]\nname = \"internal-package\"\nversion = \"0.1.0\"\npublish = false # internal\n", found: true},
+		{name: "private-registry", kind: "lib", manifest: "[package]\nname = 'private-registry'\nversion = '0.1.0'\npublish = ['private']\n", found: true},
+		{name: "crates-allowlist", kind: "lib", manifest: "[package]\nname = 'crates-allowlist'\nversion = '0.1.0'\npublish = ['crates-io']\n", found: true, registryPublish: true},
 		{name: "direct-app", kind: "app", manifest: "[package]\nname = \"direct-app\"\nversion = \"0.1.0\"\n", found: true, registryPublish: true},
 		{name: "nested-app", kind: "app", nestedManifest: "[package]\nname = \"nested-app\"\nversion = \"0.1.0\"\n"},
 		{name: "virtual-workspace", kind: "app", manifest: "[workspace]\nmembers = [\"src-tauri\"]\n"},
+		{name: "other-section", kind: "app", manifest: "[workspace]\nname = 'other-section'\nversion = '0.1.0'\n[package]\nname = 'other-section'\nversion = '0.1.0'\n[dependencies]\npublish = false\n", found: true, registryPublish: true},
 		{name: "mismatched", kind: "lib", manifest: "[package]\nname = \"other\"\nversion = \"0.1.0\"\n", wantError: `does not match declared template "mismatched"`},
 		{name: "malformed", kind: "lib", manifest: "[package]\nname = \"malformed\"\n", wantError: "has no [package] version"},
+		{name: "invalid-toml", kind: "lib", manifest: "[package]\nname = 'invalid-toml'\nversion = [\n", wantError: "parse Cargo manifest"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -96,6 +100,25 @@ func TestInspectCargoTemplatePackage(t *testing.T) {
 				t.Fatalf("inspectCargoTemplatePackage() RegistryPublish = %v, want %v", got.RegistryPublish, test.registryPublish)
 			}
 		})
+	}
+}
+
+func TestSetCargoPackageVersionPreservesUnrelatedSections(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "Cargo.toml")
+	original := "[workspace.package]\nversion = '0.1.0'\n[package] # application\nname = 'example'\nversion = '0.2.0' # current\n[dependencies]\nversion = 'keep'\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := setCargoPackageVersion(path, "1.2.3"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Replace(original, "version = '0.2.0' # current", `version = "1.2.3" # current`, 1)
+	if string(got) != want {
+		t.Fatalf("setCargoPackageVersion() = %q, want %q", got, want)
 	}
 }
 

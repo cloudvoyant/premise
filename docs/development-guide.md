@@ -23,9 +23,11 @@ main.go               # CLI entry point (package main)
 cmd/                   # Cobra command tree
 core/                  # Public library surface, split into responsibility-focused modules
 core/misex.go          # Mise command extension and sole executable boundary
-core/cargox.go         # Cargo command extension and coordinated publication boundary
+core/cargox.go         # Cargo manifest and crates.io publication adapter
+core/bunx.go           # Bun registry publication adapter
+core/release_plugin.go # Package-manager eligibility and artifact adapters
 core/ci.go             # Lifecycle selection and release-phase gating
-core/release.go        # Stable/RC release preparation and publication
+core/release.go        # Shared stable/RC release preparation and publication
 core/version.go        # Semantic version calculation and validation
 go.mod                # Module manifest
 mise.toml             # Task runner and tool versions

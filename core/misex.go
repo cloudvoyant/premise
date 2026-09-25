@@ -153,6 +153,9 @@ var publicationCredentialEnvironment = []string{
 	"CARGO_REGISTRY_TOKEN",
 	"CARGO_TOKEN",
 	"CRATES_TOKEN",
+	"NODE_AUTH_TOKEN",
+	"NPM_TOKEN",
+	"NPM_CONFIG_USERCONFIG",
 }
 
 // run executes one Mise command.

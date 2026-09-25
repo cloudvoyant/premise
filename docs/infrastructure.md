@@ -36,13 +36,11 @@ The action delegates lifecycle and publication policy to `pm ci flow`. The suppo
 
 The action accepts one `install-premise` mode. `pre-built` uses `install.sh`, `build` compiles the checked-out action source, and `skip` requires an existing `pm` on `PATH`. Real RC and stable publication remain in separate credential-bearing workflow steps.
 
-### Cargo Publication Boundaries
+### Package and Artifact Publication Boundaries
 
-PM separates Cargo registry publication from application artifacts. A declared template reaches crates.io only when its template directory contains a direct Cargo package and `[package] publish` is not `false`. PM prints `skip: <package> Cargo registry publication disabled` for an internal direct package and does not expose Cargo credentials to its tasks.
+Package-manager plugins select registry packages separately from application artifacts. Premise retains version planning, tagging, release order, and credentials. A Cargo direct package reaches crates.io only when `[package] publish` permits it. A matching direct application reaches generic GoReleaser even when its registry publication is disabled. A nested Tauri package uses neither direct path; its workflow and template task publish native installers.
 
-A declared Cargo application reaches generic GoReleaser only when its template directory contains a matching direct package. The Cargo `publish` value does not control this GitHub artifact path. A nested Tauri package at `src-tauri/Cargo.toml` is not a direct package, so PM excludes it from crates.io and generic GoReleaser. PM prints `skip: <template> has no direct Cargo package`, then leaves publication to the template's `publish` task and repository workflow.
-
-A template without an eligible direct package or a custom publication path remains unpublished. These boundaries do not add a PM command, a release destination field, or provider-specific configuration. This work adds no Bun artifact or container publication.
+Bun packages with `private: false` and `publishConfig.registry` use their template publish tasks. Public and restricted registry visibility are separate from publish eligibility. Bun has no configured native GitHub archives, so the artifact step skips without blocking npm publication. Static-site uploads, OCI images, and deploy targets are not inferred from `kind: app`; they require explicit publication configuration. A template with no selected registry or artifact destination remains unpublished.
 
 ### CI/CD Secrets
 

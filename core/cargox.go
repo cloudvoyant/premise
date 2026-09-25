@@ -19,12 +19,11 @@ import (
 	"time"
 
 	"github.com/Masterminds/semver/v3"
+	"github.com/pelletier/go-toml/v2"
 )
 
 var (
-	cargoPackageNamePattern    = regexp.MustCompile(`^(\s*name\s*=\s*)"[^"]*"`)
-	cargoPackageVersionPattern = regexp.MustCompile(`^(\s*version\s*=\s*)"[^"]*"`)
-	cargoPublishFalsePattern   = regexp.MustCompile(`^\s*publish\s*=\s*false\s*(?:#.*)?$`)
+	cargoPackageVersionPattern = regexp.MustCompile(`^(\s*version\s*=\s*)(?:"[^"]*"|'[^']*')`)
 	cratesAPIBaseURL           = "https://crates.io/api/v1"
 )
 
@@ -82,49 +81,49 @@ func inspectCargoTemplatePackage(root string, template Template) (cargoTemplateP
 		return cargoTemplatePackage{}, false, fmt.Errorf("read Cargo manifest %s: %w", manifestPath, err)
 	}
 
-	inPackage := false
-	packageFound := false
-	name := ""
-	versionFound := false
-	registryPublish := true
-	for _, line := range strings.Split(string(data), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
-			inPackage = trimmed == "[package]"
-			packageFound = packageFound || inPackage
-			continue
-		}
-		if !inPackage {
-			continue
-		}
-		if cargoPackageNamePattern.MatchString(line) {
-			match := cargoPackageNamePattern.FindStringSubmatch(line)
-			quoted := strings.TrimSpace(strings.TrimPrefix(match[0], match[1]))
-			name = strings.Trim(quoted, `"`)
-		}
-		if cargoPackageVersionPattern.MatchString(line) {
-			versionFound = true
-		}
-		if cargoPublishFalsePattern.MatchString(line) {
-			registryPublish = false
-		}
+	var manifest struct {
+		Package *struct {
+			Name    string `toml:"name"`
+			Version any    `toml:"version"`
+			Publish any    `toml:"publish"`
+		} `toml:"package"`
 	}
-	if !packageFound {
+	if err := toml.Unmarshal(data, &manifest); err != nil {
+		return cargoTemplatePackage{}, false, fmt.Errorf("parse Cargo manifest %s: %w", manifestPath, err)
+	}
+	if manifest.Package == nil {
 		return cargoTemplatePackage{}, false, nil
 	}
-	if name == "" {
+	pkg := manifest.Package
+	if pkg.Name == "" {
 		return cargoTemplatePackage{}, false, fmt.Errorf("Cargo manifest %s has no [package] name", manifestPath)
 	}
-	if !versionFound {
+	if _, ok := pkg.Version.(string); !ok {
 		return cargoTemplatePackage{}, false, fmt.Errorf("Cargo manifest %s has no [package] version", manifestPath)
 	}
-	if name != template.Name {
-		return cargoTemplatePackage{}, false, fmt.Errorf("Cargo package %q does not match declared template %q", name, template.Name)
+	if pkg.Name != template.Name {
+		return cargoTemplatePackage{}, false, fmt.Errorf("Cargo package %q does not match declared template %q", pkg.Name, template.Name)
+	}
+	registryPublish := true
+	switch publish := pkg.Publish.(type) {
+	case nil:
+	case bool:
+		registryPublish = publish
+	case []any:
+		// Cargo's allowlist can name other registries without permitting crates.io.
+		registryPublish = false
+		for _, registry := range publish {
+			if registry == "crates-io" {
+				registryPublish = true
+			}
+		}
+	default:
+		return cargoTemplatePackage{}, false, fmt.Errorf("Cargo manifest %s has invalid [package] publish value", manifestPath)
 	}
 	return cargoTemplatePackage{
 		Template:        template,
 		Directory:       directory,
-		Name:            name,
+		Name:            pkg.Name,
 		RegistryPublish: registryPublish,
 	}, true, nil
 }
@@ -292,8 +291,9 @@ func setCargoPackageVersion(path, version string) error {
 	replaced := false
 	for index, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
-			inPackage = trimmed == "[package]"
+		if strings.HasPrefix(trimmed, "[") {
+			section := strings.TrimSpace(strings.SplitN(trimmed, "#", 2)[0])
+			inPackage = section == "[package]"
 			continue
 		}
 		if inPackage && cargoPackageVersionPattern.MatchString(line) {
