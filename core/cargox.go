@@ -128,6 +128,74 @@ func inspectCargoTemplatePackage(root string, template Template) (cargoTemplateP
 	}, true, nil
 }
 
+func cargoTemplateIsPublic(root string, template Template) (bool, error) {
+	pkg, found, err := inspectCargoTemplatePackage(root, template)
+	return found && pkg.RegistryPublish, err
+}
+
+func prepareCargoReleaseWorkspace(ctx context.Context, root string, stdout, stderr io.Writer) (string, bool, error) {
+	workspace, found, err := cargoWorkspaceDirectory(root)
+	if err != nil {
+		return "", false, fmt.Errorf("inspect Cargo release workspace: %w", err)
+	}
+	if !found {
+		return "", false, errors.New("Cargo release workspace is missing Cargo.toml")
+	}
+	if err := installReleaseTools(ctx, workspace, stdout, stderr); err != nil {
+		return "", false, fmt.Errorf("prepare Cargo release toolchain: %w", err)
+	}
+	return workspace, true, nil
+}
+
+func cargoReleaseBuilds(root string, manifest Config) (string, error) {
+	applications := []string{}
+	for _, template := range manifest.DeclaredTemplates() {
+		if template.Kind != "app" {
+			continue
+		}
+		pkg, found, err := inspectCargoTemplatePackage(root, template)
+		if err != nil {
+			return "", err
+		}
+		if found {
+			applications = append(applications, pkg.Name)
+		}
+	}
+	if len(applications) == 0 {
+		return "", errors.New("cargo release profile requires at least one app template")
+	}
+	var builder strings.Builder
+	builder.WriteString("builds:\n")
+	for _, application := range applications {
+		fmt.Fprintf(&builder, `  - id: %s
+    builder: rust
+    binary: %s
+    dir: .
+    targets:
+      - x86_64-unknown-linux-gnu
+      - aarch64-unknown-linux-gnu
+      - x86_64-apple-darwin
+      - aarch64-apple-darwin
+    flags:
+      - --release
+      - -p=%s
+
+`, application, application, application)
+	}
+	builder.WriteString("archives:\n")
+	for _, application := range applications {
+		fmt.Fprintf(&builder, `  - id: %s
+    ids:
+      - %s
+    formats:
+      - tar.gz
+    name_template: "{{ .Binary }}-{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+
+`, application, application)
+	}
+	return builder.String(), nil
+}
+
 func publishCargoPackages(ctx context.Context, root, version, task string, stdout, stderr io.Writer) (resultErr error) {
 	version = strings.TrimPrefix(version, "v")
 	parsed, err := semver.StrictNewVersion(version)

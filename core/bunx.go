@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,60 @@ import (
 
 	"github.com/Masterminds/semver/v3"
 )
+
+type bunPackage struct {
+	Name          string `json:"name"`
+	Private       bool   `json:"private"`
+	PublishConfig struct {
+		Access   string `json:"access"`
+		Registry string `json:"registry"`
+	} `json:"publishConfig"`
+}
+
+func isBunRegistry(root string) (bool, error) {
+	packageFile, err := isRegularFile(filepath.Join(root, "package.json"))
+	if err != nil || !packageFile {
+		return false, err
+	}
+	return isRegularFile(filepath.Join(root, "bunfig.toml"))
+}
+
+func inspectBunTemplatePackage(root string, template Template) (bunPackage, bool, error) {
+	directory, err := TemplateDirectory(root, template.Path)
+	if err != nil {
+		return bunPackage{}, false, err
+	}
+	path := filepath.Join(directory, "package.json")
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return bunPackage{}, false, nil
+	}
+	if err != nil {
+		return bunPackage{}, false, fmt.Errorf("read Bun package %s: %w", path, err)
+	}
+	var pkg bunPackage
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return bunPackage{}, false, fmt.Errorf("parse Bun package %s: %w", path, err)
+	}
+	if pkg.Name == "" {
+		return bunPackage{}, false, fmt.Errorf("Bun package %s has no name", path)
+	}
+	return pkg, true, nil
+}
+
+func bunTemplateIsPublic(root string, template Template) (bool, error) {
+	pkg, found, err := inspectBunTemplatePackage(root, template)
+	return found && !pkg.Private && pkg.PublishConfig.Access == "public", err
+}
+
+func bunPackageEligible(pkg bunPackage) bool {
+	return !pkg.Private && pkg.PublishConfig.Registry != ""
+}
+
+func bunTemplateShouldPublish(root string, template Template) (bool, error) {
+	pkg, found, err := inspectBunTemplatePackage(root, template)
+	return found && bunPackageEligible(pkg), err
+}
 
 type bunPublication struct {
 	directory string
@@ -42,11 +97,7 @@ func publishBunPackages(ctx context.Context, root, version, task string, stdout,
 		if err != nil {
 			return err
 		}
-		eligible, err := (bunPackageManager{}).ShouldPublishPackage(root, template)
-		if err != nil {
-			return err
-		}
-		if !found || !eligible {
+		if !found || !bunPackageEligible(pkg) {
 			fmt.Fprintf(stdout, "skip: %s Bun registry publication disabled\n", template.Name)
 			continue
 		}
