@@ -36,6 +36,7 @@ cmd/package_manager_plugins.go # CLI composition of built-in plugins
 core/ci.go             # Lifecycle selection and release-phase gating
 core/release.go        # Shared stable/RC release preparation and publication
 core/version.go        # Semantic version calculation and validation
+docs/modules/          # Per-module design, API usage, and implementation details
 go.mod                # Module manifest
 mise.toml             # Task runner and tool versions
 action.yml            # Published composite action (root — use a v0 tag while premise is in alpha)
