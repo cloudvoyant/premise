@@ -23,10 +23,16 @@ main.go               # CLI entry point (package main)
 cmd/                   # Cobra command tree
 core/                  # Public library surface, split into responsibility-focused modules
 core/misex.go          # Mise command extension and sole executable boundary
-core/cargox.go         # Cargo manifest, crates.io publication, and archive builds
-core/bunx.go           # Bun registry publication and eligibility
-core/gox.go            # Go archive builds
-core/package_manager_plugin.go # Thin package-manager adapters and shared interface
+core/osx.go            # Shared filesystem checks for plugin detection
+core/cargox.go         # Generic Cargo manifest reading and version edits
+core/package_manager_plugin.go # Plugin interface and registration
+core/package_manager_group.go  # Combine matching managers in one release
+core/plugins/go.go     # Go artifact policy
+core/plugins/cargo.go  # Cargo plugin adapter
+core/plugins/cargo_policy.go # Premise-specific Cargo template and artifact policy
+core/plugins/cargo_publish.go # Cargo publication and workspace setup
+core/plugins/bun.go    # Bun package eligibility and npm publication
+core/plugins/plugins.go # Explicit built-in registration for the CLI
 core/ci.go             # Lifecycle selection and release-phase gating
 core/release.go        # Shared stable/RC release preparation and publication
 core/version.go        # Semantic version calculation and validation
@@ -38,7 +44,7 @@ action.yml            # Published composite action (root — use a v0 tag while 
 
 ## Development Workflow
 
-1. **Write code** in `core/` (library logic) or `cmd/` (commands)
+1. **Write code** in `core/` (shared library logic), `core/plugins/` (package-manager integrations), or `cmd/` (commands)
 2. **Write tests** as `*_test.go` files with `func TestXxx(t *testing.T)`
 3. **Run tests**: `mise run test`
 4. **Check format**: `mise run format:check`; fix with `mise run format`
@@ -62,7 +68,7 @@ go get github.com/cloudvoyant/premise@vX.Y.Z
     flow: on-commit
 ```
 
-The action only sets up Mise, installs Premise, and calls `pm ci flow`. Set `install-premise` to `pre-built` to install a release, `build` to build the checked-out action source, or `skip` when `pm` is already on `PATH`.
+The CLI explicitly registers its built-in Go, Cargo, and Bun plugins before release flows. Library clients can call `core.RegisterPackageManagerPlugin(customPlugin)` before running a release; no dynamic loader or `init()` registration is required. Plugin IDs must be unique. Every matching root-level plugin participates in one release, in registration order; nested-only package managers are not detected automatically. GoReleaser builds and archives are combined, and each eligible package publisher receives the same version. The action only sets up Mise, installs Premise, and calls `pm ci flow`. Set `install-premise` to `pre-built` to install a release, `build` to build the checked-out action source, or `skip` when `pm` is already on `PATH`.
 
 ```yaml
 - uses: cloudvoyant/premise@<revision>

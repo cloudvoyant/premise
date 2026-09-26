@@ -1,4 +1,4 @@
-package core
+package plugins
 
 import (
 	"context"
@@ -12,7 +12,29 @@ import (
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
+	"github.com/cloudvoyant/premise/core"
 )
+
+type Bun struct{}
+
+func (Bun) ID() string                       { return "bun" }
+func (Bun) Detect(root string) (bool, error) { return isBunRegistry(root) }
+func (Bun) IsPublic(root string, template core.Template) (bool, error) {
+	return bunTemplateIsPublic(root, template)
+}
+func (Bun) ShouldPublishPackage(root string, template core.Template) (bool, error) {
+	return bunTemplateShouldPublish(root, template)
+}
+func (Bun) SupportsPackages() bool { return true }
+func (Bun) PublishPackages(ctx context.Context, root, version, task string, stdout, stderr io.Writer) error {
+	return publishBunPackages(ctx, root, version, task, stdout, stderr)
+}
+func (Bun) ReleaseWorkspace(_ context.Context, root string, _, _ io.Writer) (string, bool, error) {
+	return root, false, nil
+}
+
+// Bun publishes registry packages, not downloadable native binaries.
+func (Bun) CreateGoReleaserConfig(_ string, _ core.Config) (string, error) { return "", nil }
 
 type bunPackage struct {
 	Name          string `json:"name"`
@@ -24,15 +46,15 @@ type bunPackage struct {
 }
 
 func isBunRegistry(root string) (bool, error) {
-	packageFile, err := isRegularFile(filepath.Join(root, "package.json"))
+	packageFile, err := core.IsRegularFile(filepath.Join(root, "package.json"))
 	if err != nil || !packageFile {
 		return false, err
 	}
-	return isRegularFile(filepath.Join(root, "bunfig.toml"))
+	return core.IsRegularFile(filepath.Join(root, "bunfig.toml"))
 }
 
-func inspectBunTemplatePackage(root string, template Template) (bunPackage, bool, error) {
-	directory, err := TemplateDirectory(root, template.Path)
+func inspectBunTemplatePackage(root string, template core.Template) (bunPackage, bool, error) {
+	directory, err := core.TemplateDirectory(root, template.Path)
 	if err != nil {
 		return bunPackage{}, false, err
 	}
@@ -54,7 +76,7 @@ func inspectBunTemplatePackage(root string, template Template) (bunPackage, bool
 	return pkg, true, nil
 }
 
-func bunTemplateIsPublic(root string, template Template) (bool, error) {
+func bunTemplateIsPublic(root string, template core.Template) (bool, error) {
 	pkg, found, err := inspectBunTemplatePackage(root, template)
 	return found && !pkg.Private && pkg.PublishConfig.Access == "public", err
 }
@@ -63,7 +85,7 @@ func bunPackageEligible(pkg bunPackage) bool {
 	return !pkg.Private && pkg.PublishConfig.Registry != ""
 }
 
-func bunTemplateShouldPublish(root string, template Template) (bool, error) {
+func bunTemplateShouldPublish(root string, template core.Template) (bool, error) {
 	pkg, found, err := inspectBunTemplatePackage(root, template)
 	return found && bunPackageEligible(pkg), err
 }
@@ -86,12 +108,12 @@ func publishBunPackages(ctx context.Context, root, version, task string, stdout,
 	if (task == "publish:rc") != (parsed.Prerelease() != "") || parsed.Metadata() != "" {
 		return fmt.Errorf("Bun %s requires a matching SemVer version, got %s", task, version)
 	}
-	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
+	manifest, err := core.LoadManifest(filepath.Join(root, core.ManifestFilename))
 	if err != nil {
 		return fmt.Errorf("load Bun registry manifest: %w", err)
 	}
 	publications := []bunPublication{}
-	preflight := miseRunner{Stderr: stderr}
+	preflight := core.MiseTaskRunner{Stderr: stderr}
 	for _, template := range manifest.DeclaredTemplates() {
 		pkg, found, err := inspectBunTemplatePackage(root, template)
 		if err != nil {
@@ -105,11 +127,11 @@ func publishBunPackages(ctx context.Context, root, version, task string, stdout,
 		if err != nil || registry.Host == "" || registry.Scheme != "https" || registry.RawQuery != "" || registry.User != nil {
 			return fmt.Errorf("Bun package %s has invalid HTTPS registry %q", pkg.Name, pkg.PublishConfig.Registry)
 		}
-		directory, err := TemplateDirectory(root, template.Path)
+		directory, err := core.TemplateDirectory(root, template.Path)
 		if err != nil {
 			return err
 		}
-		exists, err := preflight.taskExists(ctx, directory, task)
+		exists, err := preflight.TaskExists(ctx, directory, task)
 		if err != nil {
 			return fmt.Errorf("inspect Bun package %s task %s: %w", pkg.Name, task, err)
 		}
@@ -125,7 +147,7 @@ func publishBunPackages(ctx context.Context, root, version, task string, stdout,
 	if token == "" {
 		return errors.New("NODE_AUTH_TOKEN is required for Bun registry publication")
 	}
-	publisher := miseRunner{Stdout: stdout, Stderr: stderr}
+	publisher := core.MiseTaskRunner{Stdout: stdout, Stderr: stderr}
 	for _, publication := range publications {
 		config, err := os.CreateTemp("", "premise-npmrc-*")
 		if err != nil {
@@ -144,7 +166,7 @@ func publishBunPackages(ctx context.Context, root, version, task string, stdout,
 			return errors.Join(writeErr, closeErr)
 		}
 		fmt.Fprintf(stdout, "%s: %s %s\n", task, publication.name, version)
-		err = publisher.run(ctx, publication.directory, []string{
+		err = publisher.Run(ctx, publication.directory, []string{
 			"PREMISE_PUBLISH_VERSION=" + version,
 			"NPM_CONFIG_USERCONFIG=" + configPath,
 		}, "run", task)
