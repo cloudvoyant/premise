@@ -29,15 +29,24 @@ The architecture has four cooperating components:
 
 ```mermaid
 flowchart LR
-  Git[Git repository] --> PM[Premise pm commands]
-  PM --> Mise[Mise: tools, environment, tasks]
-  PM --> Mono[Monorepo conventions]
-  Registry[Local or remote template registry] --> Scaffold[Scaffolding and template management]
-  Scaffold --> Mono
-  Action[GitHub Action] --> CI[Automatic CI]
-  CI --> Contracts[Task contracts]
-  Contracts --> Mise
+  CLI[cmd: CLI composition root] --> Core[core: domain orchestration]
+  CLI --> Plugins[core/plugins: built-in managers]
+  Plugins --> Contracts[PackageManagerPlugin contract]
+  Core --> Contracts
+  Core --> Config[premise.yaml configuration]
+  Core --> Project[Project and template records]
+  Core --> Tasks[Task module]
+  Core --> Version[Version module]
+  Core --> Release[Release module]
+  Project --> Metadata[PackageMetadata]
+  Plugins --> Metadata
+  Tasks --> Mise[Mise subprocess boundary]
+  Release --> Version
+  Release --> Plugins
+  Action[GitHub Action] --> CLI
 ```
+
+Dependencies point inward toward shared contracts. Core does not import built-in plugin implementations. The CLI registers implementations and then calls core workflows. `workspace.package_managers` selects plugins explicitly; native files provide package metadata but never select a manager. Managers that claim the same ecosystem, such as Bun and pnpm for npm packages, conflict.
 
 Premise currently implements environment setup, monorepo task routing, scaffolding, template-root merging, and contract-driven CI. Template migration, standardized secret management, and standardized infrastructure are planned rather than implemented. Infrastructure providers and ownership boundaries remain future design work.
 
@@ -51,11 +60,12 @@ Premise imposes conventions around secret management and artifact publishing. Th
 
 Infrastructure ownership is future work. Provider-specific infrastructure, provisioning, and long-term ownership rules must be defined by a later architecture and are not part of the current implementation.
 
-The detailed create-only generation and template-root merge design is documented in [Generation Architecture](generation.md). The focused merge policy remains in [ADR 0003](../adr/0003-template-root-merging.md).
+The [Core Modules](modules.md) reference defines the major APIs and ownership boundaries. The detailed create-only generation and template-root merge design is documented in [Generation Architecture](generation.md). The focused merge policy remains in [ADR 0003](../adr/0003-template-root-merging.md).
 
 ## References
 
 - [User Guide](user-guide.md)
+- [Core Modules](modules.md)
 - [Generation Architecture](generation.md)
 - [Infrastructure](infrastructure.md)
 - [ADR 0003: Focused template-root merge policies](../adr/0003-template-root-merging.md)

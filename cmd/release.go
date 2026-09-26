@@ -25,6 +25,9 @@ var releaseCmd = &cobra.Command{
 		if len(args) == 1 {
 			mode = args[0]
 		}
+		if err := registerPackageManagerPlugins(); err != nil {
+			return err
+		}
 		switch mode {
 		case "":
 			_, err = core.PublishStableRelease(cmd.Context(), root, cmd.OutOrStdout(), cmd.ErrOrStderr())

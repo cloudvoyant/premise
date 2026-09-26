@@ -170,6 +170,8 @@ workspace:
   name: example
   kind: monorepo
   schema-version: "0.2"
+  package_managers:
+    - bun
   providers:
     ci: github
     tools: mise
@@ -274,6 +276,21 @@ Version calculation relies on a `v0.0.0` stable bootstrap tag that must exist be
 Stable releases happen on pushes to `main`. The workflow calls `pm ci flow on-merge`, which validates the trunk and then invokes the stable release phase. Premise reuses a stable tag already present at HEAD or computes, creates, and pushes the next `vMAJOR.MINOR.PATCH` tag. It generates temporary GoReleaser configuration and publishes the GitHub archives that `install.sh` downloads. If there is no release-worthy change, the command skips cleanly. Reruns reuse the tag and replace conflicting release assets. Repositories do not carry `.goreleaser.yml`.
 
 Registries that publish language packages can keep credentials in separate CI steps with `pm release prepare`, `pm release github`, and `pm release packages`. `pm release snapshot` builds the complete artifact matrix without tagging or publishing.
+
+Package registry publication and application artifacts are separate decisions. Declare package managers explicitly under `workspace.package_managers`; native files do not select plugins. The declaration order is the release order. Plugins with the same ecosystem conflict, so Bun and pnpm cannot both manage npm packages in one workspace. A selected plugin extracts shared package metadata, checks whether each template is eligible for its registry, prepares downloadable GoReleaser archives, and runs package publish tasks. Premise owns the common version, tag, release order, and credential boundaries. A template without an eligible registry package or artifact destination remains unpublished; being private does not by itself rule out publishing to a restricted registry. Deployable images and static-site uploads still need an explicit destination and are not inferred from `kind: app`.
+
+```yaml
+workspace:
+  package_managers:
+    - go
+    - cargo
+    - bun
+```
+
+- Cargo publishes matching direct packages to crates.io unless `[package] publish = false` or its publish allowlist excludes crates.io. A matching direct `kind: app` also gets native GoReleaser archives even if registry publication is disabled. Nested Tauri packages do not enter either direct path; their template task and workflow publish installers separately.
+- Bun publishes packages with `private: false` and a `publishConfig.registry` through their template `publish` or `publish:rc` tasks. `publishConfig.access` describes public or restricted visibility; `private: true` disables registry publication. The current Bun CLI templates publish to npm. Bun has no downloadable native archive target, so GitHub artifact publication is skipped without skipping npm publication. Static sites and deployable apps need separately configured destinations.
+
+Registry credentials are only available to selected package tasks, not GoReleaser. Bun checks `NODE_AUTH_TOKEN` once per publication run and shares one temporary npm credential file among packages using the same registry. Cargo checks `CRATES_TOKEN` once when crates.io publication is eligible. Cargo's allowlist for a different registry does not trigger crates.io publication; publishing to that registry needs a separate configured adapter.
 
 Release-candidate publication is opt-in for Go: a feature-branch push whose HEAD commit message contains the exact marker `[publish-rc]` runs `mise run publish:rc`, which succeeds and prints only `Skipping RC publish: Go supports prerelease installs through commit hashes.` Go needs no prerelease artifact because installs resolve through commit hashes, so no RC tag or release is ever created.
 

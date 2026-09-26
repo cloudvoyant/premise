@@ -36,6 +36,12 @@ The action delegates lifecycle and publication policy to `pm ci flow`. The suppo
 
 The action accepts one `install-premise` mode. `pre-built` uses `install.sh`, `build` compiles the checked-out action source, and `skip` requires an existing `pm` on `PATH`. Real RC and stable publication remain in separate credential-bearing workflow steps.
 
+### Package and Artifact Publication Boundaries
+
+Package-manager plugins select registry packages separately from application artifacts. Premise retains version planning, tagging, release order, and credentials. A Cargo direct package reaches crates.io only when `[package] publish` permits it. A matching direct application reaches generic GoReleaser even when its registry publication is disabled. A nested Tauri package uses neither direct path; its workflow and template task publish native installers.
+
+Bun packages with `private: false` and `publishConfig.registry` use their template publish tasks. Public and restricted registry visibility are separate from publish eligibility. Bun has no configured native GitHub archives, so the artifact step skips without blocking npm publication. Static-site uploads, OCI images, and deploy targets are not inferred from `kind: app`; they require explicit publication configuration. A template with no selected registry or artifact destination remains unpublished.
+
 ### CI/CD Secrets
 
 Org-level secrets are utilized to avoid the need for setting up secrets for every new project. This means setup is only needed once.

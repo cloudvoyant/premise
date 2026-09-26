@@ -35,6 +35,21 @@ type miseRunner struct {
 	RemoveEnvironment []string
 }
 
+// MiseTaskRunner exposes the sanitized Mise process boundary to package
+// manager plugins without exposing credential or tool-environment policy.
+type MiseTaskRunner struct {
+	Stdout io.Writer
+	Stderr io.Writer
+}
+
+func (runner MiseTaskRunner) Run(ctx context.Context, directory string, additions []string, arguments ...string) error {
+	return (miseRunner{Stdout: runner.Stdout, Stderr: runner.Stderr}).run(ctx, directory, additions, arguments...)
+}
+
+func (runner MiseTaskRunner) TaskExists(ctx context.Context, directory, task string) (bool, error) {
+	return (miseRunner{Stderr: runner.Stderr}).taskExists(ctx, directory, task)
+}
+
 type MiseTool struct {
 	Raw            any
 	Selector       string
@@ -153,6 +168,9 @@ var publicationCredentialEnvironment = []string{
 	"CARGO_REGISTRY_TOKEN",
 	"CARGO_TOKEN",
 	"CRATES_TOKEN",
+	"NODE_AUTH_TOKEN",
+	"NPM_TOKEN",
+	"NPM_CONFIG_USERCONFIG",
 }
 
 // run executes one Mise command.

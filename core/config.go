@@ -35,11 +35,12 @@ type TemplateRegistry struct {
 }
 
 type Workspace struct {
-	Name          string      `yaml:"name"`
-	Kind          ProjectKind `yaml:"kind,omitempty"`
-	SchemaVersion string      `yaml:"schema-version"`
-	Providers     Providers   `yaml:"providers"`
-	Projects      []Project   `yaml:"projects"`
+	Name            string      `yaml:"name"`
+	Kind            ProjectKind `yaml:"kind,omitempty"`
+	SchemaVersion   string      `yaml:"schema-version"`
+	PackageManagers []string    `yaml:"package_managers,omitempty"`
+	Providers       Providers   `yaml:"providers"`
+	Projects        []Project   `yaml:"projects"`
 }
 
 type Providers struct {
@@ -301,6 +302,17 @@ func (manifest Config) Validate() error {
 	if manifest.Workspace.SchemaVersion != SchemaVersion {
 		return fmt.Errorf("workspace.schema-version must be %q", SchemaVersion)
 	}
+	seenPackageManagers := make(map[string]struct{}, len(manifest.Workspace.PackageManagers))
+	for index, packageManager := range manifest.Workspace.PackageManagers {
+		if err := ValidateProjectName(packageManager); err != nil {
+			return fmt.Errorf("workspace.package_managers[%d]: %w", index, err)
+		}
+		if _, duplicate := seenPackageManagers[packageManager]; duplicate {
+			return fmt.Errorf("workspace.package_managers contains duplicate %q", packageManager)
+		}
+		seenPackageManagers[packageManager] = struct{}{}
+	}
+
 	switch manifest.Workspace.Kind {
 	case "", ProjectKindMonorepo:
 	case ProjectKindTemplateRegistry:

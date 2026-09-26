@@ -16,100 +16,6 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
-func TestDetectReleaseProfile(t *testing.T) {
-	goRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(goRoot, "go.mod"), []byte("module example.com/app\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cargoRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(cargoRoot, "Cargo.toml"), []byte("[workspace]\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	for _, test := range []struct {
-		root string
-		want ReleaseProfile
-	}{
-		{root: goRoot, want: ReleaseProfileGo},
-		{root: cargoRoot, want: ReleaseProfileCargo},
-	} {
-		got, err := DetectReleaseProfile(test.root)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got != test.want {
-			t.Fatalf("DetectReleaseProfile(%s) = %q, want %q", test.root, got, test.want)
-		}
-	}
-}
-
-func TestGoReleaserConfigIsConventionDriven(t *testing.T) {
-	goRoot := t.TempDir()
-	goManifest := NewManifest("premise")
-	if err := SaveManifest(filepath.Join(goRoot, ManifestFilename), goManifest); err != nil {
-		t.Fatal(err)
-	}
-	goConfig, err := GoReleaserConfig(goRoot, ReleaseProfileGo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{
-		"project_name: premise",
-		"binary: premise",
-		"{{ .ProjectName }}-{{ .Tag }}-",
-		"mode: keep-existing",
-		"replace_existing_artifacts: true",
-	} {
-		if !strings.Contains(string(goConfig), want) {
-			t.Errorf("Go config does not contain %q", want)
-		}
-	}
-
-	cargoRoot := t.TempDir()
-	cargoManifest := NewManifest("premise-cargo")
-	cargoManifest.TemplateRegistry = &TemplateRegistry{WorkspaceFiles: []string{}, Templates: []Template{
-		templateFixture("premise-rust-lib", "lib"),
-		templateFixture("premise-rust-app", "app"),
-		templateFixture("premise-clap-cli", "app"),
-		templateFixture("premise-ratatui-app", "app"),
-	}}
-	if err := SaveManifest(filepath.Join(cargoRoot, ManifestFilename), cargoManifest); err != nil {
-		t.Fatal(err)
-	}
-	cargoConfig, err := GoReleaserConfig(cargoRoot, ReleaseProfileCargo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(cargoConfig)
-	for _, want := range []string{
-		"project_name: premise-cargo",
-		"id: premise-rust-app",
-		"id: premise-clap-cli",
-		"id: premise-ratatui-app",
-		"builder: rust",
-		"x86_64-unknown-linux-gnu",
-		"aarch64-unknown-linux-gnu",
-		"x86_64-apple-darwin",
-		"aarch64-apple-darwin",
-		`name_template: "{{ .Binary }}-{{ .Version }}-{{ .Os }}-{{ .Arch }}"`,
-	} {
-		if !strings.Contains(text, want) {
-			t.Errorf("Cargo config does not contain %q", want)
-		}
-	}
-	if strings.Contains(text, "premise-rust-lib") {
-		t.Error("Cargo library unexpectedly included in binary release config")
-	}
-	if count := strings.Count(text, "builder: rust"); count != 3 {
-		t.Fatalf("Cargo config contains %d Rust builds, want 3", count)
-	}
-	if count := strings.Count(text, "    targets:"); count != 3 {
-		t.Fatalf("Cargo config contains %d target matrices, want 3", count)
-	}
-	if count := strings.Count(text, "    name_template:"); count != 3 {
-		t.Fatalf("Cargo config contains %d archive templates, want 3", count)
-	}
-}
-
 func TestPlanStableReleaseCreatesAndReusesVersion(t *testing.T) {
 	root := t.TempDir()
 	repository, err := git.PlainInit(root, false)
@@ -167,26 +73,24 @@ func TestPlanStableReleaseCreatesAndReusesVersion(t *testing.T) {
 
 func TestPublishStableReleaseOrdersGitHubBeforeCargo(t *testing.T) {
 	root := writeTaggedCargoReleaseFixture(t)
-	originalGoReleaser := executeGoReleaser
-	originalCargoPublish := executeCargoPublish
-	defer func() {
-		executeGoReleaser = originalGoReleaser
-		executeCargoPublish = originalCargoPublish
-	}()
-
 	var calls []string
-	executeGoReleaser = func(_ context.Context, _ string, profile ReleaseProfile, snapshot bool, _, _ io.Writer) error {
-		if profile != ReleaseProfileCargo || snapshot {
-			t.Fatalf("unexpected GoReleaser arguments: profile=%q snapshot=%v", profile, snapshot)
+	useTestPackageManagers(t, testPackageManager{
+		id: "cargo",
+		publish: func(_ context.Context, _ string, version, task string, _, _ io.Writer) error {
+			if version != "v1.2.3" || task != "publish" {
+				t.Fatalf("Cargo publication: %q %q", version, task)
+			}
+			calls = append(calls, "cargo")
+			return nil
+		},
+	})
+	originalGoReleaser := executeGoReleaser
+	defer func() { executeGoReleaser = originalGoReleaser }()
+	executeGoReleaser = func(_ context.Context, _ string, plugins []PackageManagerPlugin, snapshot bool, _, _ io.Writer) error {
+		if len(plugins) != 1 || plugins[0].ID() != "cargo" || snapshot {
+			t.Fatalf("unexpected GoReleaser arguments: plugins=%v snapshot=%v", plugins, snapshot)
 		}
 		calls = append(calls, "github")
-		return nil
-	}
-	executeCargoPublish = func(_ context.Context, _ string, version string, _, _ io.Writer) error {
-		if version != "v1.2.3" {
-			t.Fatalf("Cargo version = %q, want v1.2.3", version)
-		}
-		calls = append(calls, "cargo")
 		return nil
 	}
 
@@ -203,13 +107,9 @@ func TestPublishStableReleaseOrdersGitHubBeforeCargo(t *testing.T) {
 
 	calls = nil
 	publishErr := errors.New("GitHub publication failed")
-	executeGoReleaser = func(_ context.Context, _ string, _ ReleaseProfile, _ bool, _, _ io.Writer) error {
+	executeGoReleaser = func(_ context.Context, _ string, _ []PackageManagerPlugin, _ bool, _, _ io.Writer) error {
 		calls = append(calls, "github")
 		return publishErr
-	}
-	executeCargoPublish = func(_ context.Context, _ string, _ string, _, _ io.Writer) error {
-		calls = append(calls, "cargo")
-		return nil
 	}
 	if _, err := PublishStableRelease(t.Context(), root, io.Discard, io.Discard); !errors.Is(err, publishErr) {
 		t.Fatalf("PublishStableRelease() error = %v, want %v", err, publishErr)
@@ -223,11 +123,16 @@ func writeTaggedCargoReleaseFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	manifest := NewManifest("premise-cargo")
+	manifest.Workspace.PackageManagers = []string{"cargo"}
 	manifest.TemplateRegistry = &TemplateRegistry{WorkspaceFiles: []string{}, Templates: []Template{templateFixture("premise-rust-app", "app")}}
 	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(root, "templates"), 0o755); err != nil {
+	appRoot := filepath.Join(root, "templates", "premise-rust-app")
+	if err := os.MkdirAll(appRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appRoot, "Cargo.toml"), []byte("[package]\nname = \"premise-rust-app\"\nversion = \"0.1.0\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "Cargo.toml"), []byte("[workspace]\n"), 0o644); err != nil {
@@ -333,6 +238,7 @@ func TestStableTagAtIgnoresUnrelatedTags(t *testing.T) {
 func TestReleaseSubprocessCredentialBoundaries(t *testing.T) {
 	root := t.TempDir()
 	manifest := NewManifest("premise")
+	manifest.Workspace.PackageManagers = []string{"go"}
 	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
 		t.Fatal(err)
 	}
@@ -388,7 +294,9 @@ printf '%s\n' "$*" >> "$CAPTURE"
 	if err := os.WriteFile(capture, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := runGoReleaser(t.Context(), root, ReleaseProfileGo, true, &output, &output); err != nil {
+	goPlugin := testPackageManager{id: "go", builds: "builds:\n  - id: premise\n"}
+	useTestPackageManagers(t, goPlugin)
+	if err := runGoReleaser(t.Context(), root, []PackageManagerPlugin{goPlugin}, true, &output, &output); err != nil {
 		t.Fatal(err)
 	}
 	captured, err := os.ReadFile(capture)
@@ -422,11 +330,16 @@ printf '%s\n' "$*" >> "$CAPTURE"
 
 	cargoRoot := t.TempDir()
 	cargoManifest := NewManifest("premise-cargo")
+	cargoManifest.Workspace.PackageManagers = []string{"cargo"}
 	cargoManifest.TemplateRegistry = &TemplateRegistry{WorkspaceFiles: []string{}, Templates: []Template{templateFixture("premise-rust-app", "app")}}
 	if err := SaveManifest(filepath.Join(cargoRoot, ManifestFilename), cargoManifest); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(cargoRoot, "templates"), 0o755); err != nil {
+	cargoAppRoot := filepath.Join(cargoRoot, "templates", "premise-rust-app")
+	if err := os.MkdirAll(cargoAppRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cargoAppRoot, "Cargo.toml"), []byte("[package]\nname = \"premise-rust-app\"\nversion = \"0.1.0\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(cargoRoot, "Cargo.toml"), []byte("[workspace]\n"), 0o644); err != nil {
@@ -436,7 +349,17 @@ printf '%s\n' "$*" >> "$CAPTURE"
 		t.Fatal(err)
 	}
 	t.Setenv("EXPECTED_INSTALL_DIRECTORY", cargoRoot)
-	if err := runGoReleaser(t.Context(), cargoRoot, ReleaseProfileCargo, true, &output, &output); err != nil {
+	cargoPlugin := testPackageManager{
+		id: "cargo", builds: "builds:\n  - id: premise-rust-app\n",
+		workspace: func(ctx context.Context, root string, stdout, stderr io.Writer) (string, bool, error) {
+			if err := (MiseTaskRunner{Stdout: stdout, Stderr: stderr}).Run(ctx, root, nil, "install"); err != nil {
+				return "", false, err
+			}
+			return root, true, nil
+		},
+	}
+	useTestPackageManagers(t, cargoPlugin)
+	if err := runGoReleaser(t.Context(), cargoRoot, []PackageManagerPlugin{cargoPlugin}, true, &output, &output); err != nil {
 		t.Fatal(err)
 	}
 	captured, err = os.ReadFile(capture)
