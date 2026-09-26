@@ -12,18 +12,34 @@ import (
 // manager-specific release operations selected by premise.yaml. Core owns
 // release sequencing; implementations own package-format behavior.
 type PackageManagerPlugin interface {
+	// ID returns the package manager name used in workspace.package_managers.
 	ID() string
+
 	// Ecosystem identifies managers that cannot be enabled together. Bun and
 	// pnpm both use "npm"; Go and Cargo use distinct ecosystem keys.
 	Ecosystem() string
+
+	// GetPackageMetadata reads one template's direct native package, when present.
 	GetPackageMetadata(root string, template Template) (PackageMetadata, bool, error)
+
+	// ValidatePackage validates one template's native package metadata.
 	ValidatePackage(root string, template Template) error
+
+	// WillPublishOk preflights one package without mutation or publication.
 	WillPublishOk(context.Context, string, Template, string, string) (bool, error)
+
 	// CreateGoReleaserConfig returns YAML with builds and/or archives lists,
 	// or an empty string when this manager has no downloadable artifacts.
 	CreateGoReleaserConfig(root string, manifest Config) (string, error)
+
+	// SupportsPackages reports whether the manager publishes registry packages.
 	SupportsPackages() bool
+
+	// PublishPackages publishes all eligible packages in the workspace.
 	PublishPackages(context.Context, string, string, string, io.Writer, io.Writer) error
+
+	// ReleaseWorkspace prepares and returns the directory used by GoReleaser.
+	// The boolean result requests serial artifact builds.
 	ReleaseWorkspace(context.Context, string, io.Writer, io.Writer) (string, bool, error)
 }
 

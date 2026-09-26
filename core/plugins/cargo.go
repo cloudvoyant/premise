@@ -14,9 +14,13 @@ import (
 	"github.com/cloudvoyant/premise/core"
 )
 
+// Cargo implements crates.io publication and Rust artifact preparation.
 type Cargo struct{}
 
-func (Cargo) ID() string        { return "cargo" }
+// ID returns the package manager identifier used by premise.yaml.
+func (Cargo) ID() string { return "cargo" }
+
+// Ecosystem returns the Cargo package ecosystem identifier.
 func (Cargo) Ecosystem() string { return "cargo" }
 
 // GetPackageMetadata reads one direct Cargo.toml. Virtual workspaces and
@@ -45,10 +49,13 @@ func (Cargo) GetPackageMetadata(root string, template core.Template) (core.Packa
 	}, true, nil
 }
 
-func (p Cargo) IsPublic(root string, template core.Template) (bool, error) {
+// IsPackagePublic reports whether a template has a public Cargo package.
+func (p Cargo) IsPackagePublic(root string, template core.Template) (bool, error) {
 	metadata, found, err := p.GetPackageMetadata(root, template)
 	return found && metadata.Public, err
 }
+
+// ShouldPublishPackage reports whether a template has an eligible Cargo package.
 func (p Cargo) ShouldPublishPackage(root string, template core.Template) (bool, error) {
 	metadata, found, err := p.GetPackageMetadata(root, template)
 	return found && metadata.Publishable, err
@@ -75,13 +82,21 @@ func (Cargo) WillPublishOk(ctx context.Context, root string, template core.Templ
 	exists, err := preflightCargoPackage(ctx, pkg, strings.TrimPrefix(version, "v"), task, core.MiseTaskRunner{}, client)
 	return !exists && err == nil, err
 }
+
+// SupportsPackages reports that Cargo publishes registry packages.
 func (Cargo) SupportsPackages() bool { return true }
+
+// PublishPackages publishes every eligible Cargo package after a complete preflight.
 func (Cargo) PublishPackages(ctx context.Context, root, version, task string, stdout, stderr io.Writer) error {
 	return publishCargoPackages(ctx, root, version, task, stdout, stderr)
 }
+
+// ReleaseWorkspace prepares the aggregate Cargo workspace for artifact builds.
 func (Cargo) ReleaseWorkspace(ctx context.Context, root string, stdout, stderr io.Writer) (string, bool, error) {
 	return prepareCargoReleaseWorkspace(ctx, root, stdout, stderr)
 }
+
+// CreateGoReleaserConfig returns Rust build and archive definitions.
 func (Cargo) CreateGoReleaserConfig(root string, manifest core.Config) (string, error) {
 	return cargoReleaseBuilds(root, manifest)
 }

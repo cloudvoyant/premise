@@ -37,9 +37,9 @@ func TestBunPluginSelectsRegistryPackagesIndependentlyOfVisibility(t *testing.T)
 			if err := os.WriteFile(filepath.Join(directory, "package.json"), []byte(tc.content), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			public, err := plugin.IsPublic(root, template)
+			public, err := plugin.IsPackagePublic(root, template)
 			if err != nil || public != tc.public {
-				t.Fatalf("IsPublic() = %v, %v", public, err)
+				t.Fatalf("IsPackagePublic() = %v, %v", public, err)
 			}
 			publish, err := plugin.ShouldPublishPackage(root, template)
 			if err != nil || publish != tc.publish {

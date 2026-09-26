@@ -13,9 +13,13 @@ import (
 	"github.com/cloudvoyant/premise/core"
 )
 
+// Bun implements npm-compatible package publication through the Bun CLI.
 type Bun struct{}
 
-func (Bun) ID() string        { return "bun" }
+// ID returns the package manager identifier used by premise.yaml.
+func (Bun) ID() string { return "bun" }
+
+// Ecosystem returns npm so incompatible npm package managers cannot coexist.
 func (Bun) Ecosystem() string { return "npm" }
 
 // GetPackageMetadata reads one direct package.json without applying release
@@ -51,10 +55,13 @@ func (Bun) GetPackageMetadata(root string, template core.Template) (core.Package
 	return metadata, true, nil
 }
 
-func (p Bun) IsPublic(root string, template core.Template) (bool, error) {
+// IsPackagePublic reports whether a template has a public Bun package.
+func (p Bun) IsPackagePublic(root string, template core.Template) (bool, error) {
 	metadata, found, err := p.GetPackageMetadata(root, template)
 	return found && metadata.Public, err
 }
+
+// ShouldPublishPackage reports whether a template has an eligible Bun package.
 func (p Bun) ShouldPublishPackage(root string, template core.Template) (bool, error) {
 	metadata, found, err := p.GetPackageMetadata(root, template)
 	return found && metadata.Publishable, err
@@ -76,15 +83,21 @@ func (Bun) WillPublishOk(ctx context.Context, root string, template core.Templat
 	_, found, err := preflightBunPackage(ctx, root, template, task, core.MiseTaskRunner{})
 	return found, err
 }
+
+// SupportsPackages reports that Bun publishes registry packages.
 func (Bun) SupportsPackages() bool { return true }
+
+// PublishPackages publishes every eligible Bun package after a complete preflight.
 func (Bun) PublishPackages(ctx context.Context, root, version, task string, stdout, stderr io.Writer) error {
 	return publishBunPackages(ctx, root, version, task, stdout, stderr)
 }
+
+// ReleaseWorkspace returns the repository root without additional preparation.
 func (Bun) ReleaseWorkspace(_ context.Context, root string, _, _ io.Writer) (string, bool, error) {
 	return root, false, nil
 }
 
-// Bun publishes registry packages, not downloadable native binaries.
+// CreateGoReleaserConfig returns no artifacts because Bun publishes registry packages.
 func (Bun) CreateGoReleaserConfig(_ string, _ core.Config) (string, error) { return "", nil }
 
 func bunPackageRegistry(pkg core.BunPackage) (*url.URL, error) {

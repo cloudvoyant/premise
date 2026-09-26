@@ -9,7 +9,7 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-func releasePlugins(root string) (Config, []PackageManagerPlugin, error) {
+func loadReleasePlugins(root string) (Config, []PackageManagerPlugin, error) {
 	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
 	if err != nil {
 		return Config{}, nil, fmt.Errorf("load release manifest: %w", err)

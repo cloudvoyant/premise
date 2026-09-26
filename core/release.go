@@ -39,7 +39,7 @@ type ReleasePlan struct {
 }
 
 func publishReleaseCandidate(ctx context.Context, root string, kind ProjectKind, stdout, stderr io.Writer) error {
-	_, plugins, err := releasePlugins(root)
+	_, plugins, err := loadReleasePlugins(root)
 	if err != nil {
 		return err
 	}
@@ -162,7 +162,7 @@ func PublishGitHubRelease(ctx context.Context, root string, stdout, stderr io.Wr
 	if err != nil || plan.Skip {
 		return plan, err
 	}
-	_, plugins, err := releasePlugins(root)
+	_, plugins, err := loadReleasePlugins(root)
 	if err != nil {
 		return ReleasePlan{}, fmt.Errorf("resolve package managers: %w", err)
 	}
@@ -179,7 +179,7 @@ func PublishLanguagePackages(ctx context.Context, root string, stdout, stderr io
 	if err != nil || plan.Skip {
 		return plan, err
 	}
-	_, plugins, err := releasePlugins(root)
+	_, plugins, err := loadReleasePlugins(root)
 	if err != nil {
 		return ReleasePlan{}, fmt.Errorf("resolve package managers: %w", err)
 	}
@@ -206,7 +206,7 @@ func PublishStableRelease(ctx context.Context, root string, stdout, stderr io.Wr
 	if err != nil || plan.Skip {
 		return plan, err
 	}
-	_, plugins, err := releasePlugins(root)
+	_, plugins, err := loadReleasePlugins(root)
 	if err != nil {
 		return ReleasePlan{}, fmt.Errorf("resolve package managers: %w", err)
 	}
@@ -243,7 +243,7 @@ func requirePreparedRelease(ctx context.Context, root string, stdout io.Writer) 
 // BuildReleaseSnapshot builds the complete release matrix without publishing a
 // GitHub release, creating a tag, or publishing language packages.
 func BuildReleaseSnapshot(ctx context.Context, root string, stdout, stderr io.Writer) error {
-	_, plugins, err := releasePlugins(root)
+	_, plugins, err := loadReleasePlugins(root)
 	if err != nil {
 		return fmt.Errorf("resolve package managers: %w", err)
 	}
@@ -256,7 +256,7 @@ func BuildReleaseSnapshot(ctx context.Context, root string, stdout, stderr io.Wr
 // GoReleaserConfig generates Premise-owned GoReleaser configuration for a
 // conventionally structured repository. Consumers do not need a config file.
 func GoReleaserConfig(root string) ([]byte, error) {
-	manifest, plugins, err := releasePlugins(root)
+	manifest, plugins, err := loadReleasePlugins(root)
 	if err != nil {
 		return nil, err
 	}
@@ -296,7 +296,7 @@ release:
 }
 
 func runGoReleaser(ctx context.Context, root string, plugins []PackageManagerPlugin, snapshot bool, stdout, stderr io.Writer) error {
-	manifest, _, err := releasePlugins(root)
+	manifest, _, err := loadReleasePlugins(root)
 	if err != nil {
 		return err
 	}
