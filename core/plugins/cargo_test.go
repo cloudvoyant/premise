@@ -13,29 +13,7 @@ import (
 	"github.com/cloudvoyant/premise/core"
 )
 
-func TestIsRegistry(t *testing.T) {
-	root := t.TempDir()
-	if registry, err := isCargoRegistry(root); err != nil || registry {
-		t.Fatalf("isCargoRegistry(empty) = %v, %v; want false", registry, err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, "templates"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "templates", "Cargo.toml"), []byte("[workspace]\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if registry, err := isCargoRegistry(root); err != nil || registry {
-		t.Fatalf("isCargoRegistry(templates/Cargo.toml) = %v, %v; want false", registry, err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "Cargo.toml"), []byte("[workspace]\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if registry, err := isCargoRegistry(root); err != nil || !registry {
-		t.Fatalf("isCargoRegistry(Cargo.toml) = %v, %v; want true", registry, err)
-	}
-}
-
-func TestInspectCargoTemplatePackage(t *testing.T) {
+func TestCargoGetPackageMetadata(t *testing.T) {
 	for _, test := range []struct {
 		name            string
 		kind            string
@@ -79,10 +57,10 @@ func TestInspectCargoTemplatePackage(t *testing.T) {
 				}
 			}
 
-			got, found, err := inspectCargoTemplatePackage(root, template)
+			got, found, err := (Cargo{}).GetPackageMetadata(root, template)
 			if test.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), test.wantError) {
-					t.Fatalf("inspectCargoTemplatePackage() error = %v, want %q", err, test.wantError)
+					t.Fatalf("GetPackageMetadata() error = %v, want %q", err, test.wantError)
 				}
 				return
 			}
@@ -90,16 +68,16 @@ func TestInspectCargoTemplatePackage(t *testing.T) {
 				t.Fatal(err)
 			}
 			if found != test.found {
-				t.Fatalf("inspectCargoTemplatePackage() found = %v, want %v", found, test.found)
+				t.Fatalf("GetPackageMetadata() found = %v, want %v", found, test.found)
 			}
 			if !found {
 				return
 			}
-			if got.Template.Name != template.Name || got.Directory != directory || got.Name != template.Name {
-				t.Fatalf("inspectCargoTemplatePackage() = %#v", got)
+			if got.Name != template.Name || got.Path != directory || got.PackageManager != "cargo" || got.Ecosystem != "cargo" {
+				t.Fatalf("GetPackageMetadata() = %#v", got)
 			}
-			if got.RegistryPublish != test.registryPublish {
-				t.Fatalf("inspectCargoTemplatePackage() RegistryPublish = %v, want %v", got.RegistryPublish, test.registryPublish)
+			if got.Publishable != test.registryPublish || got.Public != test.registryPublish {
+				t.Fatalf("GetPackageMetadata() publishable/public = %v/%v, want %v", got.Publishable, got.Public, test.registryPublish)
 			}
 		})
 	}
@@ -183,6 +161,90 @@ esac
 	}
 	if _, err := os.Stat(capture); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("publication started before preflight completed: %v", err)
+	}
+}
+
+func TestCargoPublicationAggregatesPreflightErrorsBeforeChangingFiles(t *testing.T) {
+	root := t.TempDir()
+	manifest := NewManifest("cargo-fixture")
+	for _, name := range []string{"ready", "bad-name", "missing-task"} {
+		template := templateFixture(name, "lib")
+		if manifest.TemplateRegistry == nil {
+			manifest.TemplateRegistry = &TemplateRegistry{WorkspaceFiles: []string{}}
+		}
+		manifest.TemplateRegistry.Templates = append(manifest.TemplateRegistry.Templates, template)
+		directory := filepath.Join(root, filepath.FromSlash(template.Path))
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		packageName := name
+		if name == "bad-name" {
+			packageName = "unexpected-name"
+		}
+		content := "[package]\nname = \"" + packageName + "\"\nversion = \"0.1.0\"\n"
+		if err := os.WriteFile(filepath.Join(directory, "Cargo.toml"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "Cargo.toml"), []byte("[workspace]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(root, "Cargo.lock")
+	if err := os.WriteFile(lockPath, []byte("original lock\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if strings.Contains(request.URL.Path, "missing-task") {
+			response.WriteHeader(http.StatusInternalServerError)
+		} else {
+			response.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	originalAPI := cratesAPIBaseURL
+	cratesAPIBaseURL = server.URL
+	defer func() { cratesAPIBaseURL = originalAPI }()
+	bin := t.TempDir()
+	capture := filepath.Join(t.TempDir(), "side-effect")
+	shim := `#!/bin/sh
+case "$*" in
+  "task info publish --json")
+    case "$PWD" in */missing-task) echo "Task not found" >&2; exit 1;; esac ;;
+  "exec -- cargo generate-lockfile"|"run publish") printf 'ran' > "$CAPTURE" ;;
+  *) exit 9 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "mise"), []byte(shim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CAPTURE", capture)
+	t.Setenv("CRATES_TOKEN", "")
+	if err := (Cargo{}).ValidatePackage(root, templateFixture("bad-name", "lib")); err == nil || !strings.Contains(err.Error(), "does not match declared template") {
+		t.Fatalf("ValidatePackage() = %v", err)
+	}
+	ready, err := (Cargo{}).WillPublishOk(t.Context(), root, templateFixture("ready", "lib"), "v1.2.3", "publish")
+	if err != nil || !ready {
+		t.Fatalf("WillPublishOk(ready) = %v, %v", ready, err)
+	}
+	var output bytes.Buffer
+	err = publishCargoPackages(t.Context(), root, "v1.2.3", "publish", &output, &output)
+	for _, want := range []string{"bad-name", "missing-task", "HTTP 500", "CRATES_TOKEN"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("preflight error %v does not contain %q", err, want)
+		}
+	}
+	if _, err := os.Stat(capture); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("publication or lockfile generation started despite preflight failures: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(root, "templates", "ready", "Cargo.toml")); err != nil || !strings.Contains(string(data), `version = "0.1.0"`) {
+		t.Fatalf("Cargo version changed during preflight: %q, %v", data, err)
+	}
+	if data, err := os.ReadFile(lockPath); err != nil || string(data) != "original lock\n" {
+		t.Fatalf("Cargo lockfile changed during preflight: %q, %v", data, err)
 	}
 }
 

@@ -2,6 +2,8 @@ package plugins
 
 import (
 	"path/filepath"
+	"sync"
+	"testing"
 
 	"github.com/cloudvoyant/premise/core"
 )
@@ -13,6 +15,24 @@ const ManifestFilename = core.ManifestFilename
 
 var NewManifest = core.NewManifest
 var SaveManifest = core.SaveManifest
+
+var testRegisterBuiltinsOnce sync.Once
+var testRegisterBuiltinsErr error
+
+func registerBuiltins(t *testing.T) {
+	t.Helper()
+	testRegisterBuiltinsOnce.Do(func() {
+		for _, plugin := range []core.PackageManagerPlugin{Go{}, Cargo{}, Bun{}} {
+			if err := core.RegisterPackageManagerPlugin(plugin); err != nil {
+				testRegisterBuiltinsErr = err
+				return
+			}
+		}
+	})
+	if testRegisterBuiltinsErr != nil {
+		t.Fatal(testRegisterBuiltinsErr)
+	}
+}
 
 func templateFixture(name, kind string) core.Template {
 	return core.Template{

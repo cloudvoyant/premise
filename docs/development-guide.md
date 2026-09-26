@@ -23,16 +23,16 @@ main.go               # CLI entry point (package main)
 cmd/                   # Cobra command tree
 core/                  # Public library surface, split into responsibility-focused modules
 core/misex.go          # Mise command extension and sole executable boundary
-core/osx.go            # Shared filesystem checks for plugin detection
+core/osx.go            # Shared filesystem checks
+core/bunx.go           # Generic package.json reading for Bun packages
 core/cargox.go         # Generic Cargo manifest reading and version edits
-core/package_manager_plugin.go # Plugin interface and registration
-core/package_manager_group.go  # Combine matching managers in one release
+core/package_metadata.go # Package-manager-neutral metadata
+core/package_manager_plugin.go # Plugin contract, registration, and selection
+core/release_plugins.go # Release sequencing across selected managers
 core/plugins/go.go     # Go artifact policy
-core/plugins/cargo.go  # Cargo plugin adapter
-core/plugins/cargo_policy.go # Premise-specific Cargo template and artifact policy
-core/plugins/cargo_publish.go # Cargo publication and workspace setup
-core/plugins/bun.go    # Bun package eligibility and npm publication
-core/plugins/plugins.go # Explicit built-in registration for the CLI
+core/plugins/cargo.go  # Cargo metadata, artifact, and publication policy
+core/plugins/bun.go    # Bun metadata and npm publication policy
+cmd/package_manager_plugins.go # CLI composition of built-in plugins
 core/ci.go             # Lifecycle selection and release-phase gating
 core/release.go        # Shared stable/RC release preparation and publication
 core/version.go        # Semantic version calculation and validation
@@ -68,7 +68,7 @@ go get github.com/cloudvoyant/premise@vX.Y.Z
     flow: on-commit
 ```
 
-The CLI explicitly registers its built-in Go, Cargo, and Bun plugins before release flows. Library clients can call `core.RegisterPackageManagerPlugin(customPlugin)` before running a release; no dynamic loader or `init()` registration is required. Plugin IDs must be unique. Every matching root-level plugin participates in one release, in registration order; nested-only package managers are not detected automatically. GoReleaser builds and archives are combined, and each eligible package publisher receives the same version. The action only sets up Mise, installs Premise, and calls `pm ci flow`. Set `install-premise` to `pre-built` to install a release, `build` to build the checked-out action source, or `skip` when `pm` is already on `PATH`.
+The CLI composition root explicitly registers its built-in Go, Cargo, and Bun plugins before release flows. Library clients can call `core.RegisterPackageManagerPlugin(customPlugin)` before running a release; no dynamic loader or `init()` registration is required. `workspace.package_managers` selects plugins by ID in release order. File presence never selects a plugin. Managers with the same ecosystem conflict, so a workspace cannot enable Bun and pnpm together. GoReleaser builds and archives are combined, and each eligible package publisher receives the same version. Bun and Cargo plugins expose `GetPackageMetadata`, `ValidatePackage`, and `WillPublishOk`. Publication collects preflight errors across templates before making changes or publishing. Bun checks `NODE_AUTH_TOKEN` once and reuses one temporary credential file per registry. The action only sets up Mise, installs Premise, and calls `pm ci flow`. Set `install-premise` to `pre-built` to install a release, `build` to build the checked-out action source, or `skip` when `pm` is already on `PATH`.
 
 ```yaml
 - uses: cloudvoyant/premise@<revision>

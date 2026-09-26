@@ -75,7 +75,7 @@ func TestPublishStableReleaseOrdersGitHubBeforeCargo(t *testing.T) {
 	root := writeTaggedCargoReleaseFixture(t)
 	var calls []string
 	useTestPackageManagers(t, testPackageManager{
-		id: "cargo", filename: "Cargo.toml",
+		id: "cargo",
 		publish: func(_ context.Context, _ string, version, task string, _, _ io.Writer) error {
 			if version != "v1.2.3" || task != "publish" {
 				t.Fatalf("Cargo publication: %q %q", version, task)
@@ -86,9 +86,9 @@ func TestPublishStableReleaseOrdersGitHubBeforeCargo(t *testing.T) {
 	})
 	originalGoReleaser := executeGoReleaser
 	defer func() { executeGoReleaser = originalGoReleaser }()
-	executeGoReleaser = func(_ context.Context, _ string, plugin PackageManagerPlugin, snapshot bool, _, _ io.Writer) error {
-		if plugin.ID() != "cargo" || snapshot {
-			t.Fatalf("unexpected GoReleaser arguments: plugin=%q snapshot=%v", plugin.ID(), snapshot)
+	executeGoReleaser = func(_ context.Context, _ string, plugins []PackageManagerPlugin, snapshot bool, _, _ io.Writer) error {
+		if len(plugins) != 1 || plugins[0].ID() != "cargo" || snapshot {
+			t.Fatalf("unexpected GoReleaser arguments: plugins=%v snapshot=%v", plugins, snapshot)
 		}
 		calls = append(calls, "github")
 		return nil
@@ -107,7 +107,7 @@ func TestPublishStableReleaseOrdersGitHubBeforeCargo(t *testing.T) {
 
 	calls = nil
 	publishErr := errors.New("GitHub publication failed")
-	executeGoReleaser = func(_ context.Context, _ string, _ PackageManagerPlugin, _ bool, _, _ io.Writer) error {
+	executeGoReleaser = func(_ context.Context, _ string, _ []PackageManagerPlugin, _ bool, _, _ io.Writer) error {
 		calls = append(calls, "github")
 		return publishErr
 	}
@@ -123,6 +123,7 @@ func writeTaggedCargoReleaseFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	manifest := NewManifest("premise-cargo")
+	manifest.Workspace.PackageManagers = []string{"cargo"}
 	manifest.TemplateRegistry = &TemplateRegistry{WorkspaceFiles: []string{}, Templates: []Template{templateFixture("premise-rust-app", "app")}}
 	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
 		t.Fatal(err)
@@ -237,6 +238,7 @@ func TestStableTagAtIgnoresUnrelatedTags(t *testing.T) {
 func TestReleaseSubprocessCredentialBoundaries(t *testing.T) {
 	root := t.TempDir()
 	manifest := NewManifest("premise")
+	manifest.Workspace.PackageManagers = []string{"go"}
 	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +294,9 @@ printf '%s\n' "$*" >> "$CAPTURE"
 	if err := os.WriteFile(capture, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := runGoReleaser(t.Context(), root, testPackageManager{id: "go", builds: "builds:\n  - id: premise\n"}, true, &output, &output); err != nil {
+	goPlugin := testPackageManager{id: "go", builds: "builds:\n  - id: premise\n"}
+	useTestPackageManagers(t, goPlugin)
+	if err := runGoReleaser(t.Context(), root, []PackageManagerPlugin{goPlugin}, true, &output, &output); err != nil {
 		t.Fatal(err)
 	}
 	captured, err := os.ReadFile(capture)
@@ -326,6 +330,7 @@ printf '%s\n' "$*" >> "$CAPTURE"
 
 	cargoRoot := t.TempDir()
 	cargoManifest := NewManifest("premise-cargo")
+	cargoManifest.Workspace.PackageManagers = []string{"cargo"}
 	cargoManifest.TemplateRegistry = &TemplateRegistry{WorkspaceFiles: []string{}, Templates: []Template{templateFixture("premise-rust-app", "app")}}
 	if err := SaveManifest(filepath.Join(cargoRoot, ManifestFilename), cargoManifest); err != nil {
 		t.Fatal(err)
@@ -344,7 +349,7 @@ printf '%s\n' "$*" >> "$CAPTURE"
 		t.Fatal(err)
 	}
 	t.Setenv("EXPECTED_INSTALL_DIRECTORY", cargoRoot)
-	if err := runGoReleaser(t.Context(), cargoRoot, testPackageManager{
+	cargoPlugin := testPackageManager{
 		id: "cargo", builds: "builds:\n  - id: premise-rust-app\n",
 		workspace: func(ctx context.Context, root string, stdout, stderr io.Writer) (string, bool, error) {
 			if err := (MiseTaskRunner{Stdout: stdout, Stderr: stderr}).Run(ctx, root, nil, "install"); err != nil {
@@ -352,7 +357,9 @@ printf '%s\n' "$*" >> "$CAPTURE"
 			}
 			return root, true, nil
 		},
-	}, true, &output, &output); err != nil {
+	}
+	useTestPackageManagers(t, cargoPlugin)
+	if err := runGoReleaser(t.Context(), cargoRoot, []PackageManagerPlugin{cargoPlugin}, true, &output, &output); err != nil {
 		t.Fatal(err)
 	}
 	captured, err = os.ReadFile(capture)

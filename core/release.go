@@ -39,20 +39,31 @@ type ReleasePlan struct {
 }
 
 func publishReleaseCandidate(ctx context.Context, root string, kind ProjectKind, stdout, stderr io.Writer) error {
-	plugin, err := packageManagerForRoot(root)
+	_, plugins, err := releasePlugins(root)
 	if err != nil {
 		return err
 	}
-	if plugin.SupportsPackages() {
+	packagePublishers := make([]PackageManagerPlugin, 0, len(plugins))
+	for _, plugin := range plugins {
+		if plugin.SupportsPackages() {
+			packagePublishers = append(packagePublishers, plugin)
+		}
+	}
+	if len(packagePublishers) != 0 {
 		identifier := os.Getenv("GITHUB_RUN_NUMBER")
 		if err := ValidateRCIdentifier(identifier); err != nil {
-			return fmt.Errorf("resolve %s RC identifier: %w", plugin.ID(), err)
+			return fmt.Errorf("resolve RC identifier: %w", err)
 		}
 		version, err := ReleaseCandidateVersion(root, identifier)
 		if err != nil {
 			return err
 		}
-		return plugin.PublishPackages(ctx, root, version, "publish:rc", stdout, stderr)
+		for _, plugin := range packagePublishers {
+			if err := plugin.PublishPackages(ctx, root, version, "publish:rc", stdout, stderr); err != nil {
+				return fmt.Errorf("publish %s RC packages: %w", plugin.ID(), err)
+			}
+		}
+		return nil
 	}
 
 	if kind == "" {
@@ -151,11 +162,11 @@ func PublishGitHubRelease(ctx context.Context, root string, stdout, stderr io.Wr
 	if err != nil || plan.Skip {
 		return plan, err
 	}
-	plugin, err := packageManagerForRoot(root)
+	_, plugins, err := releasePlugins(root)
 	if err != nil {
-		return ReleasePlan{}, fmt.Errorf("detect package manager: %w", err)
+		return ReleasePlan{}, fmt.Errorf("resolve package managers: %w", err)
 	}
-	if err := executeGoReleaser(ctx, root, plugin, false, stdout, stderr); err != nil {
+	if err := executeGoReleaser(ctx, root, plugins, false, stdout, stderr); err != nil {
 		return ReleasePlan{}, fmt.Errorf("publish GitHub release: %w", err)
 	}
 	return plan, nil
@@ -168,15 +179,22 @@ func PublishLanguagePackages(ctx context.Context, root string, stdout, stderr io
 	if err != nil || plan.Skip {
 		return plan, err
 	}
-	plugin, err := packageManagerForRoot(root)
+	_, plugins, err := releasePlugins(root)
 	if err != nil {
-		return ReleasePlan{}, fmt.Errorf("detect package manager: %w", err)
+		return ReleasePlan{}, fmt.Errorf("resolve package managers: %w", err)
 	}
-	if !plugin.SupportsPackages() {
-		return ReleasePlan{}, fmt.Errorf("package manager %q does not publish language packages", plugin.ID())
+	published := false
+	for _, plugin := range plugins {
+		if !plugin.SupportsPackages() {
+			continue
+		}
+		published = true
+		if err := plugin.PublishPackages(ctx, root, plan.Version, "publish", stdout, stderr); err != nil {
+			return ReleasePlan{}, fmt.Errorf("publish %s packages: %w", plugin.ID(), err)
+		}
 	}
-	if err := plugin.PublishPackages(ctx, root, plan.Version, "publish", stdout, stderr); err != nil {
-		return ReleasePlan{}, fmt.Errorf("publish %s packages: %w", plugin.ID(), err)
+	if !published {
+		return ReleasePlan{}, errors.New("workspace package managers do not publish language packages")
 	}
 	return plan, nil
 }
@@ -188,14 +206,17 @@ func PublishStableRelease(ctx context.Context, root string, stdout, stderr io.Wr
 	if err != nil || plan.Skip {
 		return plan, err
 	}
-	plugin, err := packageManagerForRoot(root)
+	_, plugins, err := releasePlugins(root)
 	if err != nil {
-		return ReleasePlan{}, fmt.Errorf("detect package manager: %w", err)
+		return ReleasePlan{}, fmt.Errorf("resolve package managers: %w", err)
 	}
-	if err := executeGoReleaser(ctx, root, plugin, false, stdout, stderr); err != nil {
+	if err := executeGoReleaser(ctx, root, plugins, false, stdout, stderr); err != nil {
 		return ReleasePlan{}, fmt.Errorf("publish GitHub release: %w", err)
 	}
-	if plugin.SupportsPackages() {
+	for _, plugin := range plugins {
+		if !plugin.SupportsPackages() {
+			continue
+		}
 		if err := plugin.PublishPackages(ctx, root, plan.Version, "publish", stdout, stderr); err != nil {
 			return ReleasePlan{}, fmt.Errorf("publish %s packages: %w", plugin.ID(), err)
 		}
@@ -222,11 +243,11 @@ func requirePreparedRelease(ctx context.Context, root string, stdout io.Writer) 
 // BuildReleaseSnapshot builds the complete release matrix without publishing a
 // GitHub release, creating a tag, or publishing language packages.
 func BuildReleaseSnapshot(ctx context.Context, root string, stdout, stderr io.Writer) error {
-	plugin, err := packageManagerForRoot(root)
+	_, plugins, err := releasePlugins(root)
 	if err != nil {
-		return fmt.Errorf("detect package manager: %w", err)
+		return fmt.Errorf("resolve package managers: %w", err)
 	}
-	if err := executeGoReleaser(ctx, root, plugin, true, stdout, stderr); err != nil {
+	if err := executeGoReleaser(ctx, root, plugins, true, stdout, stderr); err != nil {
 		return fmt.Errorf("build release snapshot: %w", err)
 	}
 	return nil
@@ -235,24 +256,20 @@ func BuildReleaseSnapshot(ctx context.Context, root string, stdout, stderr io.Wr
 // GoReleaserConfig generates Premise-owned GoReleaser configuration for a
 // conventionally structured repository. Consumers do not need a config file.
 func GoReleaserConfig(root string) ([]byte, error) {
-	plugin, err := packageManagerForRoot(root)
+	manifest, plugins, err := releasePlugins(root)
 	if err != nil {
 		return nil, err
 	}
-	return goReleaserConfig(root, plugin)
+	return goReleaserConfig(root, manifest, plugins)
 }
 
-func goReleaserConfig(root string, plugin PackageManagerPlugin) ([]byte, error) {
-	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
-	if err != nil {
-		return nil, fmt.Errorf("load release manifest: %w", err)
-	}
+func goReleaserConfig(root string, manifest Config, plugins []PackageManagerPlugin) ([]byte, error) {
 	project := manifest.Workspace.Name
 	if project == "" {
 		project = filepath.Base(filepath.Clean(root))
 	}
 
-	builds, err := plugin.CreateGoReleaserConfig(root, manifest)
+	builds, err := packageManagerReleaseConfig(root, manifest, plugins)
 	if err != nil || builds == "" {
 		return nil, err
 	}
@@ -278,16 +295,20 @@ release:
 	return []byte(builder.String()), nil
 }
 
-func runGoReleaser(ctx context.Context, root string, plugin PackageManagerPlugin, snapshot bool, stdout, stderr io.Writer) error {
-	configuration, err := goReleaserConfig(root, plugin)
+func runGoReleaser(ctx context.Context, root string, plugins []PackageManagerPlugin, snapshot bool, stdout, stderr io.Writer) error {
+	manifest, _, err := releasePlugins(root)
+	if err != nil {
+		return err
+	}
+	configuration, err := goReleaserConfig(root, manifest, plugins)
 	if err != nil {
 		return fmt.Errorf("generate GoReleaser configuration: %w", err)
 	}
 	if len(configuration) == 0 {
-		fmt.Fprintf(stdout, "skip: %s has no downloadable release artifacts\n", plugin.ID())
+		fmt.Fprintln(stdout, "skip: workspace has no downloadable release artifacts")
 		return nil
 	}
-	workingDirectory, serial, err := plugin.ReleaseWorkspace(ctx, root, stdout, stderr)
+	workingDirectory, serial, err := prepareReleaseWorkspace(ctx, root, manifest, plugins, stdout, stderr)
 	if err != nil {
 		return err
 	}

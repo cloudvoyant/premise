@@ -5,7 +5,6 @@ import (
 	"os"
 
 	core "github.com/cloudvoyant/premise/core"
-	"github.com/cloudvoyant/premise/core/plugins"
 	"github.com/spf13/cobra"
 )
 
@@ -26,7 +25,7 @@ var releaseCmd = &cobra.Command{
 		if len(args) == 1 {
 			mode = args[0]
 		}
-		if err := plugins.RegisterBuiltins(); err != nil {
+		if err := registerPackageManagerPlugins(); err != nil {
 			return err
 		}
 		switch mode {

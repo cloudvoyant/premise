@@ -2,16 +2,13 @@ package core
 
 import (
 	"context"
-	"errors"
 	"io"
-	"os"
-	"path/filepath"
 	"testing"
 )
 
 type testPackageManager struct {
 	id        string
-	filename  string
+	ecosystem string
 	builds    string
 	buildErr  error
 	publish   func(context.Context, string, string, string, io.Writer, io.Writer) error
@@ -19,15 +16,17 @@ type testPackageManager struct {
 }
 
 func (p testPackageManager) ID() string { return p.id }
-func (p testPackageManager) Detect(root string) (bool, error) {
-	_, err := os.Stat(filepath.Join(root, p.filename))
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
+func (p testPackageManager) Ecosystem() string {
+	if p.ecosystem != "" {
+		return p.ecosystem
 	}
-	return err == nil, err
+	return p.id
 }
-func (p testPackageManager) IsPublic(_ string, _ Template) (bool, error) { return false, nil }
-func (p testPackageManager) ShouldPublishPackage(_ string, _ Template) (bool, error) {
+func (p testPackageManager) GetPackageMetadata(_ string, _ Template) (PackageMetadata, bool, error) {
+	return PackageMetadata{}, false, nil
+}
+func (p testPackageManager) ValidatePackage(_ string, _ Template) error { return nil }
+func (p testPackageManager) WillPublishOk(_ context.Context, _ string, _ Template, _, _ string) (bool, error) {
 	return false, nil
 }
 func (p testPackageManager) SupportsPackages() bool { return p.publish != nil }
@@ -66,19 +65,29 @@ func useTestPackageManagers(t *testing.T, plugins ...PackageManagerPlugin) {
 }
 
 func TestPackageManagerRegistration(t *testing.T) {
-	useTestPackageManagers(t, testPackageManager{id: "test", filename: "go.mod"})
+	useTestPackageManagers(t, testPackageManager{id: "test"})
 	if err := RegisterPackageManagerPlugin(testPackageManager{id: "test"}); err == nil {
 		t.Fatal("duplicate plugin ID accepted")
 	}
 	if err := RegisterPackageManagerPlugin(nil); err == nil {
 		t.Fatal("nil plugin accepted")
 	}
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/app\n"), 0o644); err != nil {
-		t.Fatal(err)
+	manifest := NewManifest("test")
+	manifest.Workspace.PackageManagers = []string{"test"}
+	plugins, err := packageManagersForConfig(manifest)
+	if err != nil || len(plugins) != 1 || plugins[0].ID() != "test" {
+		t.Fatalf("selected package managers = %v, %v", plugins, err)
 	}
-	plugin, err := packageManagerForRoot(root)
-	if err != nil || plugin.ID() != "test" {
-		t.Fatalf("selected package manager = %v, %v", plugin, err)
+}
+
+func TestPackageManagerSelectionRejectsConflictingEcosystems(t *testing.T) {
+	useTestPackageManagers(t,
+		testPackageManager{id: "bun", ecosystem: "npm"},
+		testPackageManager{id: "pnpm", ecosystem: "npm"},
+	)
+	manifest := NewManifest("test")
+	manifest.Workspace.PackageManagers = []string{"bun", "pnpm"}
+	if _, err := packageManagersForConfig(manifest); err == nil {
+		t.Fatal("conflicting npm package managers accepted")
 	}
 }

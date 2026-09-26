@@ -8,14 +8,17 @@ import (
 	"sync"
 )
 
-// PackageManagerPlugin supplies a package manager's detection, publication,
-// and artifact policy. Core owns the shared release process; implementations
-// can be registered by the CLI or by clients without core importing them.
+// PackageManagerPlugin parses native package specifications and supplies the
+// manager-specific release operations selected by premise.yaml. Core owns
+// release sequencing; implementations own package-format behavior.
 type PackageManagerPlugin interface {
 	ID() string
-	Detect(root string) (bool, error)
-	IsPublic(root string, template Template) (bool, error)
-	ShouldPublishPackage(root string, template Template) (bool, error)
+	// Ecosystem identifies managers that cannot be enabled together. Bun and
+	// pnpm both use "npm"; Go and Cargo use distinct ecosystem keys.
+	Ecosystem() string
+	GetPackageMetadata(root string, template Template) (PackageMetadata, bool, error)
+	ValidatePackage(root string, template Template) error
+	WillPublishOk(context.Context, string, Template, string, string) (bool, error)
 	// CreateGoReleaserConfig returns YAML with builds and/or archives lists,
 	// or an empty string when this manager has no downloadable artifacts.
 	CreateGoReleaserConfig(root string, manifest Config) (string, error)
@@ -29,8 +32,8 @@ var packageManagerRegistry struct {
 	plugins []PackageManagerPlugin
 }
 
-// RegisterPackageManagerPlugin adds a plugin in release order. Every matching
-// root-level plugin participates; register before releasing. IDs must be unique.
+// RegisterPackageManagerPlugin registers an implementation by ID. Workspaces
+// select registered plugins explicitly through workspace.package_managers.
 func RegisterPackageManagerPlugin(plugin PackageManagerPlugin) error {
 	if plugin == nil {
 		return errors.New("package manager plugin cannot be nil")
@@ -50,35 +53,40 @@ func RegisterPackageManagerPlugin(plugin PackageManagerPlugin) error {
 	return nil
 }
 
-// packageManagerForRoot returns a single plugin or a group when multiple root
-// conventions match, so the existing release pipeline publishes them together.
-func packageManagerForRoot(root string) (PackageManagerPlugin, error) {
-	plugins, err := packageManagersForRoot(root)
-	if err != nil {
-		return nil, err
+func packageManagersForConfig(manifest Config) ([]PackageManagerPlugin, error) {
+	if len(manifest.Workspace.PackageManagers) == 0 {
+		return nil, errors.New("workspace.package_managers must declare at least one package manager")
 	}
-	if len(plugins) == 1 {
-		return plugins[0], nil
-	}
-	return packageManagerGroup{plugins: plugins}, nil
-}
-
-func packageManagersForRoot(root string) ([]PackageManagerPlugin, error) {
 	packageManagerRegistry.RLock()
-	registered := append([]PackageManagerPlugin(nil), packageManagerRegistry.plugins...)
+	registered := make(map[string]PackageManagerPlugin, len(packageManagerRegistry.plugins))
+	for _, plugin := range packageManagerRegistry.plugins {
+		registered[plugin.ID()] = plugin
+	}
 	packageManagerRegistry.RUnlock()
-	var matched []PackageManagerPlugin
-	for _, plugin := range registered {
-		found, err := plugin.Detect(root)
-		if err != nil {
-			return nil, fmt.Errorf("inspect %s release convention: %w", plugin.ID(), err)
+
+	plugins := make([]PackageManagerPlugin, 0, len(manifest.Workspace.PackageManagers))
+	ecosystems := make(map[string]string, len(manifest.Workspace.PackageManagers))
+	var failures []error
+	for _, id := range manifest.Workspace.PackageManagers {
+		plugin, found := registered[id]
+		if !found {
+			failures = append(failures, fmt.Errorf("package manager plugin %q is not registered", id))
+			continue
 		}
-		if found {
-			matched = append(matched, plugin)
+		ecosystem := plugin.Ecosystem()
+		if ecosystem == "" {
+			failures = append(failures, fmt.Errorf("package manager plugin %q has no ecosystem", id))
+			continue
 		}
+		if previous, conflict := ecosystems[ecosystem]; conflict {
+			failures = append(failures, fmt.Errorf("package managers %q and %q conflict in ecosystem %q", previous, id, ecosystem))
+			continue
+		}
+		ecosystems[ecosystem] = id
+		plugins = append(plugins, plugin)
 	}
-	if len(matched) == 0 {
-		return nil, fmt.Errorf("unsupported release repository at %s: no package manager plugin matched", root)
+	if err := errors.Join(failures...); err != nil {
+		return nil, fmt.Errorf("resolve workspace package managers: %w", err)
 	}
-	return matched, nil
+	return plugins, nil
 }

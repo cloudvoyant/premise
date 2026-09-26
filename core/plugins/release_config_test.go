@@ -10,14 +10,14 @@ import (
 )
 
 func TestBuiltinDetectionAndGoReleaserConfig(t *testing.T) {
-	if err := RegisterBuiltins(); err != nil {
-		t.Fatal(err)
-	}
+	registerBuiltins(t)
 	goRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(goRoot, "go.mod"), []byte("module example.com/app\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := core.SaveManifest(filepath.Join(goRoot, core.ManifestFilename), core.NewManifest("premise")); err != nil {
+	goManifest := core.NewManifest("premise")
+	goManifest.Workspace.PackageManagers = []string{"go"}
+	if err := core.SaveManifest(filepath.Join(goRoot, core.ManifestFilename), goManifest); err != nil {
 		t.Fatal(err)
 	}
 	config, err := core.GoReleaserConfig(goRoot)
@@ -32,6 +32,7 @@ func TestBuiltinDetectionAndGoReleaserConfig(t *testing.T) {
 
 	cargoRoot := t.TempDir()
 	manifest := core.NewManifest("premise-cargo")
+	manifest.Workspace.PackageManagers = []string{"cargo"}
 	manifest.TemplateRegistry = &core.TemplateRegistry{WorkspaceFiles: []string{}, Templates: []core.Template{
 		templateFixture("premise-rust-lib", "lib"),
 		templateFixture("premise-rust-app", "app"),
@@ -83,7 +84,7 @@ func TestBuiltinDetectionAndGoReleaserConfig(t *testing.T) {
 		t.Fatalf("Cargo config contains %d builds, want 2", count)
 	}
 
-	// One monorepo can match Go, Cargo, and Bun at the root. Build the Go
+	// One workspace can explicitly enable Go, Cargo, and Bun. Build the Go
 	// and Cargo artifacts together; Bun has no downloadable artifacts.
 	if err := os.WriteFile(filepath.Join(cargoRoot, "go.mod"), []byte("module example.com/mixed\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -92,6 +93,10 @@ func TestBuiltinDetectionAndGoReleaserConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(cargoRoot, "bunfig.toml"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manifest.Workspace.PackageManagers = []string{"go", "cargo", "bun"}
+	if err := core.SaveManifest(filepath.Join(cargoRoot, core.ManifestFilename), manifest); err != nil {
 		t.Fatal(err)
 	}
 	config, err = core.GoReleaserConfig(cargoRoot)
@@ -110,6 +115,7 @@ func TestBuiltinDetectionAndGoReleaserConfig(t *testing.T) {
 
 	root := t.TempDir()
 	noDirectApp := core.NewManifest("premise-cargo")
+	noDirectApp.Workspace.PackageManagers = []string{"cargo"}
 	noDirectApp.TemplateRegistry = &core.TemplateRegistry{WorkspaceFiles: []string{}, Templates: []core.Template{templateFixture("nested-app", "app")}}
 	if err := core.SaveManifest(filepath.Join(root, core.ManifestFilename), noDirectApp); err != nil {
 		t.Fatal(err)
@@ -125,6 +131,10 @@ func TestBuiltinDetectionAndGoReleaserConfig(t *testing.T) {
 		t.Fatalf("GoReleaserConfig(no direct app) = %q, %v; want no artifacts", config, err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/mixed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	noDirectApp.Workspace.PackageManagers = []string{"go", "cargo"}
+	if err := core.SaveManifest(filepath.Join(root, core.ManifestFilename), noDirectApp); err != nil {
 		t.Fatal(err)
 	}
 	config, err = core.GoReleaserConfig(root)

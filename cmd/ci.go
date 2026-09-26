@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	core "github.com/cloudvoyant/premise/core"
-	"github.com/cloudvoyant/premise/core/plugins"
 	"github.com/spf13/cobra"
 )
 
@@ -36,7 +35,7 @@ var ciFlowCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if err := plugins.RegisterBuiltins(); err != nil {
+		if err := registerPackageManagerPlugins(); err != nil {
 			return err
 		}
 		if err := core.RunCIFlow(cmd.Context(), root, flow, ciEnvironment, releaseMode, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {

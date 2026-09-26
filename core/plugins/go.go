@@ -4,17 +4,21 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"path/filepath"
 
 	"github.com/cloudvoyant/premise/core"
 )
 
 type Go struct{}
 
-func (Go) ID() string                                                              { return "go" }
-func (Go) Detect(root string) (bool, error)                                        { return core.IsRegularFile(filepath.Join(root, "go.mod")) }
-func (Go) IsPublic(_ string, _ core.Template) (bool, error)                        { return false, nil }
-func (Go) ShouldPublishPackage(_ string, _ core.Template) (bool, error)            { return false, nil }
+func (Go) ID() string        { return "go" }
+func (Go) Ecosystem() string { return "go" }
+func (Go) GetPackageMetadata(_ string, _ core.Template) (core.PackageMetadata, bool, error) {
+	return core.PackageMetadata{}, false, nil
+}
+func (Go) ValidatePackage(_ string, _ core.Template) error { return nil }
+func (Go) WillPublishOk(_ context.Context, _ string, _ core.Template, _, _ string) (bool, error) {
+	return false, nil
+}
 func (Go) SupportsPackages() bool                                                  { return false }
 func (Go) PublishPackages(_ context.Context, _, _, _ string, _, _ io.Writer) error { return nil }
 func (Go) ReleaseWorkspace(_ context.Context, root string, _, _ io.Writer) (string, bool, error) {

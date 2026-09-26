@@ -5,84 +5,26 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"strings"
 
 	"go.yaml.in/yaml/v3"
 )
 
-// packageManagerGroup combines every root-level package manager into one
-// release. It retains registration order for publication and artifact builds.
-type packageManagerGroup struct {
-	plugins []PackageManagerPlugin
-}
-
-func (g packageManagerGroup) ID() string {
-	ids := make([]string, 0, len(g.plugins))
-	for _, plugin := range g.plugins {
-		ids = append(ids, plugin.ID())
-	}
-	return strings.Join(ids, ",")
-}
-
-func (g packageManagerGroup) Detect(root string) (bool, error) {
-	for _, plugin := range g.plugins {
-		matched, err := plugin.Detect(root)
-		if err != nil || matched {
-			return matched, err
-		}
-	}
-	return false, nil
-}
-
-func (g packageManagerGroup) IsPublic(root string, template Template) (bool, error) {
-	for _, plugin := range g.plugins {
-		public, err := plugin.IsPublic(root, template)
-		if err != nil || public {
-			return public, err
-		}
-	}
-	return false, nil
-}
-
-func (g packageManagerGroup) ShouldPublishPackage(root string, template Template) (bool, error) {
-	for _, plugin := range g.plugins {
-		publish, err := plugin.ShouldPublishPackage(root, template)
-		if err != nil || publish {
-			return publish, err
-		}
-	}
-	return false, nil
-}
-
-func (g packageManagerGroup) SupportsPackages() bool {
-	for _, plugin := range g.plugins {
-		if plugin.SupportsPackages() {
-			return true
-		}
-	}
-	return false
-}
-
-func (g packageManagerGroup) PublishPackages(ctx context.Context, root, version, task string, stdout, stderr io.Writer) error {
-	for _, plugin := range g.plugins {
-		if !plugin.SupportsPackages() {
-			continue
-		}
-		if err := plugin.PublishPackages(ctx, root, version, task, stdout, stderr); err != nil {
-			return fmt.Errorf("publish %s packages: %w", plugin.ID(), err)
-		}
-	}
-	return nil
-}
-
-func (g packageManagerGroup) ReleaseWorkspace(ctx context.Context, root string, stdout, stderr io.Writer) (string, bool, error) {
+func releasePlugins(root string) (Config, []PackageManagerPlugin, error) {
 	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
 	if err != nil {
-		return "", false, err
+		return Config{}, nil, fmt.Errorf("load release manifest: %w", err)
 	}
+	plugins, err := packageManagersForConfig(manifest)
+	if err != nil {
+		return Config{}, nil, err
+	}
+	return manifest, plugins, nil
+}
+
+func prepareReleaseWorkspace(ctx context.Context, root string, manifest Config, plugins []PackageManagerPlugin, stdout, stderr io.Writer) (string, bool, error) {
 	workspace := ""
 	serial := false
-	for _, plugin := range g.plugins {
+	for _, plugin := range plugins {
 		fragment, err := plugin.CreateGoReleaserConfig(root, manifest)
 		if err != nil {
 			return "", false, fmt.Errorf("generate %s artifacts: %w", plugin.ID(), err)
@@ -106,13 +48,11 @@ func (g packageManagerGroup) ReleaseWorkspace(ctx context.Context, root string, 
 	return workspace, serial, nil
 }
 
-// CreateGoReleaserConfig merges build and archive sections from every plugin.
-// Reject unknown sections rather than silently dropping a plugin's settings.
-func (g packageManagerGroup) CreateGoReleaserConfig(root string, manifest Config) (string, error) {
+func packageManagerReleaseConfig(root string, manifest Config, plugins []PackageManagerPlugin) (string, error) {
 	builds := &yaml.Node{Kind: yaml.SequenceNode}
 	archives := &yaml.Node{Kind: yaml.SequenceNode}
 	seen := map[string]map[string]bool{"builds": {}, "archives": {}}
-	for _, plugin := range g.plugins {
+	for _, plugin := range plugins {
 		fragment, err := plugin.CreateGoReleaserConfig(root, manifest)
 		if err != nil {
 			return "", fmt.Errorf("generate %s artifacts: %w", plugin.ID(), err)
@@ -128,9 +68,9 @@ func (g packageManagerGroup) CreateGoReleaserConfig(root string, manifest Config
 			return "", fmt.Errorf("%s artifact configuration must be a YAML mapping", plugin.ID())
 		}
 		mapping := document.Content[0]
-		for i := 0; i < len(mapping.Content); i += 2 {
-			section := mapping.Content[i].Value
-			items := mapping.Content[i+1]
+		for index := 0; index < len(mapping.Content); index += 2 {
+			section := mapping.Content[index].Value
+			items := mapping.Content[index+1]
 			var target *yaml.Node
 			switch section {
 			case "builds":
@@ -147,14 +87,15 @@ func (g packageManagerGroup) CreateGoReleaserConfig(root string, manifest Config
 				if item.Kind != yaml.MappingNode {
 					return "", fmt.Errorf("%s artifact section %q must contain mappings", plugin.ID(), section)
 				}
-				for n := 0; n < len(item.Content); n += 2 {
-					if item.Content[n].Value == "id" {
-						id := item.Content[n+1].Value
-						if seen[section][id] {
-							return "", fmt.Errorf("duplicate %s artifact ID %q", section, id)
-						}
-						seen[section][id] = true
+				for field := 0; field < len(item.Content); field += 2 {
+					if item.Content[field].Value != "id" {
+						continue
 					}
+					id := item.Content[field+1].Value
+					if seen[section][id] {
+						return "", fmt.Errorf("duplicate %s artifact ID %q", section, id)
+					}
+					seen[section][id] = true
 				}
 				target.Content = append(target.Content, item)
 			}
