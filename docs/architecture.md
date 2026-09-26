@@ -237,7 +237,7 @@ Each map distinguishes modules called directly by the command from modules used 
 ### `pm release`
 
 ```text
-[pm release [prepare|github|packages|snapshot]]
+[pm release [plan|prepare|github|packages|snapshot]]
   |
   +-- direct --> [Configuration]
   |               locate the workspace and load release settings
@@ -246,7 +246,7 @@ Each map distinguishes modules called directly by the command from modules used 
   |               register built-in manager implementations
   |
   `-- direct --> [Release]
-                  own the selected release operation
+                  own planning or the selected release operation
                     |
                     +-- uses --> [Version]
                     |             calculate and validate version and tag
@@ -261,6 +261,7 @@ Each map distinguishes modules called directly by the command from modules used 
 Release modes select subsets of the Release module's capabilities:
 
 ```text
+plan      : version planning without mutation
 prepare   : version planning and Git tag preparation
 github    : artifact publication from an already prepared tag
 packages  : language-package publication from an already prepared tag

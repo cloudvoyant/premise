@@ -3,13 +3,14 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	core "github.com/cloudvoyant/premise/core"
 	"github.com/spf13/cobra"
 )
 
 var releaseCmd = &cobra.Command{
-	Use:   "release [prepare|github|packages|snapshot]",
+	Use:   "release [plan|prepare|github|packages|snapshot]",
 	Short: "Build and publish convention-driven releases",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -31,6 +32,12 @@ var releaseCmd = &cobra.Command{
 		switch mode {
 		case "":
 			_, err = core.PublishStableRelease(cmd.Context(), root, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		case "plan":
+			var plan core.ReleasePlan
+			plan, err = core.PlanStableRelease(cmd.Context(), root)
+			if err == nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "version=%s\nshould_publish=%t\n", strings.TrimPrefix(plan.Version, "v"), !plan.Skip)
+			}
 		case "prepare":
 			_, err = core.PrepareStableRelease(cmd.Context(), root, cmd.OutOrStdout())
 		case "github":
@@ -40,7 +47,7 @@ var releaseCmd = &cobra.Command{
 		case "snapshot":
 			err = core.BuildReleaseSnapshot(cmd.Context(), root, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		default:
-			return fmt.Errorf("unknown release mode %q: expected prepare, github, packages, or snapshot", mode)
+			return fmt.Errorf("unknown release mode %q: expected plan, prepare, github, packages, or snapshot", mode)
 		}
 		return err
 	},
