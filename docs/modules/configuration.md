@@ -42,13 +42,13 @@ workspace:
     - cargo
 ```
 
-The list is ordered. Conflicts between managers in the same ecosystem are checked when registered plugins are resolved for a release.
+The list is ordered. Conflicts between managers in the same ecosystem are checked when registered backends are resolved for a release.
 
 ## Implementation Details
 
 `LoadManifest` uses YAML known-field checking, rejects multiple YAML documents, normalizes nil project and template slices, and then calls `Config.Validate`. Unknown keys therefore fail instead of being silently ignored.
 
-`Config.Validate` checks schema version, workspace kind, package-manager IDs, duplicate package-manager declarations, template names and paths, workspace-file patterns, questionnaire contracts, substitutions, and generated-project uniqueness. Validation is structural; plugin registration and ecosystem conflicts are release-time concerns because configuration does not import implementations.
+`Config.Validate` checks schema version, workspace kind, package-manager IDs, duplicate package-manager declarations, template names and paths, workspace-file patterns, questionnaire contracts, substitutions, and generated-project uniqueness. Validation is structural; backend registration and ecosystem conflicts are release-time concerns because configuration does not import implementations.
 
 `SaveManifest` writes to a temporary file in the destination directory, syncs and closes it, then uses a same-directory rename. A failed write does not partially replace the existing manifest.
 

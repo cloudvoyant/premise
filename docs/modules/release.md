@@ -16,29 +16,29 @@ The release module plans repository releases, creates and reuses stable tags, co
 | `PublishLanguagePackages(ctx, root, stdout, stderr)` | Publish eligible registry packages for a prepared tag.                 |
 | `PublishStableRelease(ctx, root, stdout, stderr)`    | Prepare, publish GitHub artifacts, then publish packages.              |
 | `BuildReleaseArtifacts(ctx, root, stdout, stderr)`   | Build the complete artifact matrix without tags or publication.        |
-| `GoReleaserConfig(root)`                             | Generate the merged temporary GoReleaser configuration.                |
+| `GoReleaserConfig(root)`                             | Return the merged GoReleaser configuration as bytes.                   |
 | `ReleasePlan`                                        | Return the selected version plus skip/reuse decisions.                 |
 
 ### Usage
 
-```go
-plan, err := core.PrepareStableRelease(ctx, root, stdout)
-if err != nil || plan.Skip {
-    return err
-}
-_, err = core.PublishGitHubRelease(ctx, root, stdout, stderr)
+```bash
+pm release             # prepare and publish the stable release
+pm release --dry-run   # report version and should_publish without mutation
+pm release --build     # build release artifacts locally without publishing
 ```
 
-Use the narrower prepare/GitHub/packages APIs in separate credential-bearing CI steps. Use `PublishStableRelease` when one process owns all credentials.
+The CLI does not expose `prepare`, `github`, `packages`, or `snapshot` subcommands. For CI jobs with separate credentials, use `PrepareStableRelease`, `PublishGitHubRelease`, and `PublishLanguagePackages` from Go. `pm ci flow on-merge` can also select `github` and `packages` release phases. `PublishStableRelease` performs all three steps when one process owns all credentials.
 
 ## Implementation Details
 
-Release loads `premise.yaml`, resolves explicitly selected registered plugins, and rejects missing or conflicting managers before release work. It asks each selected plugin for artifact fragments, merges `builds` and `archives`, and rejects unknown sections and duplicate artifact IDs.
+Release loads `premise.yaml`, resolves explicitly selected registered backends, and rejects missing or conflicting managers before release work. It asks each selected backend for artifact fragments, merges `builds` and `archives`, and rejects unknown sections and duplicate artifact IDs.
 
 `PlanStableRelease` fetches tags, checks for a stable tag at HEAD, and compares current and next versions. `PrepareStableRelease` creates and pushes a tag only when needed; a failed push removes the local tag.
 
 GoReleaser configuration is written to a temporary file. Release calls the Mise subprocess boundary directly to resolve a pinned GoReleaser tool environment; it does not call the public Task module entry points. Package-registry credentials are removed, while GitHub credentials are added explicitly. Temporary configuration is removed after execution.
 
-Plugins that contribute artifacts must agree on one release workspace. Their serial requirements are combined; Cargo requests serial GoReleaser execution after preparing its toolchain.
+`BuildReleaseArtifacts` uses GoReleaser snapshot mode. It builds the configured artifacts but neither tags nor publishes them. If no backend contributes downloadable artifacts, it skips the build.
 
-Language-package credentials are excluded from general Mise and GoReleaser environments. Plugins receive only the credentials needed for their publication subprocesses. Context cancellation propagates to Git operations, Mise, registry checks, and GoReleaser.
+Backends that contribute artifacts must agree on one release workspace. Their serial requirements are combined; Cargo requests serial GoReleaser execution after preparing its toolchain.
+
+Language-package credentials are excluded from general Mise and GoReleaser environments. Backends receive only the credentials needed for their publication subprocesses. Context cancellation propagates to Git operations, Mise, registry checks, and GoReleaser.

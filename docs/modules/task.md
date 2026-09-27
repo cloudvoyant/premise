@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The task module provides the Mise-backed execution boundary for workspace tasks, project tasks, template contracts, and plugin publication tasks. Mise remains the source of task definitions and tool versions.
+The task module provides the Mise-backed execution boundary for workspace tasks, project tasks, template contracts, and backend publication tasks. Mise remains the source of task definitions and tool versions.
 
 ## Design
 
@@ -13,7 +13,7 @@ The task module provides the Mise-backed execution boundary for workspace tasks,
 | `RunRootTask(ctx, root, task, ...)`                            | Run one named task from the workspace root.                       |
 | `RunProjectTask(ctx, root, project, task, ...)`                | Resolve a registered project and run one task from its directory. |
 | `ContractTasks(kind)`                                          | Return required lifecycle task names for an app or library.       |
-| `MiseTaskRunner.Run(ctx, directory, additions, arguments...)`  | Run a sanitized Mise command for a package-manager plugin.        |
+| `MiseTaskRunner.Run(ctx, directory, additions, arguments...)`  | Run a sanitized Mise command for a package-manager backend.       |
 | `MiseTaskRunner.TaskExists(ctx, directory, task)`              | Check whether a Mise task selector resolves.                      |
 | `ExtractMiseConfig(label, data)`                               | Parse a typed Mise configuration.                                 |
 | `MergeMiseConfigs(shared, selected, kind, identity, resolver)` | Merge registry-root and selected-template Mise configuration.     |
@@ -26,7 +26,7 @@ if err := core.RunProjectTask(ctx, root, "billing", "test", stdin, stdout, stder
 }
 ```
 
-A plugin can inspect and execute its publication contract without constructing subprocesses directly:
+A backend can inspect and execute its publication contract without constructing subprocesses directly:
 
 ```go
 runner := core.MiseTaskRunner{Stdout: stdout, Stderr: stderr}

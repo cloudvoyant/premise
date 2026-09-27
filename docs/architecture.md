@@ -51,7 +51,7 @@ The architecture has four cooperating components:
   +--> [Version] --> [Git + svu]   |
   |                                |
   +--> [Release] ------------------+
-  |      `--> [PackageManagerBackend] <--- [core/plugins]
+  |      `--> [PackageManagerBackend] <--- [core/backends]
   |
   `--> [Updater] --> [HTTP Installer]
 ```
@@ -281,7 +281,7 @@ Credential-separated preparation and publication remain available through the co
 
 `pm update` intentionally has no dependency on a core domain module.
 
-Dependencies point inward toward shared contracts. Core does not import built-in plugin implementations. The CLI registers implementations and then calls core workflows. `workspace.package_managers` selects plugins explicitly; native files provide package metadata but never select a manager. Managers that claim the same ecosystem, such as Bun and pnpm for npm packages, conflict.
+Dependencies point inward toward shared contracts. Core does not import built-in backend implementations. The CLI registers implementations and then calls core workflows. `workspace.package_managers` selects backends explicitly; native files provide package metadata but never select a manager. Managers that claim the same ecosystem, such as Bun and pnpm for npm packages, conflict.
 
 Premise currently implements environment setup, monorepo task routing, scaffolding, template-root merging, and contract-driven CI. Template migration, standardized secret management, and standardized infrastructure are planned rather than implemented. Infrastructure providers and ownership boundaries remain future design work.
 
