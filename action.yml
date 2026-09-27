@@ -30,6 +30,15 @@ inputs:
     required: false
     default: ""
 
+outputs:
+  version:
+    description: >-
+      Stable version without leading v; empty when no release is planned
+    value: ${{ steps.release-plan.outputs.version }}
+  should_publish:
+    description: "Whether the current commit has a stable release to publish"
+    value: ${{ steps.release-plan.outputs.should_publish }}
+
 runs:
   using: composite
   steps:
@@ -89,6 +98,20 @@ runs:
             exit 1
             ;;
         esac
+
+    - name: Plan stable release
+      id: release-plan
+      shell: bash
+      env:
+        FLOW: ${{ inputs.flow }}
+        RELEASE_MODE: ${{ inputs.release }}
+      run: |
+        set -euo pipefail
+        if [[ "$FLOW" == "on-merge" && "$RELEASE_MODE" != "none" ]]; then
+          pm release plan >> "$GITHUB_OUTPUT"
+        else
+          printf 'version=\nshould_publish=false\n' >> "$GITHUB_OUTPUT"
+        fi
 
     - name: Launch CI flow
       shell: bash

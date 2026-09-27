@@ -33,6 +33,32 @@ const (
 	VersionBumpMajor VersionBump = "major"
 )
 
+// ValidatePackagePublicationVersion validates a stable or release-candidate
+// package version and returns it without the optional leading v.
+func ValidatePackagePublicationVersion(version, task string) (string, error) {
+	normalized := strings.TrimPrefix(version, "v")
+	parsed, err := semver.StrictNewVersion(normalized)
+	if err != nil {
+		return "", fmt.Errorf("invalid package release version %q: %w", normalized, err)
+	}
+	if parsed.Metadata() != "" {
+		return "", fmt.Errorf("package %s requires a version without build metadata, got %s", task, normalized)
+	}
+	switch task {
+	case "publish":
+		if parsed.Prerelease() != "" {
+			return "", fmt.Errorf("package publish requires a stable version, got %s", normalized)
+		}
+	case "publish:rc":
+		if parsed.Prerelease() == "" {
+			return "", fmt.Errorf("package publish:rc requires a prerelease version, got %s", normalized)
+		}
+	default:
+		return "", fmt.Errorf("unsupported package publication task %q", task)
+	}
+	return normalized, nil
+}
+
 // ParseVersionBump validates a user-provided semantic-version component.
 func ParseVersionBump(value string) (VersionBump, error) {
 	bump := VersionBump(value)

@@ -20,6 +20,31 @@ func TestValidateRCIdentifier(t *testing.T) {
 	}
 }
 
+func TestValidatePackagePublicationVersion(t *testing.T) {
+	for _, test := range []struct {
+		version string
+		task    string
+		want    string
+		valid   bool
+	}{
+		{version: "v1.2.3", task: "publish", want: "1.2.3", valid: true},
+		{version: "1.2.3-rc.1", task: "publish:rc", want: "1.2.3-rc.1", valid: true},
+		{version: "1.2.3-rc.1", task: "publish"},
+		{version: "1.2.3", task: "publish:rc"},
+		{version: "1.2.3+build", task: "publish"},
+		{version: "bad", task: "publish"},
+		{version: "1.2.3", task: "deploy"},
+	} {
+		got, err := ValidatePackagePublicationVersion(test.version, test.task)
+		if test.valid && (err != nil || got != test.want) {
+			t.Errorf("ValidatePackagePublicationVersion(%q, %q) = %q, %v", test.version, test.task, got, err)
+		}
+		if !test.valid && err == nil {
+			t.Errorf("ValidatePackagePublicationVersion(%q, %q) accepted invalid input", test.version, test.task)
+		}
+	}
+}
+
 func TestParseVersionBump(t *testing.T) {
 	for _, value := range []string{"patch", "minor", "major"} {
 		bump, err := ParseVersionBump(value)

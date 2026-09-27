@@ -2,6 +2,8 @@ workspace:
   name: premise
   kind: template-registry
   schema-version: "0.2"
+  package_managers:
+    - go
   providers:
     ci: github
     tools: mise

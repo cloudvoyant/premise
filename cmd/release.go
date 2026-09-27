@@ -3,16 +3,20 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	core "github.com/cloudvoyant/premise/core"
 	"github.com/spf13/cobra"
 )
 
+var releaseDryRun bool
+var releaseBuildOnly bool
+
 var releaseCmd = &cobra.Command{
-	Use:   "release [prepare|github|packages|snapshot]",
-	Short: "Build and publish convention-driven releases",
-	Args:  cobra.MaximumNArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
+	Use:   "release",
+	Short: "Build and publish a convention-driven release",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
 		cwd, err := os.Getwd()
 		if err != nil {
 			return fmt.Errorf("get current directory: %w", err)
@@ -21,28 +25,30 @@ var releaseCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		mode := ""
-		if len(args) == 1 {
-			mode = args[0]
+		if releaseDryRun && releaseBuildOnly {
+			return fmt.Errorf("--dry-run and --build cannot be used together")
 		}
-		switch mode {
-		case "":
-			_, err = core.PublishStableRelease(cmd.Context(), root, cmd.OutOrStdout(), cmd.ErrOrStderr())
-		case "prepare":
-			_, err = core.PrepareStableRelease(cmd.Context(), root, cmd.OutOrStdout())
-		case "github":
-			_, err = core.PublishGitHubRelease(cmd.Context(), root, cmd.OutOrStdout(), cmd.ErrOrStderr())
-		case "packages":
-			_, err = core.PublishLanguagePackages(cmd.Context(), root, cmd.OutOrStdout(), cmd.ErrOrStderr())
-		case "snapshot":
-			err = core.BuildReleaseSnapshot(cmd.Context(), root, cmd.OutOrStdout(), cmd.ErrOrStderr())
-		default:
-			return fmt.Errorf("unknown release mode %q: expected prepare, github, packages, or snapshot", mode)
+		if err := registerPackageManagerBackends(); err != nil {
+			return err
 		}
+		if releaseDryRun {
+			var plan core.ReleasePlan
+			plan, err = core.PlanStableRelease(cmd.Context(), root)
+			if err == nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "version=%s\nshould_publish=%t\n", strings.TrimPrefix(plan.Version, "v"), !plan.Skip)
+			}
+			return err
+		}
+		if releaseBuildOnly {
+			return core.BuildReleaseArtifacts(cmd.Context(), root, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		}
+		_, err = core.PublishStableRelease(cmd.Context(), root, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		return err
 	},
 }
 
 func init() {
+	releaseCmd.Flags().BoolVar(&releaseDryRun, "dry-run", false, "plan the release without changing anything")
+	releaseCmd.Flags().BoolVar(&releaseBuildOnly, "build", false, "build release artifacts without publishing")
 	rootCmd.AddCommand(releaseCmd)
 }

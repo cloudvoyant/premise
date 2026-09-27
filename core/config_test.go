@@ -61,6 +61,18 @@ func TestTemplateRegistryRequiresExplicitSafeTemplatePaths(t *testing.T) {
 	}
 }
 
+func TestWorkspacePackageManagersRejectDuplicates(t *testing.T) {
+	manifest := NewManifest("workspace")
+	manifest.Workspace.PackageManagers = []string{"bun", "bun"}
+	if err := manifest.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("Validate() = %v; want duplicate package manager error", err)
+	}
+	manifest.Workspace.PackageManagers = []string{"bun", "cargo"}
+	if err := manifest.Validate(); err != nil {
+		t.Fatalf("Validate() = %v; distinct package managers should be allowed", err)
+	}
+}
+
 func TestTemplateRegistryWorkspaceFilePatternsStayAtRoot(t *testing.T) {
 	for _, test := range []struct {
 		pattern string
