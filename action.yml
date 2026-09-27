@@ -108,7 +108,7 @@ runs:
       run: |
         set -euo pipefail
         if [[ "$FLOW" == "on-merge" && "$RELEASE_MODE" != "none" ]]; then
-          pm release plan >> "$GITHUB_OUTPUT"
+          pm release --dry-run >> "$GITHUB_OUTPUT"
         else
           printf 'version=\nshould_publish=false\n' >> "$GITHUB_OUTPUT"
         fi
