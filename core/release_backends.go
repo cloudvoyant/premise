@@ -9,7 +9,7 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-func loadReleasePlugins(root string) (Config, []PackageManagerPlugin, error) {
+func loadReleaseBackends(root string) (Config, []PackageManagerBackend, error) {
 	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
 	if err != nil {
 		return Config{}, nil, fmt.Errorf("load release manifest: %w", err)
@@ -21,7 +21,7 @@ func loadReleasePlugins(root string) (Config, []PackageManagerPlugin, error) {
 	return manifest, plugins, nil
 }
 
-func prepareReleaseWorkspace(ctx context.Context, root string, manifest Config, plugins []PackageManagerPlugin, stdout, stderr io.Writer) (string, bool, error) {
+func prepareReleaseWorkspace(ctx context.Context, root string, manifest Config, plugins []PackageManagerBackend, stdout, stderr io.Writer) (string, bool, error) {
 	workspace := ""
 	serial := false
 	for _, plugin := range plugins {
@@ -48,7 +48,7 @@ func prepareReleaseWorkspace(ctx context.Context, root string, manifest Config, 
 	return workspace, serial, nil
 }
 
-func packageManagerReleaseConfig(root string, manifest Config, plugins []PackageManagerPlugin) (string, error) {
+func packageManagerReleaseConfig(root string, manifest Config, plugins []PackageManagerBackend) (string, error) {
 	builds := &yaml.Node{Kind: yaml.SequenceNode}
 	archives := &yaml.Node{Kind: yaml.SequenceNode}
 	seen := map[string]map[string]bool{"builds": {}, "archives": {}}

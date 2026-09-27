@@ -35,7 +35,7 @@ var ciFlowCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if err := registerPackageManagerPlugins(); err != nil {
+		if err := registerPackageManagerBackends(); err != nil {
 			return err
 		}
 		if err := core.RunCIFlow(cmd.Context(), root, flow, ciEnvironment, releaseMode, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {

@@ -10,8 +10,8 @@ The package-manager module defines how selected package ecosystems expose metada
 
 | API                                                 | Use                                                                                                  |
 | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `PackageManagerPlugin.ID()`                         | Return the value accepted by `workspace.package_managers`.                                           |
-| `PackageManagerPlugin.Ecosystem()`                  | Return the incompatibility key, such as `npm`, `cargo`, or `go`.                                     |
+| `PackageManagerBackend.ID()`                        | Return the value accepted by `workspace.package_managers`.                                           |
+| `PackageManagerBackend.Ecosystem()`                 | Return the incompatibility key, such as `npm`, `cargo`, or `go`.                                     |
 | `GetPackageMetadata(root, template)`                | Parse one native package specification into `PackageMetadata`.                                       |
 | `ValidatePackage(root, template)`                   | Perform static package validation.                                                                   |
 | `WillPublishOk(ctx, root, template, version, task)` | Preflight one package without publication.                                                           |
@@ -19,13 +19,13 @@ The package-manager module defines how selected package ecosystems expose metada
 | `SupportsPackages()`                                | Report whether the manager publishes a language registry package.                                    |
 | `PublishPackages(ctx, root, version, task, ...)`    | Preflight and publish eligible packages.                                                             |
 | `ReleaseWorkspace(ctx, root, ...)`                  | Prepare the workspace used for artifact builds.                                                      |
-| `RegisterPackageManagerPlugin(plugin)`              | Register an implementation before invoking release APIs.                                             |
+| `RegisterPackageManagerBackend(plugin)`             | Register an implementation before invoking release APIs.                                             |
 | `PackageMetadata`                                   | Carry manager-neutral package name, version, path, registry, visibility, and publication capability. |
 
 ### Usage
 
 ```go
-if err := core.RegisterPackageManagerPlugin(myPlugin); err != nil {
+if err := core.RegisterPackageManagerBackend(myPlugin); err != nil {
     return err
 }
 ```

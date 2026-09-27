@@ -1,4 +1,4 @@
-package plugins
+package backends
 
 import (
 	"bytes"

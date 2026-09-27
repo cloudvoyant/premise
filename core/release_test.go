@@ -86,7 +86,7 @@ func TestPublishStableReleaseOrdersGitHubBeforeCargo(t *testing.T) {
 	})
 	originalGoReleaser := executeGoReleaser
 	defer func() { executeGoReleaser = originalGoReleaser }()
-	executeGoReleaser = func(_ context.Context, _ string, plugins []PackageManagerPlugin, snapshot bool, _, _ io.Writer) error {
+	executeGoReleaser = func(_ context.Context, _ string, plugins []PackageManagerBackend, snapshot bool, _, _ io.Writer) error {
 		if len(plugins) != 1 || plugins[0].ID() != "cargo" || snapshot {
 			t.Fatalf("unexpected GoReleaser arguments: plugins=%v snapshot=%v", plugins, snapshot)
 		}
@@ -107,7 +107,7 @@ func TestPublishStableReleaseOrdersGitHubBeforeCargo(t *testing.T) {
 
 	calls = nil
 	publishErr := errors.New("GitHub publication failed")
-	executeGoReleaser = func(_ context.Context, _ string, _ []PackageManagerPlugin, _ bool, _, _ io.Writer) error {
+	executeGoReleaser = func(_ context.Context, _ string, _ []PackageManagerBackend, _ bool, _, _ io.Writer) error {
 		calls = append(calls, "github")
 		return publishErr
 	}
@@ -296,7 +296,7 @@ printf '%s\n' "$*" >> "$CAPTURE"
 	}
 	goPlugin := testPackageManager{id: "go", builds: "builds:\n  - id: premise\n"}
 	useTestPackageManagers(t, goPlugin)
-	if err := runGoReleaser(t.Context(), root, []PackageManagerPlugin{goPlugin}, true, &output, &output); err != nil {
+	if err := runGoReleaser(t.Context(), root, []PackageManagerBackend{goPlugin}, true, &output, &output); err != nil {
 		t.Fatal(err)
 	}
 	captured, err := os.ReadFile(capture)
@@ -359,7 +359,7 @@ printf '%s\n' "$*" >> "$CAPTURE"
 		},
 	}
 	useTestPackageManagers(t, cargoPlugin)
-	if err := runGoReleaser(t.Context(), cargoRoot, []PackageManagerPlugin{cargoPlugin}, true, &output, &output); err != nil {
+	if err := runGoReleaser(t.Context(), cargoRoot, []PackageManagerBackend{cargoPlugin}, true, &output, &output); err != nil {
 		t.Fatal(err)
 	}
 	captured, err = os.ReadFile(capture)

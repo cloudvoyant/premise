@@ -1,4 +1,4 @@
-package plugins
+package backends
 
 import (
 	"path/filepath"
@@ -22,8 +22,8 @@ var testRegisterBuiltinsErr error
 func registerBuiltins(t *testing.T) {
 	t.Helper()
 	testRegisterBuiltinsOnce.Do(func() {
-		for _, plugin := range []core.PackageManagerPlugin{Go{}, Cargo{}, Bun{}} {
-			if err := core.RegisterPackageManagerPlugin(plugin); err != nil {
+		for _, plugin := range []core.PackageManagerBackend{Go{}, Cargo{}, Bun{}} {
+			if err := core.RegisterPackageManagerBackend(plugin); err != nil {
 				testRegisterBuiltinsErr = err
 				return
 			}

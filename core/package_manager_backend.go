@@ -8,10 +8,10 @@ import (
 	"sync"
 )
 
-// PackageManagerPlugin parses native package specifications and supplies the
+// PackageManagerBackend parses native package specifications and supplies the
 // manager-specific release operations selected by premise.yaml. Core owns
 // release sequencing; implementations own package-format behavior.
-type PackageManagerPlugin interface {
+type PackageManagerBackend interface {
 	// ID returns the package manager name used in workspace.package_managers.
 	ID() string
 
@@ -45,42 +45,42 @@ type PackageManagerPlugin interface {
 
 var packageManagerRegistry struct {
 	sync.RWMutex
-	plugins []PackageManagerPlugin
+	plugins []PackageManagerBackend
 }
 
-// RegisterPackageManagerPlugin registers an implementation by ID. Workspaces
-// select registered plugins explicitly through workspace.package_managers.
-func RegisterPackageManagerPlugin(plugin PackageManagerPlugin) error {
-	if plugin == nil {
-		return errors.New("package manager plugin cannot be nil")
+// RegisterPackageManagerBackend registers an implementation by ID. Workspaces
+// select registered backends explicitly through workspace.package_managers.
+func RegisterPackageManagerBackend(backend PackageManagerBackend) error {
+	if backend == nil {
+		return errors.New("package manager backend cannot be nil")
 	}
-	id := plugin.ID()
+	id := backend.ID()
 	if id == "" {
-		return errors.New("package manager plugin ID cannot be empty")
+		return errors.New("package manager backend ID cannot be empty")
 	}
 	packageManagerRegistry.Lock()
 	defer packageManagerRegistry.Unlock()
 	for _, registered := range packageManagerRegistry.plugins {
 		if registered.ID() == id {
-			return fmt.Errorf("package manager plugin %q is already registered", id)
+			return fmt.Errorf("package manager backend %q is already registered", id)
 		}
 	}
-	packageManagerRegistry.plugins = append(packageManagerRegistry.plugins, plugin)
+	packageManagerRegistry.plugins = append(packageManagerRegistry.plugins, backend)
 	return nil
 }
 
-func packageManagersForConfig(manifest Config) ([]PackageManagerPlugin, error) {
+func packageManagersForConfig(manifest Config) ([]PackageManagerBackend, error) {
 	if len(manifest.Workspace.PackageManagers) == 0 {
 		return nil, errors.New("workspace.package_managers must declare at least one package manager")
 	}
 	packageManagerRegistry.RLock()
-	registered := make(map[string]PackageManagerPlugin, len(packageManagerRegistry.plugins))
+	registered := make(map[string]PackageManagerBackend, len(packageManagerRegistry.plugins))
 	for _, plugin := range packageManagerRegistry.plugins {
 		registered[plugin.ID()] = plugin
 	}
 	packageManagerRegistry.RUnlock()
 
-	plugins := make([]PackageManagerPlugin, 0, len(manifest.Workspace.PackageManagers))
+	plugins := make([]PackageManagerBackend, 0, len(manifest.Workspace.PackageManagers))
 	ecosystems := make(map[string]string, len(manifest.Workspace.PackageManagers))
 	var failures []error
 	for _, id := range manifest.Workspace.PackageManagers {

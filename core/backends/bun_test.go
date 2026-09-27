@@ -1,4 +1,4 @@
-package plugins
+package backends
 
 import (
 	"bytes"
@@ -58,7 +58,7 @@ func TestBunPluginSelectsRegistryPackagesIndependentlyOfVisibility(t *testing.T)
 	}
 	var output bytes.Buffer
 	registerBuiltins(t)
-	if err := core.BuildReleaseSnapshot(t.Context(), root, &output, &output); err != nil {
+	if err := core.BuildReleaseArtifacts(t.Context(), root, &output, &output); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(output.String(), "no downloadable release artifacts") {

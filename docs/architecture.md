@@ -51,7 +51,7 @@ The architecture has four cooperating components:
   +--> [Version] --> [Git + svu]   |
   |                                |
   +--> [Release] ------------------+
-  |      `--> [PackageManagerPlugin] <--- [core/plugins]
+  |      `--> [PackageManagerBackend] <--- [core/plugins]
   |
   `--> [Updater] --> [HTTP Installer]
 ```
@@ -237,7 +237,8 @@ Each map distinguishes modules called directly by the command from modules used 
 ### `pm release`
 
 ```text
-[pm release [plan|prepare|github|packages|snapshot]]
+[pm release]
+  flags: --dry-run | --build
   |
   +-- direct --> [Configuration]
   |               locate the workspace and load release settings
@@ -258,16 +259,15 @@ Each map distinguishes modules called directly by the command from modules used 
                                   run RC tasks and resolve GoReleaser tooling
 ```
 
-Release modes select subsets of the Release module's capabilities:
+The public release command has one default workflow:
 
 ```text
-plan      : version planning without mutation
-prepare   : version planning and Git tag preparation
-github    : artifact publication from an already prepared tag
-packages  : language-package publication from an already prepared tag
-snapshot  : artifact build without tag creation or publication
-default   : all stable-release capabilities
+pm release              : prepare and publish the complete release
+pm release --dry-run    : plan without mutation
+pm release --build      : build release artifacts without publishing
 ```
+
+Credential-separated preparation and publication remain available through the core API for CI orchestration.
 
 ### `pm update`
 

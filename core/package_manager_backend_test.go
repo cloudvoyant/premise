@@ -46,7 +46,7 @@ func (p testPackageManager) CreateGoReleaserConfig(_ string, _ Config) (string, 
 	return p.builds, p.buildErr
 }
 
-func useTestPackageManagers(t *testing.T, plugins ...PackageManagerPlugin) {
+func useTestPackageManagers(t *testing.T, plugins ...PackageManagerBackend) {
 	t.Helper()
 	packageManagerRegistry.Lock()
 	original := packageManagerRegistry.plugins
@@ -58,7 +58,7 @@ func useTestPackageManagers(t *testing.T, plugins ...PackageManagerPlugin) {
 		packageManagerRegistry.Unlock()
 	})
 	for _, plugin := range plugins {
-		if err := RegisterPackageManagerPlugin(plugin); err != nil {
+		if err := RegisterPackageManagerBackend(plugin); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -66,10 +66,10 @@ func useTestPackageManagers(t *testing.T, plugins ...PackageManagerPlugin) {
 
 func TestPackageManagerRegistration(t *testing.T) {
 	useTestPackageManagers(t, testPackageManager{id: "test"})
-	if err := RegisterPackageManagerPlugin(testPackageManager{id: "test"}); err == nil {
+	if err := RegisterPackageManagerBackend(testPackageManager{id: "test"}); err == nil {
 		t.Fatal("duplicate plugin ID accepted")
 	}
-	if err := RegisterPackageManagerPlugin(nil); err == nil {
+	if err := RegisterPackageManagerBackend(nil); err == nil {
 		t.Fatal("nil plugin accepted")
 	}
 	manifest := NewManifest("test")

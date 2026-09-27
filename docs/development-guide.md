@@ -28,7 +28,7 @@ core/bunx.go           # Generic package.json reading for Bun packages
 core/cargox.go         # Generic Cargo manifest reading and version edits
 core/package_metadata.go # Package-manager-neutral metadata
 core/package_manager_plugin.go # Plugin contract, registration, and selection
-core/release_plugins.go # Release sequencing across selected managers
+core/release_backends.go # Release sequencing across selected managers
 core/plugins/go.go     # Go artifact policy
 core/plugins/cargo.go  # Cargo metadata, artifact, and publication policy
 core/plugins/bun.go    # Bun metadata and npm publication policy
@@ -69,7 +69,7 @@ go get github.com/cloudvoyant/premise@vX.Y.Z
     flow: on-commit
 ```
 
-The CLI composition root explicitly registers its built-in Go, Cargo, and Bun plugins before release flows. Library clients can call `core.RegisterPackageManagerPlugin(customPlugin)` before running a release; no dynamic loader or `init()` registration is required. `workspace.package_managers` selects plugins by ID in release order. File presence never selects a plugin. Managers with the same ecosystem conflict, so a workspace cannot enable Bun and pnpm together. GoReleaser builds and archives are combined, and each eligible package publisher receives the same version. Bun and Cargo plugins expose `GetPackageMetadata`, `ValidatePackage`, and `WillPublishOk`. Publication collects preflight errors across templates before making changes or publishing. Bun checks `NODE_AUTH_TOKEN` once and reuses one temporary credential file per registry. The action only sets up Mise, installs Premise, and calls `pm ci flow`. Set `install-premise` to `pre-built` to install a release, `build` to build the checked-out action source, or `skip` when `pm` is already on `PATH`.
+The CLI composition root explicitly registers its built-in Go, Cargo, and Bun plugins before release flows. Library clients can call `core.RegisterPackageManagerBackend(customPlugin)` before running a release; no dynamic loader or `init()` registration is required. `workspace.package_managers` selects plugins by ID in release order. File presence never selects a plugin. Managers with the same ecosystem conflict, so a workspace cannot enable Bun and pnpm together. GoReleaser builds and archives are combined, and each eligible package publisher receives the same version. Bun and Cargo plugins expose `GetPackageMetadata`, `ValidatePackage`, and `WillPublishOk`. Publication collects preflight errors across templates before making changes or publishing. Bun checks `NODE_AUTH_TOKEN` once and reuses one temporary credential file per registry. The action only sets up Mise, installs Premise, and calls `pm ci flow`. Set `install-premise` to `pre-built` to install a release, `build` to build the checked-out action source, or `skip` when `pm` is already on `PATH`.
 
 ```yaml
 - uses: cloudvoyant/premise@<revision>
