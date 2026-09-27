@@ -22,6 +22,7 @@ func TestBunPluginSelectsRegistryPackagesIndependentlyOfVisibility(t *testing.T)
 		public, publish bool
 	}{
 		{"public-cli", `{"name":"public-cli","private":false,"publishConfig":{"access":"public","registry":"https://registry.npmjs.org/"}}`, true, true},
+		{"commander-template", `{"name":"premise-commander","private":false,"publishConfig":{"access":"public","registry":"https://registry.npmjs.org/"}}`, true, true},
 		{"restricted-lib", `{"name":"restricted-lib","private":false,"publishConfig":{"access":"restricted","registry":"https://registry.example.com/"}}`, false, true},
 		{"internal-app", `{"name":"internal-app","private":true,"publishConfig":{"access":"public","registry":"https://registry.npmjs.org/"}}`, false, false},
 		{"static-site", `{"name":"static-site","private":true}`, false, false},

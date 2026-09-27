@@ -33,9 +33,6 @@ func (Bun) GetPackageMetadata(root string, template core.Template) (core.Package
 	if err != nil || !found {
 		return core.PackageMetadata{}, found, err
 	}
-	if pkg.Name != template.Name {
-		return core.PackageMetadata{}, false, fmt.Errorf("Bun package %q does not match declared template %q", pkg.Name, template.Name)
-	}
 	registry, err := bunPackageRegistry(pkg)
 	if err != nil {
 		return core.PackageMetadata{}, false, err
