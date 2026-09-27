@@ -15,7 +15,7 @@ The release module plans repository releases, creates and reuses stable tags, co
 | `PublishGitHubRelease(ctx, root, stdout, stderr)`    | Publish downloadable artifacts for a prepared tag.                     |
 | `PublishLanguagePackages(ctx, root, stdout, stderr)` | Publish eligible registry packages for a prepared tag.                 |
 | `PublishStableRelease(ctx, root, stdout, stderr)`    | Prepare, publish GitHub artifacts, then publish packages.              |
-| `BuildReleaseArtifacts(ctx, root, stdout, stderr)`    | Build the complete artifact matrix without tags or publication.        |
+| `BuildReleaseArtifacts(ctx, root, stdout, stderr)`   | Build the complete artifact matrix without tags or publication.        |
 | `GoReleaserConfig(root)`                             | Generate the merged temporary GoReleaser configuration.                |
 | `ReleasePlan`                                        | Return the selected version plus skip/reuse decisions.                 |
 
