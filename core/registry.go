@@ -13,47 +13,30 @@ import (
 
 	git "github.com/go-git/go-git/v5"
 	"github.com/pelletier/go-toml/v2"
+	"go.yaml.in/yaml/v3"
 )
 
-// OfficialSources is the ordered, centralized list of official Premise template
-// registry repositories. The default picker merges them in this order, and bare
-// template names are resolved against every source listed here. Unofficial
-// registries are reachable only through an explicit <owner>/<repo>:<template>
-// selector.
+// Configuration --------------------------------------------------------------
+
+// OfficialSources is VCS URLs for premise-owned / first-party template registries.
 var OfficialSources = []string{
 	NativeTemplateSource,
 	"cloudvoyant/premise-cargo",
 	"cloudvoyant/premise-bun",
 }
 
-// TemplateSelection is a parsed registry template selector. Source is the
-// registry identity, local path, or URL; Name is the template name; Local
-// reports whether Source refers to a filesystem path.
-type TemplateSelection struct {
+// Public types ---------------------------------------------------------------
+
+// TemplateSelector is a parsed template selector. Source is the registry
+// identity, local path, or URL; Name is the template name; Local reports
+// whether Source refers to a filesystem path.
+type TemplateSelector struct {
 	Source string
 	Name   string
 	Local  bool
 }
 
-// ParseTemplateSelector splits a selector into its source and template name.
-func ParseTemplateSelector(selector string) (TemplateSelection, error) {
-	separator := strings.LastIndex(selector, ":")
-	if separator < 0 || separator == len(selector)-1 {
-		return TemplateSelection{}, fmt.Errorf("template selector %q must end with :<template>", selector)
-	}
-	source := selector[:separator]
-	name := selector[separator+1:]
-	if err := ValidateTemplateName(name); err != nil {
-		return TemplateSelection{}, err
-	}
-	if source == "" {
-		source = NativeTemplateSource
-	}
-	local := source == "." || filepath.IsAbs(source) || strings.HasPrefix(source, "./") || strings.HasPrefix(source, "../")
-	return TemplateSelection{Source: source, Name: name, Local: local}, nil
-}
-
-// GenerateSelectorKind classifies a generate argument for registry resolution.
+// GenerateSelectorKind identifies how a generate argument should be resolved.
 type GenerateSelectorKind int
 
 const (
@@ -67,6 +50,48 @@ const (
 type ClassifiedGenerateSelector struct {
 	Kind  GenerateSelectorKind
 	Value string
+}
+
+// ProjectKind identifies the one lifecycle model owned by a Premise root.
+type ProjectKind string
+
+const (
+	ProjectKindMonorepo         ProjectKind = "monorepo"
+	ProjectKindTemplateRegistry ProjectKind = "template-registry"
+)
+
+// Registry lists templates available from one source.
+type Registry struct {
+	Templates []Template
+}
+
+// RegistryEntry carries one template from one registry source: the source
+// repository identity, the declared template metadata, a human-readable display
+// label, and a fully qualified selector.
+type RegistryEntry struct {
+	Source   string
+	Template Template
+	Label    string
+}
+
+// Public API -----------------------------------------------------------------
+
+// ParseTemplateSelector splits a selector into its source and template name.
+func ParseTemplateSelector(selector string) (TemplateSelector, error) {
+	separator := strings.LastIndex(selector, ":")
+	if separator < 0 || separator == len(selector)-1 {
+		return TemplateSelector{}, fmt.Errorf("template selector %q must end with :<template>", selector)
+	}
+	source := selector[:separator]
+	name := selector[separator+1:]
+	if err := ValidateTemplateName(name); err != nil {
+		return TemplateSelector{}, err
+	}
+	if source == "" {
+		source = NativeTemplateSource
+	}
+	local := source == "." || filepath.IsAbs(source) || strings.HasPrefix(source, "./") || strings.HasPrefix(source, "../")
+	return TemplateSelector{Source: source, Name: name, Local: local}, nil
 }
 
 // ClassifyGenerateSelector parses one generate argument for registry dispatch.
@@ -88,14 +113,6 @@ func ClassifyGenerateSelector(argument string) (ClassifiedGenerateSelector, erro
 	}
 	return ClassifiedGenerateSelector{Kind: GenerateSelectorExplicit, Value: argument}, nil
 }
-
-// ProjectKind identifies the one lifecycle model owned by a Premise root.
-type ProjectKind string
-
-const (
-	ProjectKindMonorepo         ProjectKind = "monorepo"
-	ProjectKindTemplateRegistry ProjectKind = "template-registry"
-)
 
 // DetectProjectKind selects the root's configured CI lifecycle without
 // restricting which workspace and template-registry capabilities may coexist.
@@ -134,37 +151,6 @@ func DetectProjectKind(root string) (ProjectKind, error) {
 	}
 }
 
-func hasMonorepoRoot(root string) (bool, error) {
-	mise, err := os.ReadFile(filepath.Join(root, "mise.toml"))
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("read mise config: %w", err)
-	}
-	var config struct {
-		MonorepoRoot bool `toml:"monorepo_root"`
-	}
-	if err := toml.Unmarshal(mise, &config); err != nil {
-		return false, fmt.Errorf("parse mise config: %w", err)
-	}
-	return config.MonorepoRoot, nil
-}
-
-// Registry lists templates available from one source.
-type Registry struct {
-	Templates []Template
-}
-
-// RegistryEntry carries one template from one registry source: the source
-// repository identity, the declared template metadata, a human-readable display
-// label, and a fully qualified selector.
-type RegistryEntry struct {
-	Source   string
-	Template Template
-	Label    string
-}
-
 // Selector returns the fully qualified <source>:<template-name> selector for
 // the entry. Selectors never rely on display labels, so duplicate template
 // names across sources stay unambiguous.
@@ -200,7 +186,7 @@ func DefaultRegistry(ctx context.Context) ([]RegistryEntry, error) {
 	for _, source := range OfficialSources {
 		sourceEntries, err := loadSourceEntries(ctx, source)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("load official registry %s: %w", source, err))
+			errs = append(errs, fmt.Errorf("load official registry %s: %w", source, officialRegistryError(err)))
 			continue
 		}
 		entries = append(entries, sourceEntries...)
@@ -225,7 +211,7 @@ func ResolveOfficialTemplateName(ctx context.Context, name string) (string, erro
 	for _, source := range OfficialSources {
 		entries, err := loadSourceEntries(ctx, source)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("load official registry %s: %w", source, err))
+			errs = append(errs, fmt.Errorf("load official registry %s: %w", source, officialRegistryError(err)))
 			continue
 		}
 		for _, entry := range entries {
@@ -251,6 +237,34 @@ func ResolveOfficialTemplateName(ctx context.Context, name string) (string, erro
 	}
 }
 
+// Names returns the template names declared by the registry.
+func (registry Registry) Names() []string {
+	names := make([]string, len(registry.Templates))
+	for index, template := range registry.Templates {
+		names[index] = template.Name
+	}
+	return names
+}
+
+// Private helpers ------------------------------------------------------------
+
+func hasMonorepoRoot(root string) (bool, error) {
+	mise, err := os.ReadFile(filepath.Join(root, "mise.toml"))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read mise config: %w", err)
+	}
+	var config struct {
+		MonorepoRoot bool `toml:"monorepo_root"`
+	}
+	if err := toml.Unmarshal(mise, &config); err != nil {
+		return false, fmt.Errorf("parse mise config: %w", err)
+	}
+	return config.MonorepoRoot, nil
+}
+
 // loadSourceEntries loads one source's registry and returns its entries with
 // the source identity attached.
 func loadSourceEntries(ctx context.Context, source string) ([]RegistryEntry, error) {
@@ -267,6 +281,18 @@ func loadSourceEntries(ctx context.Context, source string) ([]RegistryEntry, err
 		entries[index] = newRegistryEntry(source, template)
 	}
 	return entries, nil
+}
+
+func officialRegistryError(err error) error {
+	var typeError *yaml.TypeError
+	if errors.As(err, &typeError) {
+		for _, problem := range typeError.Errors {
+			if strings.Contains(problem, "field ") && strings.Contains(problem, " not found in type ") {
+				return fmt.Errorf("registry manifest contains a field this CLI does not recognize; it may require a newer Premise CLI (run `pm update` or rebuild `pm`): %w", err)
+			}
+		}
+	}
+	return err
 }
 
 func newRegistryEntry(source string, template Template) RegistryEntry {
@@ -286,14 +312,6 @@ func disambiguateLabels(entries []RegistryEntry) {
 			entries[index].Label = fmt.Sprintf("%s (%s)", entries[index].Template.Name, entries[index].Source)
 		}
 	}
-}
-
-func (registry Registry) Names() []string {
-	names := make([]string, len(registry.Templates))
-	for index, template := range registry.Templates {
-		names[index] = template.Name
-	}
-	return names
 }
 
 // resolveRepository resolves a source identity to a local registry checkout.

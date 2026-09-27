@@ -15,10 +15,10 @@ import (
 
 const NativeTemplateSource = "cloudvoyant/premise"
 
-func ResolveTemplateSource(ctx context.Context, workspaceRoot, selector string) (string, TemplateSelection, error) {
+func ResolveTemplateSource(ctx context.Context, workspaceRoot, selector string) (string, TemplateSelector, error) {
 	selection, err := ParseTemplateSelector(selector)
 	if err != nil {
-		return "", TemplateSelection{}, err
+		return "", TemplateSelector{}, err
 	}
 	if selection.Local {
 		if filepath.IsAbs(selection.Source) {
@@ -26,14 +26,14 @@ func ResolveTemplateSource(ctx context.Context, workspaceRoot, selector string) 
 		}
 		path, err := filepath.Abs(filepath.Join(workspaceRoot, selection.Source))
 		if err != nil {
-			return "", TemplateSelection{}, fmt.Errorf("resolve local template source: %w", err)
+			return "", TemplateSelector{}, fmt.Errorf("resolve local template source: %w", err)
 		}
 		return path, selection, nil
 	}
 
 	root, err := resolveRepository(ctx, selection.Source)
 	if err != nil {
-		return "", TemplateSelection{}, fmt.Errorf("resolve template registry %s: %w", selection.Source, err)
+		return "", TemplateSelector{}, fmt.Errorf("resolve template registry %s: %w", selection.Source, err)
 	}
 	return root, selection, nil
 }

@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"go.yaml.in/yaml/v3"
 )
 
 func templateFixture(name, kind string) Template {
@@ -143,6 +146,24 @@ func TestDefaultRegistryDisambiguatesDuplicateNames(t *testing.T) {
 		if !strings.Contains(entry.Label, entry.Source) {
 			t.Errorf("label %q does not disambiguate by source %q", entry.Label, entry.Source)
 		}
+	}
+}
+
+func TestOfficialRegistryErrorAddsUpgradeHintOnlyToUnknownFields(t *testing.T) {
+	unknownField := &yaml.TypeError{Errors: []string{
+		"field package_managers not found in type core.Workspace",
+	}}
+	withHint := officialRegistryError(unknownField)
+	if !strings.Contains(withHint.Error(), "may require a newer Premise CLI") {
+		t.Fatalf("unknown-field error = %v", withHint)
+	}
+	if !strings.Contains(withHint.Error(), "field package_managers not found") {
+		t.Fatalf("upgrade hint discarded the original error: %v", withHint)
+	}
+
+	malformed := officialRegistryError(errors.New("yaml: mapping values are not allowed in this context"))
+	if strings.Contains(malformed.Error(), "may require a newer Premise CLI") {
+		t.Fatalf("malformed YAML was classified as version skew: %v", malformed)
 	}
 }
 
