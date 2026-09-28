@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"io"
 	"testing"
 )
 
@@ -18,7 +19,7 @@ func TestResolveSelectorArgumentRoutesExplicitSelectorPassthrough(t *testing.T) 
 		"https://github.com/cloudvoyant/premise-template.git:app",
 	}
 	for _, selector := range cases {
-		got, err := resolveSelectorArgument(context.Background(), []string{selector})
+		got, err := resolveSelectorArgument(context.Background(), []string{selector}, io.Discard)
 		if err != nil {
 			t.Fatalf("resolveSelectorArgument(%q): %v", selector, err)
 		}
@@ -32,7 +33,7 @@ func TestResolveSelectorArgumentRoutesExplicitSelectorPassthrough(t *testing.T) 
 // surfaces classification errors for malformed selectors rather than routing
 // them to the scoped picker. The detailed classification cases live in core.
 func TestResolveSelectorArgumentSurfacesMalformedSelector(t *testing.T) {
-	if _, err := resolveSelectorArgument(context.Background(), []string{"cloudvoyant/premise:"}); err == nil {
+	if _, err := resolveSelectorArgument(context.Background(), []string{"cloudvoyant/premise:"}, io.Discard); err == nil {
 		t.Fatal("resolveSelectorArgument succeeded, want error")
 	}
 }

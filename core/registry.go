@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	git "github.com/go-git/go-git/v5"
 	"github.com/pelletier/go-toml/v2"
@@ -177,18 +179,25 @@ func LoadRegistry(sourceRoot string) (Registry, error) {
 	return Registry{Templates: templates}, nil
 }
 
-// DefaultRegistry loads every official registry source and returns a merged,
-// deterministically ordered list of source-aware entries. Any source that fails
-// to load aborts the merge with a contextual aggregate error.
-func DefaultRegistry(ctx context.Context) ([]RegistryEntry, error) {
+// DefaultRegistry loads every official registry source, reports progress to
+// progress, and returns a merged, deterministically ordered list. Any source
+// that fails to load aborts the merge with a contextual aggregate error.
+func DefaultRegistry(ctx context.Context, progress io.Writer) ([]RegistryEntry, error) {
+	if progress == nil {
+		progress = io.Discard
+	}
 	var entries []RegistryEntry
 	var errs []error
 	for _, source := range OfficialSources {
+		fmt.Fprintf(progress, "Loading official registry %s...\n", source)
+		started := time.Now()
 		sourceEntries, err := loadSourceEntries(ctx, source)
 		if err != nil {
+			fmt.Fprintf(progress, "Registry %s failed after %s\n", source, time.Since(started).Round(time.Millisecond))
 			errs = append(errs, fmt.Errorf("load official registry %s: %w", source, officialRegistryError(err)))
 			continue
 		}
+		fmt.Fprintf(progress, "Loaded %s (%d templates, %s)\n", source, len(sourceEntries), time.Since(started).Round(time.Millisecond))
 		entries = append(entries, sourceEntries...)
 	}
 	if len(errs) > 0 {
@@ -202,18 +211,26 @@ func DefaultRegistry(ctx context.Context) ([]RegistryEntry, error) {
 // official registry and returns the single matching fully qualified selector.
 // Zero matches or multiple matches return an error asking the caller to qualify
 // the source. A bare name is never resolved against unofficial registries.
-func ResolveOfficialTemplateName(ctx context.Context, name string) (string, error) {
+// ResolveOfficialTemplateName reports each official source searched to progress.
+func ResolveOfficialTemplateName(ctx context.Context, name string, progress io.Writer) (string, error) {
+	if progress == nil {
+		progress = io.Discard
+	}
 	if err := ValidateTemplateName(name); err != nil {
 		return "", err
 	}
 	var matches []RegistryEntry
 	var errs []error
 	for _, source := range OfficialSources {
+		fmt.Fprintf(progress, "Searching official registry %s...\n", source)
+		started := time.Now()
 		entries, err := loadSourceEntries(ctx, source)
 		if err != nil {
+			fmt.Fprintf(progress, "Registry %s failed after %s\n", source, time.Since(started).Round(time.Millisecond))
 			errs = append(errs, fmt.Errorf("load official registry %s: %w", source, officialRegistryError(err)))
 			continue
 		}
+		fmt.Fprintf(progress, "Searched %s (%d templates, %s)\n", source, len(entries), time.Since(started).Round(time.Millisecond))
 		for _, entry := range entries {
 			if entry.Template.Name == name {
 				matches = append(matches, entry)
@@ -237,8 +254,8 @@ func ResolveOfficialTemplateName(ctx context.Context, name string) (string, erro
 	}
 }
 
-// Names returns the template names declared by the registry.
-func (registry Registry) Names() []string {
+// GetTemplateNames returns the template names declared by the registry.
+func (registry Registry) GetTemplateNames() []string {
 	names := make([]string, len(registry.Templates))
 	for index, template := range registry.Templates {
 		names[index] = template.Name
@@ -268,7 +285,7 @@ func hasMonorepoRoot(root string) (bool, error) {
 // loadSourceEntries loads one source's registry and returns its entries with
 // the source identity attached.
 func loadSourceEntries(ctx context.Context, source string) ([]RegistryEntry, error) {
-	root, err := resolveRepository(ctx, source)
+	root, err := resolveRepositoryFunc(ctx, source)
 	if err != nil {
 		return nil, err
 	}
@@ -314,12 +331,11 @@ func disambiguateLabels(entries []RegistryEntry) {
 	}
 }
 
-// resolveRepository resolves a source identity to a local registry checkout.
-// It is a package variable so fixture-backed tests can substitute a loader that
-// never touches the network or git.
-var resolveRepository = resolveRepositoryFromCache
+// resolveRepositoryFunc is replaceable so fixture-backed tests can substitute
+// a loader that never touches the network or git.
+var resolveRepositoryFunc = resolveRepository
 
-func resolveRepositoryFromCache(ctx context.Context, source string) (string, error) {
+func resolveRepository(ctx context.Context, source string) (string, error) {
 	repositoryURL := normalizeRepositoryURL(source)
 	home, err := os.UserHomeDir()
 	if err != nil {

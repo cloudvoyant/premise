@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // -----------------------------------------------------------------------------
@@ -87,10 +88,13 @@ func Generate(ctx context.Context, cwd, selector string, options GenerateOptions
 		return err
 	}
 
+	fmt.Fprintf(output, "Resolving template source %s...\n", selector)
+	started := time.Now()
 	sourceRoot, selection, err := ResolveTemplateSource(ctx, workspaceRoot, selector)
 	if err != nil {
 		return err
 	}
+	fmt.Fprintf(output, "Resolved template source (%s)\n", time.Since(started).Round(time.Millisecond))
 	templateManifestPath := filepath.Join(sourceRoot, ManifestFilename)
 	templateManifest, err := LoadManifest(templateManifestPath)
 	if errors.Is(err, os.ErrNotExist) {
@@ -130,6 +134,8 @@ func Generate(ctx context.Context, cwd, selector string, options GenerateOptions
 	if templateManifest.TemplateRegistry == nil {
 		return fmt.Errorf("template source %q does not configure template_registry", sourceRoot)
 	}
+	fmt.Fprintln(output, "Staging generated candidate...")
+	started = time.Now()
 	plan, err := BuildGeneratePlan(GenerateParameters{
 		RegistryRoot:           sourceRoot,
 		RegistryWorkspaceFiles: templateManifest.TemplateRegistry.WorkspaceFiles,
@@ -145,6 +151,7 @@ func Generate(ctx context.Context, cwd, selector string, options GenerateOptions
 	if err != nil {
 		return err
 	}
+	fmt.Fprintf(output, "Staged generated candidate (%s)\n", time.Since(started).Round(time.Millisecond))
 	for _, notice := range plan.Mise.Notices {
 		fmt.Fprintf(output, "- %s\n", notice)
 	}
@@ -477,7 +484,7 @@ func validateGeneratePlanToolChanges(ctx context.Context, plan *GeneratePlan, ou
 			return fmt.Errorf("create %s tool preflight: %w", change.Name, err)
 		}
 		failure := func() error {
-			defer os.RemoveAll(candidate)
+			defer func() { _ = os.RemoveAll(candidate) }()
 			if err := prepareWorkspaceCandidate(plan, candidate, false); err != nil {
 				return err
 			}
