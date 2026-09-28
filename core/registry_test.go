@@ -252,6 +252,16 @@ func TestResolveOfficialTemplateNameAmbiguous(t *testing.T) {
 	}
 }
 
+func TestRegistryPickerShowsLanguageAgnosticDefaultLast(t *testing.T) {
+	want := []string{"cloudvoyant/premise-cargo", "cloudvoyant/premise-bun", NativeTemplateSource}
+	if got := registryPickerSources(); !slices.Equal(got, want) {
+		t.Fatalf("registry picker sources = %v, want %v", got, want)
+	}
+	if got := registryLabel(NativeTemplateSource); got != "Default (language-agnostic)" {
+		t.Fatalf("default registry label = %q", got)
+	}
+}
+
 func TestAskDefaultTemplateSelectsOneRegistryBeforeTemplate(t *testing.T) {
 	cargoRegistry := writeRegistryFixture(t,
 		templateFixture("premise-rust-lib", "lib"),

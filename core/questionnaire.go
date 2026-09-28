@@ -89,8 +89,9 @@ func AskDefaultTemplate(ctx context.Context, progress io.Writer) (string, error)
 }
 
 var promptPickRegistry = func() (string, error) {
-	options := make([]huh.Option[string], len(OfficialSources))
-	for index, source := range OfficialSources {
+	sources := registryPickerSources()
+	options := make([]huh.Option[string], len(sources))
+	for index, source := range sources {
 		options[index] = huh.NewOption(registryLabel(source), source)
 	}
 	var source string
@@ -105,10 +106,20 @@ var promptPickRegistry = func() (string, error) {
 	return source, nil
 }
 
+func registryPickerSources() []string {
+	sources := make([]string, 0, len(OfficialSources))
+	for _, source := range OfficialSources {
+		if source != NativeTemplateSource {
+			sources = append(sources, source)
+		}
+	}
+	return append(sources, NativeTemplateSource)
+}
+
 func registryLabel(source string) string {
 	switch source {
 	case NativeTemplateSource:
-		return "Default (Go)"
+		return "Default (language-agnostic)"
 	case "cloudvoyant/premise-cargo":
 		return "Rust"
 	case "cloudvoyant/premise-bun":
