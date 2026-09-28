@@ -4,16 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/rand/v2"
+	"io"
 	"strings"
+	"time"
 
 	"charm.land/huh/v2"
 )
+
+// Types ----------------------------------------------------------------------
 
 // InteractiveQuestionnaire collects generation answers from a terminal.
 type InteractiveQuestionnaire struct{}
 
 var _ Questionnaire = InteractiveQuestionnaire{}
+
+// Public API -----------------------------------------------------------------
 
 func (InteractiveQuestionnaire) Ask(questions []Question) (map[string]string, error) {
 	answers := make(map[string]string, len(questions))
@@ -69,40 +74,74 @@ func AskTemplateKind() (string, error) {
 	return kind, nil
 }
 
-// shuffleRegistryEntries randomizes the combined official template picker so
-// no registry or language receives a stable first position.
-var shuffleRegistryEntries = func(entries []RegistryEntry) {
-	rand.Shuffle(len(entries), func(i, j int) {
-		entries[i], entries[j] = entries[j], entries[i]
-	})
+// AskDefaultTemplate first selects an official registry, then a template from
+// that registry. Progress is written to progress.
+func AskDefaultTemplate(ctx context.Context, progress io.Writer) (string, error) {
+	if progress == nil {
+		progress = io.Discard
+	}
+	source, err := promptPickRegistry()
+	if err != nil {
+		return "", fmt.Errorf("choose template registry: %w", err)
+	}
+	fmt.Fprintf(progress, "Selected template registry %s\n", source)
+	return AskRegistryTemplate(ctx, source, progress)
 }
 
-// AskDefaultTemplate lets a user choose a template from the default registry
-// and returns the selected entry's fully qualified selector.
-func AskDefaultTemplate(ctx context.Context) (string, error) {
-	entries, err := DefaultRegistry(ctx)
+var promptPickRegistry = func() (string, error) {
+	sources := registryPickerSources()
+	options := make([]huh.Option[string], len(sources))
+	for index, source := range sources {
+		options[index] = huh.NewOption(registryLabel(source), source)
+	}
+	var source string
+	err := huh.NewSelect[string]().
+		Title("Template registry:").
+		Options(options...).
+		Value(&source).
+		Run()
 	if err != nil {
-		return "", fmt.Errorf("load default template registry: %w", err)
+		return "", fmt.Errorf("choose template registry: %w", err)
 	}
-	if len(entries) == 0 {
-		return "", errors.New("default template registry is empty")
-	}
-	shuffleRegistryEntries(entries)
-	selector, err := promptPickEntry(entries)
-	if err != nil {
-		return "", fmt.Errorf("choose default template: %w", err)
-	}
-	return selector, nil
+	return source, nil
 }
 
-// AskRegistryTemplate lets a user choose a template from a single registry
-// source. It loads that one registry and opens a picker scoped to its
-// templates, returning the selected entry's fully qualified selector.
-func AskRegistryTemplate(ctx context.Context, source string) (string, error) {
+func registryPickerSources() []string {
+	sources := make([]string, 0, len(OfficialSources))
+	for _, source := range OfficialSources {
+		if source != NativeTemplateSource {
+			sources = append(sources, source)
+		}
+	}
+	return append(sources, NativeTemplateSource)
+}
+
+func registryLabel(source string) string {
+	switch source {
+	case NativeTemplateSource:
+		return "Default (language-agnostic)"
+	case "cloudvoyant/premise-cargo":
+		return "Rust"
+	case "cloudvoyant/premise-bun":
+		return "TypeScript"
+	default:
+		return source
+	}
+}
+
+// AskRegistryTemplate lets a user choose a template from one registry source,
+// reports loading progress to progress, and returns the selected selector.
+func AskRegistryTemplate(ctx context.Context, source string, progress io.Writer) (string, error) {
+	if progress == nil {
+		progress = io.Discard
+	}
+	fmt.Fprintf(progress, "Loading template registry %s...\n", source)
+	started := time.Now()
 	entries, err := loadSourceEntries(ctx, source)
 	if err != nil {
 		return "", fmt.Errorf("load template registry %s: %w", source, err)
 	}
+	fmt.Fprintf(progress, "Loaded %s (%d templates, %s)\n", source, len(entries), time.Since(started).Round(time.Millisecond))
 	if len(entries) == 0 {
 		return "", fmt.Errorf("registry %s declares no templates", source)
 	}
@@ -112,6 +151,8 @@ func AskRegistryTemplate(ctx context.Context, source string) (string, error) {
 	}
 	return selector, nil
 }
+
+// Private helpers ------------------------------------------------------------
 
 // promptPickEntry opens an interactive picker over the given entries and returns
 // the selected entry's selector. It is a package variable so tests can

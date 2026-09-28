@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"go.yaml.in/yaml/v3"
 )
 
 func templateFixture(name, kind string) Template {
@@ -51,15 +54,15 @@ func writeRegistryFixture(t *testing.T, templates ...Template) string {
 // overrideResolveRepository redirects source resolution to fixture directories.
 // It returns a restore function to reinstate the previous loader.
 func overrideResolveRepository(fixtures map[string]string) func() {
-	original := resolveRepository
-	resolveRepository = func(_ context.Context, source string) (string, error) {
+	original := resolveRepositoryFunc
+	resolveRepositoryFunc = func(_ context.Context, source string) (string, error) {
 		root, ok := fixtures[source]
 		if !ok {
 			return "", fmt.Errorf("fixture source %q is not registered", source)
 		}
 		return root, nil
 	}
-	return func() { resolveRepository = original }
+	return func() { resolveRepositoryFunc = original }
 }
 
 func TestRegistryEntrySelector(t *testing.T) {
@@ -92,7 +95,7 @@ func TestDefaultRegistryMergesOfficialSources(t *testing.T) {
 	}
 	defer overrideResolveRepository(fixtures)()
 
-	entries, err := DefaultRegistry(context.Background())
+	entries, err := DefaultRegistry(context.Background(), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +127,7 @@ func TestDefaultRegistryDisambiguatesDuplicateNames(t *testing.T) {
 		"cloudvoyant/premise-bun":   bunRegistry,
 	})()
 
-	entries, err := DefaultRegistry(context.Background())
+	entries, err := DefaultRegistry(context.Background(), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,6 +149,24 @@ func TestDefaultRegistryDisambiguatesDuplicateNames(t *testing.T) {
 	}
 }
 
+func TestOfficialRegistryErrorAddsUpgradeHintOnlyToUnknownFields(t *testing.T) {
+	unknownField := &yaml.TypeError{Errors: []string{
+		"field package_managers not found in type core.Workspace",
+	}}
+	withHint := officialRegistryError(unknownField)
+	if !strings.Contains(withHint.Error(), "may require a newer Premise CLI") {
+		t.Fatalf("unknown-field error = %v", withHint)
+	}
+	if !strings.Contains(withHint.Error(), "field package_managers not found") {
+		t.Fatalf("upgrade hint discarded the original error: %v", withHint)
+	}
+
+	malformed := officialRegistryError(errors.New("yaml: mapping values are not allowed in this context"))
+	if strings.Contains(malformed.Error(), "may require a newer Premise CLI") {
+		t.Fatalf("malformed YAML was classified as version skew: %v", malformed)
+	}
+}
+
 func TestDefaultRegistryAggregatesLoadErrors(t *testing.T) {
 	first := writeRegistryFixture(t, templateFixture("premise-app", "app"))
 	bunRegistry := writeRegistryFixture(t)
@@ -155,7 +176,7 @@ func TestDefaultRegistryAggregatesLoadErrors(t *testing.T) {
 		// premise-cargo intentionally missing so loading fails.
 	})()
 
-	_, err := DefaultRegistry(context.Background())
+	_, err := DefaultRegistry(context.Background(), io.Discard)
 	if err == nil {
 		t.Fatal("expected an aggregate error when an official source fails to load")
 	}
@@ -193,7 +214,7 @@ func TestResolveOfficialTemplateName(t *testing.T) {
 		{name: "..", wantErr: "invalid template name"},
 	}
 	for _, test := range tests {
-		got, err := ResolveOfficialTemplateName(context.Background(), test.name)
+		got, err := ResolveOfficialTemplateName(context.Background(), test.name, io.Discard)
 		if test.wantErr != "" {
 			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
 				t.Errorf("ResolveOfficialTemplateName(%q) error = %v, want containing %q", test.name, err, test.wantErr)
@@ -220,7 +241,7 @@ func TestResolveOfficialTemplateNameAmbiguous(t *testing.T) {
 		"cloudvoyant/premise-bun":   bunRegistry,
 	})()
 
-	_, err := ResolveOfficialTemplateName(context.Background(), "premise-app")
+	_, err := ResolveOfficialTemplateName(context.Background(), "premise-app", io.Discard)
 	if err == nil {
 		t.Fatal("expected an ambiguity error")
 	}
@@ -231,54 +252,55 @@ func TestResolveOfficialTemplateNameAmbiguous(t *testing.T) {
 	}
 }
 
-func TestAskDefaultTemplateReturnsSelectedSelector(t *testing.T) {
-	fixtures := make(map[string]string, len(OfficialSources))
-	for _, source := range OfficialSources {
-		name := "fixture-" + strings.ReplaceAll(source, "/", "-")
-		fixtures[source] = writeRegistryFixture(t, templateFixture(name, "app"))
+func TestRegistryPickerShowsLanguageAgnosticDefaultLast(t *testing.T) {
+	want := []string{"cloudvoyant/premise-cargo", "cloudvoyant/premise-bun", NativeTemplateSource}
+	if got := registryPickerSources(); !slices.Equal(got, want) {
+		t.Fatalf("registry picker sources = %v, want %v", got, want)
 	}
-	defer overrideResolveRepository(fixtures)()
+	if got := registryLabel(NativeTemplateSource); got != "Default (language-agnostic)" {
+		t.Fatalf("default registry label = %q", got)
+	}
+}
+
+func TestAskDefaultTemplateSelectsOneRegistryBeforeTemplate(t *testing.T) {
+	cargoRegistry := writeRegistryFixture(t,
+		templateFixture("premise-rust-lib", "lib"),
+		templateFixture("premise-rust-app", "app"),
+	)
+	defer overrideResolveRepository(map[string]string{
+		"cloudvoyant/premise-cargo": cargoRegistry,
+	})()
+
+	originalRegistryPicker := promptPickRegistry
+	promptPickRegistry = func() (string, error) {
+		return "cloudvoyant/premise-cargo", nil
+	}
+	defer func() { promptPickRegistry = originalRegistryPicker }()
 
 	var presented []string
-	var selected string
-	shuffleCalled := false
-	originalShuffle := shuffleRegistryEntries
-	shuffleRegistryEntries = func(entries []RegistryEntry) {
-		shuffleCalled = true
-		slices.Reverse(entries)
-	}
-	defer func() { shuffleRegistryEntries = originalShuffle }()
-
-	originalPicker := promptPickEntry
+	originalTemplatePicker := promptPickEntry
 	promptPickEntry = func(entries []RegistryEntry) (string, error) {
-		if len(entries) == 0 {
-			return "", fmt.Errorf("picker received no entries")
-		}
 		for _, entry := range entries {
 			presented = append(presented, entry.Selector())
 		}
-		selected = entries[len(entries)-1].Selector()
-		return selected, nil
+		return entries[0].Selector(), nil
 	}
-	defer func() { promptPickEntry = originalPicker }()
+	defer func() { promptPickEntry = originalTemplatePicker }()
 
-	selector, err := AskDefaultTemplate(context.Background())
+	selector, err := AskDefaultTemplate(context.Background(), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !shuffleCalled {
-		t.Fatal("AskDefaultTemplate did not shuffle the combined registry")
+	if selector != "cloudvoyant/premise-cargo:premise-rust-app" {
+		t.Fatalf("AskDefaultTemplate returned %q", selector)
 	}
-	if selector != selected {
-		t.Fatalf("AskDefaultTemplate returned %q, want %q", selector, selected)
+	if len(presented) != 2 {
+		t.Fatalf("template picker showed %d entries, want 2", len(presented))
 	}
-	if len(presented) != len(OfficialSources) {
-		t.Fatalf("picker enumerated %d entries, want %d", len(presented), len(OfficialSources))
-	}
-	lastSource := OfficialSources[len(OfficialSources)-1]
-	wantFirst := lastSource + ":fixture-" + strings.ReplaceAll(lastSource, "/", "-")
-	if presented[0] != wantFirst {
-		t.Fatalf("first picker entry = %q, want shuffled entry %q", presented[0], wantFirst)
+	for _, entry := range presented {
+		if !strings.HasPrefix(entry, "cloudvoyant/premise-cargo:") {
+			t.Errorf("template picker showed another registry: %q", entry)
+		}
 	}
 }
 
@@ -303,7 +325,7 @@ func TestAskRegistryTemplateScopesToSource(t *testing.T) {
 	}
 	defer func() { promptPickEntry = originalPicker }()
 
-	selector, err := AskRegistryTemplate(context.Background(), "cloudvoyant/premise-cargo")
+	selector, err := AskRegistryTemplate(context.Background(), "cloudvoyant/premise-cargo", io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -404,7 +426,7 @@ func TestRegistryResolutionRecordsQualifiedProvenance(t *testing.T) {
 		{
 			name: "bare name across official registries",
 			resolve: func(t *testing.T, ctx context.Context) string {
-				selector, err := ResolveOfficialTemplateName(ctx, "premise-rust-lib")
+				selector, err := ResolveOfficialTemplateName(ctx, "premise-rust-lib", io.Discard)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -422,7 +444,7 @@ func TestRegistryResolutionRecordsQualifiedProvenance(t *testing.T) {
 					return entries[0].Selector(), nil
 				}
 				defer func() { promptPickEntry = original }()
-				selector, err := AskRegistryTemplate(ctx, "cloudvoyant/premise-cargo")
+				selector, err := AskRegistryTemplate(ctx, "cloudvoyant/premise-cargo", io.Discard)
 				if err != nil {
 					t.Fatal(err)
 				}
