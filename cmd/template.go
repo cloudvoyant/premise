@@ -78,7 +78,7 @@ var templateListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		for _, name := range registry.GetTemplateNames() {
+		for _, name := range registry.Names() {
 			fmt.Fprintln(cmd.OutOrStdout(), name)
 		}
 		return nil

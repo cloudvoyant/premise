@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 
 	core "github.com/cloudvoyant/premise/core"
@@ -37,7 +36,7 @@ Use .:app to select a template from the current workspace.`,
 			return err
 		}
 
-		selector, err := resolveSelectorArgument(cmd.Context(), args, cmd.ErrOrStderr())
+		selector, err := resolveSelectorArgument(cmd.Context(), args)
 		if err != nil {
 			return err
 		}
@@ -49,7 +48,7 @@ Use .:app to select a template from the current workspace.`,
 
 // resolveSelectorArgument routes a generate argument to the matching selector
 // resolution strategy and returns the fully qualified selector to generate.
-func resolveSelectorArgument(ctx context.Context, args []string, progress io.Writer) (string, error) {
+func resolveSelectorArgument(ctx context.Context, args []string) (string, error) {
 	arg := ""
 	if len(args) > 0 {
 		arg = args[0]
@@ -60,11 +59,11 @@ func resolveSelectorArgument(ctx context.Context, args []string, progress io.Wri
 	}
 	switch classified.Kind {
 	case core.GenerateSelectorDefault:
-		return core.AskDefaultTemplate(ctx, progress)
+		return core.AskDefaultTemplate(ctx)
 	case core.GenerateSelectorOfficialName:
-		return core.ResolveOfficialTemplateName(ctx, classified.Value, progress)
+		return core.ResolveOfficialTemplateName(ctx, classified.Value)
 	case core.GenerateSelectorSource:
-		return core.AskRegistryTemplate(ctx, classified.Value, progress)
+		return core.AskRegistryTemplate(ctx, classified.Value)
 	case core.GenerateSelectorExplicit:
 		return classified.Value, nil
 	default:

@@ -138,7 +138,7 @@ func TestWorkspaceTemplateAndGenerationWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if names := registry.GetTemplateNames(); len(names) != 1 || names[0] != "app" {
+	if names := registry.Names(); len(names) != 1 || names[0] != "app" {
 		t.Fatalf("unexpected registry names: %v", names)
 	}
 	var output bytes.Buffer

@@ -45,6 +45,19 @@ else
     mkdir -p "$INSTALL_DIR"
 fi
 
+# Resolve release tag (VERSION pins it; otherwise use the latest release)
+if [[ -n "${VERSION:-}" ]]; then
+    TAG="$VERSION"
+else
+    echo "Fetching latest $PROJECT release..."
+    LATEST_URL="https://api.github.com/repos/$REPO/releases/latest"
+    TAG=$(curl -fsSL "$LATEST_URL" | grep '"tag_name"' | sed 's/.*"tag_name": *"\(.*\)".*/\1/')
+fi
+
+ASSET_NAME="${PROJECT}-${TAG}-${TARGET}.tar.gz"
+DOWNLOAD_URL="https://github.com/$REPO/releases/download/$TAG/$ASSET_NAME"
+
+echo "Downloading $ASSET_NAME..."
 TMP_DIR=$(mktemp -d)
 STAGED_BINARY="$INSTALL_DIR/.$PROJECT.tmp.$$"
 cleanup() {
@@ -52,30 +65,7 @@ cleanup() {
     rm -f "$STAGED_BINARY"
 }
 trap cleanup EXIT
-
-# Resolve release tag (VERSION pins it; otherwise use the latest release)
-if [[ -n "${VERSION:-}" ]]; then
-    TAG="$VERSION"
-else
-    echo "Fetching latest $PROJECT release..."
-    LATEST_URL="${PREMISE_RELEASE_API_URL:-https://api.github.com/repos/$REPO/releases/latest}"
-    if ! curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors "$LATEST_URL" -o "$TMP_DIR/release.json"; then
-        echo "Could not fetch the latest Premise release. Check GitHub access, retry, or pass a version to pm update." >&2
-        exit 1
-    fi
-    TAG=$(grep '"tag_name"' "$TMP_DIR/release.json" | sed 's/.*"tag_name": *"\(.*\)".*/\1/')
-    if [[ -z "$TAG" ]]; then
-        echo "GitHub release response has no tag_name." >&2
-        exit 1
-    fi
-fi
-
-ASSET_NAME="${PROJECT}-${TAG}-${TARGET}.tar.gz"
-DOWNLOAD_URL="${PREMISE_DOWNLOAD_BASE_URL:-https://github.com/$REPO/releases/download}/$TAG/$ASSET_NAME"
-
-echo "Downloading $ASSET_NAME..."
-curl -fL --retry 3 --retry-delay 2 --retry-all-errors --progress-bar "$DOWNLOAD_URL" -o "$TMP_DIR/$ASSET_NAME"
-tar -xzf "$TMP_DIR/$ASSET_NAME" -C "$TMP_DIR"
+curl -fsSL "$DOWNLOAD_URL" | tar -xz -C "$TMP_DIR"
 
 cp "$TMP_DIR/$PROJECT" "$STAGED_BINARY"
 chmod +x "$STAGED_BINARY"

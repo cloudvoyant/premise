@@ -10,18 +10,15 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 	"unicode/utf8"
 )
 
 const NativeTemplateSource = "cloudvoyant/premise"
 
-// Public API -----------------------------------------------------------------
-
-func ResolveTemplateSource(ctx context.Context, workspaceRoot, selector string) (string, TemplateSelector, error) {
+func ResolveTemplateSource(ctx context.Context, workspaceRoot, selector string) (string, TemplateSelection, error) {
 	selection, err := ParseTemplateSelector(selector)
 	if err != nil {
-		return "", TemplateSelector{}, err
+		return "", TemplateSelection{}, err
 	}
 	if selection.Local {
 		if filepath.IsAbs(selection.Source) {
@@ -29,14 +26,14 @@ func ResolveTemplateSource(ctx context.Context, workspaceRoot, selector string) 
 		}
 		path, err := filepath.Abs(filepath.Join(workspaceRoot, selection.Source))
 		if err != nil {
-			return "", TemplateSelector{}, fmt.Errorf("resolve local template source: %w", err)
+			return "", TemplateSelection{}, fmt.Errorf("resolve local template source: %w", err)
 		}
 		return path, selection, nil
 	}
 
-	root, err := resolveRepositoryFunc(ctx, selection.Source)
+	root, err := resolveRepository(ctx, selection.Source)
 	if err != nil {
-		return "", TemplateSelector{}, fmt.Errorf("resolve template registry %s: %w", selection.Source, err)
+		return "", TemplateSelection{}, fmt.Errorf("resolve template registry %s: %w", selection.Source, err)
 	}
 	return root, selection, nil
 }
@@ -168,8 +165,6 @@ func TestTemplateContracts(ctx context.Context, root string, manifest Config, st
 	return nil
 }
 
-// Private helpers ------------------------------------------------------------
-
 func runTemplateContracts(ctx context.Context, directory, kind, label string, stdout, stderr io.Writer) error {
 	if stdout == nil {
 		stdout = io.Discard
@@ -201,8 +196,6 @@ func runGenerationMiseInstall(ctx context.Context, directory, label string, fail
 	if failureOutput == nil {
 		failureOutput = io.Discard
 	}
-	fmt.Fprintf(failureOutput, "[%s] mise install...\n", label)
-	started := time.Now()
 	var commandOutput bytes.Buffer
 	mise := miseRunner{
 		Stdout:  &commandOutput,
@@ -213,7 +206,6 @@ func runGenerationMiseInstall(ctx context.Context, directory, label string, fail
 		_, _ = io.Copy(failureOutput, &commandOutput)
 		return fmt.Errorf("template %s tool install failed: %w", label, err)
 	}
-	fmt.Fprintf(failureOutput, "[%s] mise install done (%s)\n", label, time.Since(started).Round(time.Millisecond))
 	return nil
 }
 
@@ -234,8 +226,6 @@ func runGenerationTemplateContractsWithCeiling(ctx context.Context, directory, k
 	}
 	testEnvironment := []string{"PREMISE_TEMPLATE_TEST=1"}
 	run := func(arguments ...string) error {
-		fmt.Fprintf(failureOutput, "[%s] mise %s...\n", label, strings.Join(arguments, " "))
-		started := time.Now()
 		var commandOutput bytes.Buffer
 		mise := miseRunner{
 			Stdout:  &commandOutput,
@@ -246,7 +236,6 @@ func runGenerationTemplateContractsWithCeiling(ctx context.Context, directory, k
 			_, _ = io.Copy(failureOutput, &commandOutput)
 			return err
 		}
-		fmt.Fprintf(failureOutput, "[%s] mise %s done (%s)\n", label, strings.Join(arguments, " "), time.Since(started).Round(time.Millisecond))
 		return nil
 	}
 	if err := run("install"); err != nil {
