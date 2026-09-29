@@ -46,6 +46,15 @@ func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 	for _, name := range []string{"on-commit.yml", "on-merge.yml", "on-deploy.yml"} {
 		path := filepath.Join(workspace, ".github", "workflows", name)
 		assertFileContains(t, path, "cloudvoyant/premise@v0")
+		if name == "on-commit.yml" {
+			workflow, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(workflow), "github.event.before") {
+				t.Fatal("on-commit must validate the first push to a new branch")
+			}
+		}
 		if name == "on-merge.yml" {
 			assertFileContains(t, path, "NODE_AUTH_TOKEN")
 			assertFileContains(t, path, "secrets.NPM_TOKEN")

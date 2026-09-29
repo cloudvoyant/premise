@@ -16,10 +16,6 @@ jobs:
   verify:
     name: Test, lint, and check formatting
     runs-on: ubuntu-latest
-    if: >-
-      github.event_name == 'pull_request' ||
-      github.event.before !=
-      '0000000000000000000000000000000000000000'
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
