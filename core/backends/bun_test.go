@@ -70,6 +70,7 @@ func TestBunPluginSelectsRegistryPackagesIndependentlyOfVisibility(t *testing.T)
 func TestBunPublicationPassesOnlyScopedCredentialsAndVersion(t *testing.T) {
 	root := t.TempDir()
 	manifest := NewManifest("bun-fixture")
+	manifest.Workspace.Kind = core.ProjectKindTemplateRegistry
 	template := templateFixture("public-cli", "app")
 	manifest.TemplateRegistry = &TemplateRegistry{WorkspaceFiles: []string{}, Templates: []Template{template}}
 	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
@@ -121,6 +122,7 @@ esac
 func TestBunPublicationSkipsPrivatePackagesWithoutCredentials(t *testing.T) {
 	root := t.TempDir()
 	manifest := NewManifest("bun-fixture")
+	manifest.Workspace.Kind = core.ProjectKindTemplateRegistry
 	template := templateFixture("private-app", "app")
 	manifest.TemplateRegistry = &TemplateRegistry{WorkspaceFiles: []string{}, Templates: []Template{template}}
 	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
@@ -145,6 +147,7 @@ func TestBunPublicationSkipsPrivatePackagesWithoutCredentials(t *testing.T) {
 func TestBunPublicationAggregatesPreflightErrors(t *testing.T) {
 	root := t.TempDir()
 	manifest := NewManifest("bun-fixture")
+	manifest.Workspace.Kind = core.ProjectKindTemplateRegistry
 	for _, name := range []string{"bad-json", "bad-registry", "missing-task", "ready"} {
 		template := templateFixture(name, "app")
 		manifest.TemplateRegistry = appendBunTemplate(manifest.TemplateRegistry, template)
@@ -212,6 +215,7 @@ func appendBunTemplate(registry *TemplateRegistry, template Template) *TemplateR
 func TestBunPublicationReusesCredentialsPerRegistry(t *testing.T) {
 	root := t.TempDir()
 	manifest := NewManifest("bun-fixture")
+	manifest.Workspace.Kind = core.ProjectKindTemplateRegistry
 	for _, test := range []struct{ name, registry string }{
 		{"first", "https://registry.npmjs.org/"},
 		{"second", "https://registry.npmjs.org/"},
@@ -265,7 +269,7 @@ esac
 		t.Fatal(err)
 	}
 	paths := strings.Fields(string(data))
-	if len(paths) != 3 || paths[0] != paths[1] || paths[1] == paths[2] {
+	if len(paths) != 3 || paths[0] != paths[2] || paths[0] == paths[1] {
 		t.Fatalf("credential files = %v; want one reused, one isolated", paths)
 	}
 	for _, path := range paths {

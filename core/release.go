@@ -30,6 +30,7 @@ const goreleaserVersion = "2.18.1"
 var stableVersionPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
 
 var executeGoReleaser = runGoReleaser
+var pushReleaseTag = createAndPushReleaseTag
 
 // ReleasePlan describes the stable release decision for the current HEAD.
 type ReleasePlan struct {
@@ -120,7 +121,7 @@ func PlanStableRelease(ctx context.Context, root string) (ReleasePlan, error) {
 
 	current, err := CurrentVersion(root)
 	if err != nil {
-		return ReleasePlan{}, fmt.Errorf("calculate current version; ensure the v0.0.0 bootstrap tag exists: %w", err)
+		return ReleasePlan{}, fmt.Errorf("calculate current version: %w", err)
 	}
 	next, err := NextVersion(root)
 	if err != nil {
@@ -135,6 +136,10 @@ func PlanStableRelease(ctx context.Context, root string) (ReleasePlan, error) {
 // PrepareStableRelease plans the stable release and creates its tag when
 // needed. It does not build or publish artifacts.
 func PrepareStableRelease(ctx context.Context, root string, stdout io.Writer) (ReleasePlan, error) {
+	return prepareStableRelease(ctx, root, stdout, false)
+}
+
+func prepareStableRelease(ctx context.Context, root string, stdout io.Writer, fullPublish bool) (ReleasePlan, error) {
 	plan, err := PlanStableRelease(ctx, root)
 	if err != nil {
 		return ReleasePlan{}, fmt.Errorf("plan stable release: %w", err)
@@ -147,7 +152,12 @@ func PrepareStableRelease(ctx context.Context, root string, stdout io.Writer) (R
 		fmt.Fprintf(stdout, "Reusing existing stable tag at HEAD: %s\n", plan.Version)
 		return plan, nil
 	}
-	if err := createAndPushReleaseTag(ctx, root, plan.Version, releaseAuthentication()); err != nil {
+	if fullPublish {
+		if err := preflightStablePublication(ctx, root, plan.Version); err != nil {
+			return ReleasePlan{}, fmt.Errorf("preflight stable publication: %w", err)
+		}
+	}
+	if err := pushReleaseTag(ctx, root, plan.Version, releaseAuthentication()); err != nil {
 		return ReleasePlan{}, fmt.Errorf("prepare stable release: %w", err)
 	}
 	plan.ReuseTag = true
@@ -202,7 +212,7 @@ func PublishLanguagePackages(ctx context.Context, root string, stdout, stderr io
 // PublishStableRelease plans, tags, and publishes all configured outputs. CI
 // can call the narrower functions in separate credential-bearing steps.
 func PublishStableRelease(ctx context.Context, root string, stdout, stderr io.Writer) (ReleasePlan, error) {
-	plan, err := PrepareStableRelease(ctx, root, stdout)
+	plan, err := prepareStableRelease(ctx, root, stdout, true)
 	if err != nil || plan.Skip {
 		return plan, err
 	}
@@ -222,6 +232,27 @@ func PublishStableRelease(ctx context.Context, root string, stdout, stderr io.Wr
 		}
 	}
 	return plan, nil
+}
+
+func preflightStablePublication(ctx context.Context, root, version string) error {
+	_, plugins, err := loadReleaseBackends(root)
+	if err != nil {
+		return fmt.Errorf("resolve package managers: %w", err)
+	}
+	return preflightStablePublicationPlugins(ctx, root, version, plugins)
+}
+
+func preflightStablePublicationPlugins(ctx context.Context, root, version string, plugins []PackageManagerBackend) error {
+	var failures []error
+	for _, plugin := range plugins {
+		if !plugin.SupportsPackages() {
+			continue
+		}
+		if err := plugin.PreflightPublication(ctx, root, version, "publish"); err != nil {
+			failures = append(failures, fmt.Errorf("%s: %w", plugin.ID(), err))
+		}
+	}
+	return errors.Join(failures...)
 }
 
 func requirePreparedRelease(ctx context.Context, root string, stdout io.Writer) (ReleasePlan, error) {

@@ -6,9 +6,9 @@ package core
 //   - restrict repository baselines to strict stable vMAJOR.MINOR.PATCH tags.
 
 import (
-	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -139,6 +139,9 @@ func calculateVersion(root string, calculate func(...svu.Option) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("resolve stable version baseline: %w", err)
 	}
+	if stableTag == "v0.0.0" {
+		return calculateVirtualBaseline(root, calculate, extra...)
+	}
 	options := []svu.Option{
 		svu.WithPattern(stableTag),
 		svu.WithPrefix("v"),
@@ -166,6 +169,32 @@ func calculateVersion(root string, calculate func(...svu.Option) (string, error)
 		return "", fmt.Errorf("restore working directory %s: %w", previous, restoreErr)
 	}
 	return version, nil
+}
+
+func calculateVirtualBaseline(root string, calculate func(...svu.Option) (string, error), extra ...svu.Option) (string, error) {
+	repository, err := git.PlainOpenWithOptions(root, &git.PlainOpenOptions{DetectDotGit: true})
+	if err != nil {
+		return "", fmt.Errorf("open version repository: %w", err)
+	}
+	head, err := repository.Head()
+	if err != nil {
+		return "", fmt.Errorf("read version HEAD: %w", err)
+	}
+	commit, err := repository.CommitObject(head.Hash())
+	if err != nil {
+		return "", fmt.Errorf("read version HEAD commit: %w", err)
+	}
+	if reflect.ValueOf(calculate).Pointer() == reflect.ValueOf(svu.Current).Pointer() {
+		return "v0.0.0", nil
+	}
+	message := commit.Message
+	if strings.HasPrefix(message, "feat") || strings.Contains(message, "BREAKING CHANGE") || strings.Contains(message, "!:") {
+		return "v0.1.0", nil
+	}
+	if strings.HasPrefix(message, "fix") {
+		return "v0.0.1", nil
+	}
+	return "v0.0.0", nil
 }
 
 func latestStableVersionTag(root string) (string, error) {
@@ -197,7 +226,10 @@ func latestStableVersionTag(root string) (string, error) {
 		return "", fmt.Errorf("inspect version tags: %w", err)
 	}
 	if latestTag == "" {
-		return "", errors.New("no stable vMAJOR.MINOR.PATCH tag found; create the v0.0.0 bootstrap tag")
+		// A repository without release refs starts from the virtual baseline.
+		// The baseline is passed to svu as a pattern, but no Git tag is created
+		// until a release is prepared.
+		return "v0.0.0", nil
 	}
 	return latestTag, nil
 }

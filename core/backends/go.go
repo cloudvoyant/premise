@@ -30,6 +30,10 @@ func (Go) WillPublishOk(_ context.Context, _ string, _ core.Template, _, _ strin
 	return false, nil
 }
 
+// PreflightPublication succeeds because Go has no registry package targets or
+// credentials to validate.
+func (Go) PreflightPublication(_ context.Context, _ string, _, _ string) error { return nil }
+
 // SupportsPackages reports that Go does not publish registry packages.
 func (Go) SupportsPackages() bool { return false }
 

@@ -199,7 +199,7 @@ func TestMonorepoCIFlowUsesLifecycleOrderAndPublishesMarkedRC(t *testing.T) {
 		"pm install",
 		"mise run --jobs 1 //...:build",
 		"mise run --jobs 1 //...:test",
-		"mise run --jobs 1 //...:format",
+		"mise run --jobs 1 //...:format:check",
 		"mise run --jobs 1 //...:lint",
 	}
 	if !reflect.DeepEqual(got, want) {

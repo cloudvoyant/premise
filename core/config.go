@@ -24,6 +24,18 @@ var (
 )
 
 // Config is the validated in-memory form of premise.yaml.
+// WorkflowAsset is a client GitHub Actions workflow embedded in the CLI.
+type WorkflowAsset struct {
+	Path    string
+	Content string
+}
+
+// WorkspaceScaffold contains the embedded files used to initialize a workspace.
+type WorkspaceScaffold struct {
+	MiseTemplate   string
+	WorkflowAssets []WorkflowAsset
+}
+
 type Config struct {
 	Workspace        Workspace         `yaml:"workspace"`
 	TemplateRegistry *TemplateRegistry `yaml:"template_registry,omitempty"`
@@ -193,7 +205,17 @@ func InitializeTemplateRegistry(root string) (string, error) {
 	return manifestPath, nil
 }
 
-func InitializeWorkspace(root, workspaceMiseTemplate string) (string, error) {
+func InitializeWorkspace(root, workspaceMiseTemplate string, workflowAssets ...WorkflowAsset) (string, error) {
+	return initializeWorkspace(root, WorkspaceScaffold{MiseTemplate: workspaceMiseTemplate, WorkflowAssets: workflowAssets})
+}
+
+func InitializeWorkspaceWithScaffold(root string, scaffold WorkspaceScaffold) (string, error) {
+	return initializeWorkspace(root, scaffold)
+}
+
+func initializeWorkspace(root string, scaffold WorkspaceScaffold) (string, error) {
+	workspaceMiseTemplate := scaffold.MiseTemplate
+	workflowAssets := scaffold.WorkflowAssets
 	if strings.TrimSpace(workspaceMiseTemplate) == "" {
 		return "", errors.New("workspace mise template is empty")
 	}
@@ -216,12 +238,42 @@ func InitializeWorkspace(root, workspaceMiseTemplate string) (string, error) {
 	if err := ensureWorkspaceMise(root, workspaceMiseTemplate); err != nil {
 		return "", err
 	}
+	if err := ensureWorkflowAssets(root, workflowAssets); err != nil {
+		return "", err
+	}
 	manifest := NewManifest(name)
 	manifest.Workspace.Kind = ProjectKindMonorepo
 	if err := SaveManifest(manifestPath, manifest); err != nil {
 		return "", err
 	}
 	return manifestPath, nil
+}
+
+func ensureWorkflowAssets(root string, assets []WorkflowAsset) error {
+	if len(assets) == 0 {
+		return nil
+	}
+	for _, asset := range assets {
+		if strings.TrimSpace(asset.Path) == "" {
+			return errors.New("workflow asset path is empty")
+		}
+		path := filepath.Join(root, asset.Path)
+		if _, err := os.Lstat(path); err == nil {
+			return fmt.Errorf("workflow %s already exists", path)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("inspect workflow %s: %w", path, err)
+		}
+	}
+	for _, asset := range assets {
+		path := filepath.Join(root, asset.Path)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return fmt.Errorf("create workflow directory: %w", err)
+		}
+		if err := os.WriteFile(path, []byte(asset.Content), 0o644); err != nil {
+			return fmt.Errorf("write workflow %s: %w", path, err)
+		}
+	}
+	return nil
 }
 
 func ensureWorkspaceMise(root, workspaceMiseTemplate string) error {
@@ -431,6 +483,36 @@ func (manifest Config) DeclaredTemplates() []Template {
 	return manifest.TemplateRegistry.Templates
 }
 
+// PublicationTargets returns the templates that represent publishable packages
+// for the configured workspace lifecycle. Registry workspaces publish their
+// declared templates; monorepos publish their registered projects. The
+// workspace kind is authoritative when both forms are present.
+func (manifest Config) PublicationTargets() []Template {
+	var targets []Template
+	switch manifest.Workspace.Kind {
+	case ProjectKindTemplateRegistry:
+		targets = append(targets, manifest.DeclaredTemplates()...)
+	default:
+		targets = make([]Template, 0, len(manifest.Workspace.Projects))
+		for _, project := range manifest.Workspace.Projects {
+			kind := ""
+			if strings.HasPrefix(filepath.ToSlash(project.Path), "apps/") {
+				kind = "app"
+			} else if strings.HasPrefix(filepath.ToSlash(project.Path), "libs/") {
+				kind = "lib"
+			}
+			targets = append(targets, Template{Name: project.Name, Kind: kind, Path: project.Path, Version: project.Version})
+		}
+	}
+	sort.SliceStable(targets, func(i, j int) bool {
+		if targets[i].Path == targets[j].Path {
+			return targets[i].Name < targets[j].Name
+		}
+		return targets[i].Path < targets[j].Path
+	})
+	return targets
+}
+
 func (manifest Config) FindTemplate(name string) (Template, error) {
 	for _, template := range manifest.DeclaredTemplates() {
 		if template.Name == name {
@@ -438,6 +520,23 @@ func (manifest Config) FindTemplate(name string) (Template, error) {
 		}
 	}
 	return Template{}, fmt.Errorf("template %q is not declared", name)
+}
+
+// MergePackageManagers appends package-manager IDs that are not already
+// declared, preserving both the existing order and the order of incoming IDs.
+func (manifest *Config) MergePackageManagers(packageManagers ...string) error {
+	seen := make(map[string]struct{}, len(manifest.Workspace.PackageManagers)+len(packageManagers))
+	for _, packageManager := range manifest.Workspace.PackageManagers {
+		seen[packageManager] = struct{}{}
+	}
+	for _, packageManager := range packageManagers {
+		if _, exists := seen[packageManager]; exists {
+			continue
+		}
+		manifest.Workspace.PackageManagers = append(manifest.Workspace.PackageManagers, packageManager)
+		seen[packageManager] = struct{}{}
+	}
+	return manifest.Validate()
 }
 
 func (manifest *Config) AddProject(project Project) error {

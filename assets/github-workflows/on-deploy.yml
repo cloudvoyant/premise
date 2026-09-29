@@ -1,0 +1,29 @@
+---
+name: On Deploy
+
+"on":
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: false
+        default: stage
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Run on-release flow
+        uses: cloudvoyant/premise@v0
+        with:
+          flow: on-release
+          environment: ${{ inputs.environment }}

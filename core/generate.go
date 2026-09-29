@@ -166,6 +166,9 @@ func Generate(ctx context.Context, cwd, selector string, options GenerateOptions
 		Path:     filepath.ToSlash(relativeDestination),
 		Answers:  answers,
 	}
+	if err := workspaceManifest.MergePackageManagers(templateManifest.Workspace.PackageManagers...); err != nil {
+		return errors.Join(err, removeGeneratedDestination(destination), plan.rollbackRoot())
+	}
 	if err := workspaceManifest.AddProject(project); err != nil {
 		return errors.Join(err, removeGeneratedDestination(destination), plan.rollbackRoot())
 	}

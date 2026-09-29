@@ -58,9 +58,9 @@ pm update
 pm update v0.2.1
 ```
 
-In an initialized Premise workspace, run `pm g` to choose a registry and a template. The Default registry provides language-agnostic monorepo scaffolding.
+In an initialized Premise workspace, run `pm g` to choose a registry and a template. The Default registry provides language-agnostic monorepo scaffolding. `pm init` also generates the GitHub workflows used for commit, merge, and deploy flows. Existing workflow files are preserved and are never overwritten.
 
-Stable releases are planned, tagged, and published by `pm release` after merges to `main`; see [Infrastructure](docs/infrastructure.md) for the release pipeline.
+Stable releases are planned, preflighted, tagged, and published by `pm release` after merges to `main`; see [Infrastructure](docs/infrastructure.md) for the release pipeline. A fresh repository uses a virtual `v0.0.0` baseline, so its first feature release can plan `v0.1.0` without a manually created bootstrap tag.
 
 ## Documentation
 

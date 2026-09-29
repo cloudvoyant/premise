@@ -29,6 +29,9 @@ func (p testPackageManager) ValidatePackage(_ string, _ Template) error { return
 func (p testPackageManager) WillPublishOk(_ context.Context, _ string, _ Template, _, _ string) (bool, error) {
 	return false, nil
 }
+func (p testPackageManager) PreflightPublication(_ context.Context, _ string, _, _ string) error {
+	return nil
+}
 func (p testPackageManager) SupportsPackages() bool { return p.publish != nil }
 func (p testPackageManager) PublishPackages(ctx context.Context, root, version, task string, stdout, stderr io.Writer) error {
 	if p.publish == nil {

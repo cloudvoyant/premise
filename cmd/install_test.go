@@ -52,7 +52,7 @@ func TestInstallRunsDevToolAndRootTaskInstallation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := resolvedRoot + "|install\n" + resolvedRoot + "|install --monorepo\n" + resolvedRoot + "|run install\n"
+	want := resolvedRoot + "|install\n" + resolvedRoot + "|install --monorepo\n" + resolvedRoot + "|run //...:install\n"
 	if got := string(data); got != want {
 		t.Fatalf("pm install Mise calls = %q, want %q", got, want)
 	}

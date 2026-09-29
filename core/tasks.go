@@ -15,6 +15,11 @@ func RunRootTask(ctx context.Context, root, task string, stdin io.Reader, stdout
 	return runMiseTask(ctx, root, root, task, stdin, stdout, stderr, arguments...)
 }
 
+// RunProjectContracts runs a named task for every generated project from the workspace root.
+func RunProjectContracts(ctx context.Context, root, task string, stdin io.Reader, stdout, stderr io.Writer, arguments ...string) error {
+	return runMiseTask(ctx, root, root, "//...:"+task, stdin, stdout, stderr, arguments...)
+}
+
 // RunProjectTask runs a named Mise task from a generated project.
 func RunProjectTask(ctx context.Context, root, projectName, task string, stdin io.Reader, stdout, stderr io.Writer, arguments ...string) error {
 	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))

@@ -81,6 +81,25 @@ func (Bun) WillPublishOk(ctx context.Context, root string, template core.Templat
 	return found, err
 }
 
+// PreflightPublication validates Bun's workspace manifest and required
+// credentials. Per-package task and registry checks remain in PublishPackages.
+func (Bun) PreflightPublication(_ context.Context, root, _, _ string) error {
+	manifest, err := core.LoadManifest(filepath.Join(root, core.ManifestFilename))
+	if err != nil {
+		return fmt.Errorf("load Bun registry manifest: %w", err)
+	}
+	for _, target := range manifest.PublicationTargets() {
+		metadata, found, err := (Bun{}).GetPackageMetadata(root, target)
+		if err != nil {
+			return fmt.Errorf("package target %s: %w", target.Name, err)
+		}
+		if found && metadata.Publishable && os.Getenv("NODE_AUTH_TOKEN") == "" {
+			return errors.New("NODE_AUTH_TOKEN is required for Bun registry publication")
+		}
+	}
+	return nil
+}
+
 // SupportsPackages reports that Bun publishes registry packages.
 func (Bun) SupportsPackages() bool { return true }
 
@@ -151,14 +170,14 @@ func publishBunPackages(ctx context.Context, root, version, task string, stdout,
 	var publications []bunPublishTarget
 	var failures []error
 	preflight := core.MiseTaskRunner{Stderr: stderr}
-	for _, template := range manifest.DeclaredTemplates() {
-		publication, ready, err := preflightBunPackage(ctx, root, template, task, preflight)
+	for _, target := range manifest.PublicationTargets() {
+		publication, ready, err := preflightBunPackage(ctx, root, target, task, preflight)
 		if err != nil {
-			failures = append(failures, fmt.Errorf("template %s: %w", template.Name, err))
+			failures = append(failures, fmt.Errorf("package target %s: %w", target.Name, err))
 			continue
 		}
 		if !ready {
-			fmt.Fprintf(stdout, "skip: %s Bun registry publication disabled\n", template.Name)
+			fmt.Fprintf(stdout, "skip: %s Bun registry publication disabled\n", target.Name)
 			continue
 		}
 		publications = append(publications, publication)

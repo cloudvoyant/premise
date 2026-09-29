@@ -336,7 +336,7 @@ func ciTasks(flow CIFlow, target string) []ciTask {
 		return []ciTask{
 			{name: "build"},
 			{name: "test"},
-			{name: "format"},
+			{name: "format:check"},
 			{name: "lint"},
 			{name: "deploy", optional: true, appOnly: true, target: target},
 			{name: "e2e", optional: true, appOnly: true, target: target},
@@ -345,7 +345,7 @@ func ciTasks(flow CIFlow, target string) []ciTask {
 		return []ciTask{
 			{name: "build"},
 			{name: "test"},
-			{name: "format"},
+			{name: "format:check"},
 			{name: "lint"},
 			{name: "deploy", optional: true, appOnly: true, target: target},
 			{name: "e2e", optional: true, appOnly: true, target: target},

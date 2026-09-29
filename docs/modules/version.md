@@ -38,7 +38,7 @@ version, err := core.ValidatePackagePublicationVersion("v1.2.3", "publish")
 
 Repository calculation uses the svu Go SDK rather than invoking an external executable. A mutex protects svu’s process-directory dependency so concurrent callers do not race while evaluating different repositories.
 
-Only stable tags matching `vMAJOR.MINOR.PATCH` form the baseline. The repository must contain the externally created `v0.0.0` bootstrap tag. Unrelated and prerelease tags do not become stable baselines.
+Only stable tags matching `vMAJOR.MINOR.PATCH` form the baseline. If none exists, the module uses a virtual `v0.0.0` baseline; the first feature release plans `v0.1.0` and creates no bootstrap ref. Unrelated and prerelease tags do not become stable baselines.
 
 `NextVersion` delegates conventional-commit inference to svu. `BumpedVersion` supplies an explicit patch, minor, or major bump. `ReleaseCandidateVersion` starts from the next stable version and adds `rc.<identifier>`.
 

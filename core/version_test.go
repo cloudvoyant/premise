@@ -62,6 +62,37 @@ func TestParseVersionBump(t *testing.T) {
 	}
 }
 
+func TestRepositoryVersionsUseVirtualBaselineWithoutTags(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	repository := t.TempDir()
+	runGit := func(arguments ...string) {
+		t.Helper()
+		command := exec.Command("git", append([]string{"-C", repository}, arguments...)...)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\\n%s", arguments, err, output)
+		}
+	}
+	runGit("init", "-q")
+	runGit("config", "user.email", "test@example.com")
+	runGit("config", "user.name", "test")
+	tracked := filepath.Join(repository, "README.md")
+	if err := os.WriteFile(tracked, []byte("feature\\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "README.md")
+	runGit("commit", "-q", "-m", "feat: first release")
+
+	if got, err := CurrentVersion(repository); err != nil || got != "v0.0.0" {
+		t.Fatalf("CurrentVersion() = %q, %v; want v0.0.0", got, err)
+	}
+	if got, err := NextVersion(repository); err != nil || got != "v0.1.0" {
+		t.Fatalf("NextVersion() = %q, %v; want v0.1.0", got, err)
+	}
+}
+
 func TestRepositoryVersionsUseSvuSDK(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")

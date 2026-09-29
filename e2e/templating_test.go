@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -192,6 +193,7 @@ func TestWorkspaceTemplateAndGenerationWorkflow(t *testing.T) {
 func cargoRegistryFixture(t *testing.T, root string) {
 	t.Helper()
 	manifest := core.NewManifest("cargo")
+	manifest.Workspace.PackageManagers = []string{"cargo"}
 	manifest.TemplateRegistry = &core.TemplateRegistry{WorkspaceFiles: []string{".gitignore", ".gitattributes", "NOTICE", "mise.toml"}, Templates: []core.Template{{
 		Name:    "rust-cli",
 		Kind:    "app",
@@ -224,6 +226,7 @@ func cargoRegistryFixture(t *testing.T, root string) {
 func bunRegistryFixture(t *testing.T, root string) {
 	t.Helper()
 	manifest := core.NewManifest("bun")
+	manifest.Workspace.PackageManagers = []string{"bun"}
 	manifest.TemplateRegistry = &core.TemplateRegistry{WorkspaceFiles: []string{".gitignore", ".gitattributes", "NOTICE", "mise.toml", "package.json"}, Templates: []core.Template{{
 		Name:    "hono-api",
 		Kind:    "app",
@@ -332,6 +335,9 @@ func TestGenerateFromCargoAndBunRegistries(t *testing.T) {
 	}
 	if len(manifest.Workspace.Projects) != 2 {
 		t.Fatalf("projects = %#v", manifest.Workspace.Projects)
+	}
+	if got, want := manifest.Workspace.PackageManagers, []string{"cargo", "bun"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("package managers = %#v, want %#v", got, want)
 	}
 	projects := make(map[string]core.Project, len(manifest.Workspace.Projects))
 	for _, project := range manifest.Workspace.Projects {

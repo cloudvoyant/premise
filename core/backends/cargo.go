@@ -83,6 +83,35 @@ func (Cargo) WillPublishOk(ctx context.Context, root string, template core.Templ
 	return !exists && err == nil, err
 }
 
+// PreflightPublication validates Cargo's workspace structure and required
+// credentials. Per-package task and registry checks remain in PublishPackages.
+func (Cargo) PreflightPublication(_ context.Context, root, _, _ string) error {
+	manifest, err := core.LoadManifest(filepath.Join(root, core.ManifestFilename))
+	if err != nil {
+		return fmt.Errorf("load Cargo registry manifest: %w", err)
+	}
+	if len(manifest.PublicationTargets()) == 0 {
+		return errors.New("Cargo manifest declares no publication targets")
+	}
+	workspace, found, err := cargoWorkspaceDirectory(root)
+	if err != nil {
+		return fmt.Errorf("inspect Cargo registry workspace: %w", err)
+	}
+	if !found || workspace == "" {
+		return errors.New("Cargo registry workspace is missing Cargo.toml")
+	}
+	for _, target := range manifest.PublicationTargets() {
+		metadata, found, err := (Cargo{}).GetPackageMetadata(root, target)
+		if err != nil {
+			return fmt.Errorf("package target %s: %w", target.Name, err)
+		}
+		if found && metadata.Publishable && os.Getenv("CRATES_TOKEN") == "" {
+			return errors.New("CRATES_TOKEN is required for Cargo publication")
+		}
+	}
+	return nil
+}
+
 // SupportsPackages reports that Cargo publishes registry packages.
 func (Cargo) SupportsPackages() bool { return true }
 
@@ -234,9 +263,9 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 	if err != nil {
 		return fmt.Errorf("load Cargo registry manifest: %w", err)
 	}
-	templates := manifest.DeclaredTemplates()
+	templates := manifest.PublicationTargets()
 	if len(templates) == 0 {
-		return errors.New("Cargo registry manifest declares no templates")
+		return errors.New("Cargo manifest declares no publication targets")
 	}
 
 	var failures []error
@@ -244,7 +273,7 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 	for _, template := range templates {
 		pkg, found, err := inspectCargoTemplatePackage(root, template)
 		if err != nil {
-			failures = append(failures, fmt.Errorf("template %s: %w", template.Name, err))
+			failures = append(failures, fmt.Errorf("package target %s: %w", template.Name, err))
 			continue
 		}
 		if !found {
@@ -274,7 +303,7 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 	for _, pkg := range packages {
 		versionExists, err := preflightCargoPackage(ctx, pkg, version, task, preflight, client)
 		if err != nil {
-			failures = append(failures, fmt.Errorf("template %s: %w", pkg.Template.Name, err))
+			failures = append(failures, fmt.Errorf("package target %s: %w", pkg.Template.Name, err))
 			continue
 		}
 		publications = append(publications, cargoPublishTarget{directory: pkg.Directory, name: pkg.Name, exists: versionExists})

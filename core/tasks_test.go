@@ -22,6 +22,19 @@ func TestRunRootTaskPassesArguments(t *testing.T) {
 	}
 }
 
+func TestRunProjectContractsRunsFromWorkspaceRoot(t *testing.T) {
+	root := t.TempDir()
+	capture := installMiseTaskShim(t)
+
+	if err := RunProjectContracts(t.Context(), root, "install", nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	want := resolvedTaskPath(t, root) + "|run //...:install\n"
+	if got := readTaskCapture(t, capture); got != want {
+		t.Fatalf("RunProjectContracts() = %q, want %q", got, want)
+	}
+}
+
 func TestRunProjectTaskRunsFromDeclaredProject(t *testing.T) {
 	root := t.TempDir()
 	manifest := NewManifest("fixture")

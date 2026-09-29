@@ -16,6 +16,34 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
+func TestPlanStableReleaseSupportsTaglessRepository(t *testing.T) {
+	root := t.TempDir()
+	repository, err := git.PlainInit(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worktree, err := repository.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("feature\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := worktree.Add("README.md"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := worktree.Commit("feat: first release", &git.CommitOptions{Author: &object.Signature{Name: "Test", Email: "test@example.com", When: time.Now()}}); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanStableRelease(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan != (ReleasePlan{Version: "v0.1.0"}) {
+		t.Fatalf("PlanStableRelease() = %#v, want v0.1.0", plan)
+	}
+}
+
 func TestPlanStableReleaseCreatesAndReusesVersion(t *testing.T) {
 	root := t.TempDir()
 	repository, err := git.PlainInit(root, false)
