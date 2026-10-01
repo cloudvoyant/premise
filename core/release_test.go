@@ -14,6 +14,7 @@ import (
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/plumbing/transport"
 )
 
 func TestPlanStableReleaseSupportsTaglessRepository(t *testing.T) {
@@ -191,6 +192,36 @@ func writeTaggedCargoReleaseFixture(t *testing.T) string {
 		t.Fatalf("release tag = %q", reference.Name().Short())
 	}
 	return root
+}
+
+func TestPreflightFailurePreventsPushingReleaseTag(t *testing.T) {
+	root := writeTaggedCargoReleaseFixture(t)
+	repository, err := git.PlainOpen(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.DeleteTag("v1.2.3"); err != nil {
+		t.Fatal(err)
+	}
+	preflightErr := errors.New("package preflight failed")
+	useTestPackageManagers(t, testPackageManager{
+		id:        "cargo",
+		publish:   func(context.Context, string, string, string, io.Writer, io.Writer) error { return nil },
+		preflight: func(context.Context, string, string, string) error { return preflightErr },
+	})
+	originalPush := pushReleaseTag
+	defer func() { pushReleaseTag = originalPush }()
+	pushed := false
+	pushReleaseTag = func(context.Context, string, string, transport.AuthMethod) error {
+		pushed = true
+		return nil
+	}
+	if _, err := prepareStableRelease(t.Context(), root, io.Discard, true); !errors.Is(err, preflightErr) {
+		t.Fatalf("prepareStableRelease() error = %v, want %v", err, preflightErr)
+	}
+	if pushed {
+		t.Fatal("release tag was pushed after publication preflight failed")
+	}
 }
 
 func TestCreateAndPushReleaseTagRollsBackLocalTagOnFailure(t *testing.T) {

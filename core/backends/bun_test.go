@@ -2,6 +2,9 @@ package backends
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -212,14 +215,112 @@ func appendBunTemplate(registry *TemplateRegistry, template Template) *TemplateR
 	return registry
 }
 
+func TestBunVersionExistsEscapesScopedPackageOnce(t *testing.T) {
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		gotPath = request.URL.EscapedPath()
+		writer.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+	registry, err := url.Parse(server.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = bunVersionExists(t.Context(), server.Client(), registry, "@scope/package", "1.2.3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/@scope%2Fpackage/1.2.3" {
+		t.Fatalf("registry path = %q, want single-escaped scoped package", gotPath)
+	}
+}
+
+func TestBunPublicationPreflightsAllTargetsBeforePublishing(t *testing.T) {
+	root := t.TempDir()
+	manifest := NewManifest("bun-fixture")
+	manifest.Workspace.Kind = core.ProjectKindTemplateRegistry
+	events := filepath.Join(t.TempDir(), "events")
+	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		file, err := os.OpenFile(events, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		_, _ = file.WriteString("availability\n")
+		_ = file.Close()
+		if strings.HasSuffix(request.URL.Path, "/existing/1.2.3") {
+			writer.WriteHeader(http.StatusOK)
+			return
+		}
+		writer.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+	originalTransport := http.DefaultTransport
+	http.DefaultTransport = server.Client().Transport
+	defer func() { http.DefaultTransport = originalTransport }()
+	for _, name := range []string{"existing", "pending"} {
+		template := templateFixture(name, "app")
+		manifest.TemplateRegistry = appendBunTemplate(manifest.TemplateRegistry, template)
+		directory := filepath.Join(root, filepath.FromSlash(template.Path))
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		content := `{"name":"` + name + `","publishConfig":{"registry":"` + server.URL + `/npm/"}}`
+		if err := os.WriteFile(filepath.Join(directory, "package.json"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	shim := `#!/bin/sh
+set -eu
+case "$*" in
+  "task info publish --json") ;;
+  "run publish") printf 'publish:%s\\n' "$PWD" >> "$EVENTS" ;;
+  *) exit 9 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "mise"), []byte(shim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("EVENTS", events)
+	t.Setenv("NODE_AUTH_TOKEN", "test-token")
+	var output bytes.Buffer
+	if err := publishBunPackages(t.Context(), root, "v1.2.3", "publish", &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Fields(string(data))
+	if len(lines) != 3 || lines[0] != "availability" || lines[1] != "availability" || !strings.HasPrefix(lines[2], "publish:") {
+		t.Fatalf("events = %q, want both availability checks before one publish", lines)
+	}
+	if !strings.Contains(output.String(), "skip: existing 1.2.3 already published") {
+		t.Fatalf("output = %q, want explicit existing-package skip", output.String())
+	}
+	if strings.Contains(output.String(), "existing 1.2.3\n") || !strings.Contains(output.String(), "pending 1.2.3\n") {
+		t.Fatalf("output = %q, want only pending publication", output.String())
+	}
+}
+
 func TestBunPublicationReusesCredentialsPerRegistry(t *testing.T) {
 	root := t.TempDir()
 	manifest := NewManifest("bun-fixture")
 	manifest.Workspace.Kind = core.ProjectKindTemplateRegistry
+	server := httptest.NewTLSServer(http.NotFoundHandler())
+	defer server.Close()
+	originalTransport := http.DefaultTransport
+	http.DefaultTransport = server.Client().Transport
+	defer func() { http.DefaultTransport = originalTransport }()
 	for _, test := range []struct{ name, registry string }{
-		{"first", "https://registry.npmjs.org/"},
-		{"second", "https://registry.npmjs.org/"},
-		{"other", "https://npm.example.com/custom/"},
+		{"first", server.URL + "/"},
+		{"second", server.URL + "/"},
+		{"other", server.URL + "/custom/"},
 	} {
 		template := templateFixture(test.name, "app")
 		manifest.TemplateRegistry = appendBunTemplate(manifest.TemplateRegistry, template)
@@ -244,11 +345,10 @@ case "$*" in
   "run publish")
     case "$PWD" in
       */other)
-        grep -Fx '//npm.example.com/custom/:_authToken=shared-token' "$NPM_CONFIG_USERCONFIG" >/dev/null
-        ! grep -F 'registry.npmjs.org' "$NPM_CONFIG_USERCONFIG" >/dev/null ;;
+        grep -F '/custom/:_authToken=shared-token' "$NPM_CONFIG_USERCONFIG" >/dev/null ;;
       *)
-        grep -Fx '//registry.npmjs.org/:_authToken=shared-token' "$NPM_CONFIG_USERCONFIG" >/dev/null
-        ! grep -F 'npm.example.com' "$NPM_CONFIG_USERCONFIG" >/dev/null ;;
+        grep -F '_authToken=shared-token' "$NPM_CONFIG_USERCONFIG" >/dev/null
+        ! grep -F '/custom/' "$NPM_CONFIG_USERCONFIG" >/dev/null ;;
     esac
     printf '%s\n' "$NPM_CONFIG_USERCONFIG" >> "$CAPTURE" ;;
   *) exit 9 ;;

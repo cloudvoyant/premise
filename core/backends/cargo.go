@@ -83,9 +83,8 @@ func (Cargo) WillPublishOk(ctx context.Context, root string, template core.Templ
 	return !exists && err == nil, err
 }
 
-// PreflightPublication validates Cargo's workspace structure and required
-// credentials. Per-package task and registry checks remain in PublishPackages.
-func (Cargo) PreflightPublication(_ context.Context, root, _, _ string) error {
+// PreflightPublication validates every Cargo target before stable tagging.
+func (Cargo) PreflightPublication(ctx context.Context, root, version, task string) error {
 	manifest, err := core.LoadManifest(filepath.Join(root, core.ManifestFilename))
 	if err != nil {
 		return fmt.Errorf("load Cargo registry manifest: %w", err)
@@ -93,23 +92,36 @@ func (Cargo) PreflightPublication(_ context.Context, root, _, _ string) error {
 	if len(manifest.PublicationTargets()) == 0 {
 		return errors.New("Cargo manifest declares no publication targets")
 	}
-	workspace, found, err := cargoWorkspaceDirectory(root)
-	if err != nil {
-		return fmt.Errorf("inspect Cargo registry workspace: %w", err)
-	}
-	if !found || workspace == "" {
-		return errors.New("Cargo registry workspace is missing Cargo.toml")
+	var failures []error
+	pending := false
+	workspace, found, workspaceErr := cargoWorkspaceDirectory(root)
+	if workspaceErr != nil {
+		failures = append(failures, fmt.Errorf("inspect Cargo registry workspace: %w", workspaceErr))
+	} else if !found || workspace == "" {
+		failures = append(failures, errors.New("Cargo registry workspace is missing Cargo.toml"))
 	}
 	for _, target := range manifest.PublicationTargets() {
-		metadata, found, err := (Cargo{}).GetPackageMetadata(root, target)
-		if err != nil {
-			return fmt.Errorf("package target %s: %w", target.Name, err)
+		metadata, found, metadataErr := (Cargo{}).GetPackageMetadata(root, target)
+		if metadataErr != nil {
+			failures = append(failures, fmt.Errorf("package target %s: %w", target.Name, metadataErr))
+			continue
 		}
-		if found && metadata.Publishable && os.Getenv("CRATES_TOKEN") == "" {
-			return errors.New("CRATES_TOKEN is required for Cargo publication")
+		if !found || !metadata.Publishable {
+			continue
+		}
+		ready, checkErr := (Cargo{}).WillPublishOk(ctx, root, target, version, task)
+		if checkErr != nil {
+			failures = append(failures, fmt.Errorf("package target %s: %w", target.Name, checkErr))
+			continue
+		}
+		if ready {
+			pending = true
 		}
 	}
-	return nil
+	if pending && os.Getenv("CRATES_TOKEN") == "" {
+		failures = append(failures, errors.New("CRATES_TOKEN is required for Cargo publication"))
+	}
+	return errors.Join(failures...)
 }
 
 // SupportsPackages reports that Cargo publishes registry packages.

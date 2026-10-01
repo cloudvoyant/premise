@@ -13,6 +13,7 @@ type testPackageManager struct {
 	buildErr  error
 	publish   func(context.Context, string, string, string, io.Writer, io.Writer) error
 	workspace func(context.Context, string, io.Writer, io.Writer) (string, bool, error)
+	preflight func(context.Context, string, string, string) error
 }
 
 func (p testPackageManager) ID() string { return p.id }
@@ -29,7 +30,10 @@ func (p testPackageManager) ValidatePackage(_ string, _ Template) error { return
 func (p testPackageManager) WillPublishOk(_ context.Context, _ string, _ Template, _, _ string) (bool, error) {
 	return false, nil
 }
-func (p testPackageManager) PreflightPublication(_ context.Context, _ string, _, _ string) error {
+func (p testPackageManager) PreflightPublication(ctx context.Context, root, version, task string) error {
+	if p.preflight != nil {
+		return p.preflight(ctx, root, version, task)
+	}
 	return nil
 }
 func (p testPackageManager) SupportsPackages() bool { return p.publish != nil }
