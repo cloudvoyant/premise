@@ -378,6 +378,38 @@ func TestRegistryCIStopsFailedTemplateBeforeDeployAndContinues(t *testing.T) {
 	}
 }
 
+func TestRegistryCIUsesCheckOnlyFormattingContract(t *testing.T) {
+	template := templateFixture("app", "app")
+	root := writeCIProject(t, []Template{template}, false)
+	directory := filepath.Join(root, "templates", template.Name)
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runner := newFakeCIRunner()
+
+	if err := runCIFlow(context.Background(), root, CIFlowOnCommit, "preview", CIReleaseNone, runner); err != nil {
+		t.Fatal(err)
+	}
+
+	var lifecycle []string
+	for _, call := range runner.calls {
+		if call.directory == directory {
+			lifecycle = append(lifecycle, strings.Join(call.arguments, " "))
+		}
+	}
+	want := []string{
+		"install",
+		"run --jobs 1 install",
+		"run --jobs 1 build",
+		"run --jobs 1 test",
+		"run --jobs 1 format:check",
+		"run --jobs 1 lint",
+	}
+	if !reflect.DeepEqual(lifecycle, want) {
+		t.Fatalf("registry lifecycle = %#v, want check-only format contract %#v", lifecycle, want)
+	}
+}
+
 func TestCIFlowAllowsTemplatesInMonorepoLifecycle(t *testing.T) {
 	root := writeCIProject(t, []Template{templateFixture("app", "app")}, true)
 	runner := newFakeCIRunner()

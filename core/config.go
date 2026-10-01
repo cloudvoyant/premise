@@ -209,10 +209,6 @@ func InitializeWorkspace(root, workspaceMiseTemplate string, workflowAssets ...W
 	return initializeWorkspace(root, WorkspaceScaffold{MiseTemplate: workspaceMiseTemplate, WorkflowAssets: workflowAssets})
 }
 
-func InitializeWorkspaceWithScaffold(root string, scaffold WorkspaceScaffold) (string, error) {
-	return initializeWorkspace(root, scaffold)
-}
-
 func initializeWorkspace(root string, scaffold WorkspaceScaffold) (string, error) {
 	workspaceMiseTemplate := scaffold.MiseTemplate
 	workflowAssets := scaffold.WorkflowAssets
@@ -229,6 +225,9 @@ func initializeWorkspace(root string, scaffold WorkspaceScaffold) (string, error
 	name := filepath.Base(filepath.Clean(root))
 	if err := ValidateProjectName(name); err != nil {
 		return "", fmt.Errorf("workspace directory name: %w", err)
+	}
+	if err := preflightWorkspace(root, workflowAssets); err != nil {
+		return "", err
 	}
 	for _, directory := range []string{"apps", "libs"} {
 		if err := os.MkdirAll(filepath.Join(root, directory), 0o755); err != nil {
@@ -247,6 +246,110 @@ func initializeWorkspace(root string, scaffold WorkspaceScaffold) (string, error
 		return "", err
 	}
 	return manifestPath, nil
+}
+
+func preflightWorkspace(root string, assets []WorkflowAsset) error {
+	for _, path := range []string{
+		filepath.Join(root, ManifestFilename),
+		filepath.Join(root, "apps"),
+		filepath.Join(root, "libs"),
+		filepath.Join(root, "mise.toml"),
+	} {
+		if err := rejectSymlinkComponents(root, path); err != nil {
+			return err
+		}
+	}
+	for _, directory := range []string{"apps", "libs"} {
+		path := filepath.Join(root, directory)
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return fmt.Errorf("workspace %s is not a directory", path)
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("inspect workspace %s: %w", path, err)
+		}
+	}
+	misePath := filepath.Join(root, "mise.toml")
+	if info, err := os.Stat(misePath); err == nil {
+		if info.IsDir() {
+			return fmt.Errorf("workspace mise config %s is a directory", misePath)
+		}
+		monorepo, err := hasMonorepoRoot(root)
+		if err != nil {
+			return fmt.Errorf("validate existing workspace mise config: %w", err)
+		}
+		if !monorepo {
+			return errors.New("existing mise.toml must declare top-level monorepo_root = true")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect workspace mise config: %w", err)
+	}
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("resolve workspace root: %w", err)
+	}
+	rootAbs = filepath.Clean(rootAbs)
+	seen := make(map[string]struct{}, len(assets))
+	for _, asset := range assets {
+		if strings.TrimSpace(asset.Path) == "" {
+			return errors.New("workflow asset path is empty")
+		}
+		path := filepath.Clean(filepath.Join(root, asset.Path))
+		if err := rejectSymlinkComponents(root, path); err != nil {
+			return err
+		}
+		pathAbs, err := filepath.Abs(path)
+		if err != nil {
+			return fmt.Errorf("resolve workflow %s: %w", path, err)
+		}
+		if pathAbs != rootAbs && !strings.HasPrefix(pathAbs, rootAbs+string(filepath.Separator)) {
+			return fmt.Errorf("workflow %s is outside workspace root", asset.Path)
+		}
+		if _, ok := seen[pathAbs]; ok {
+			return fmt.Errorf("workflow %s is duplicated", path)
+		}
+		seen[pathAbs] = struct{}{}
+		if _, err := os.Lstat(path); err == nil {
+			return fmt.Errorf("workflow %s already exists", path)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("inspect workflow %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
+func rejectSymlinkComponents(root, path string) error {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("resolve workspace root: %w", err)
+	}
+	pathAbs, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("resolve workspace path: %w", err)
+	}
+	rel, err := filepath.Rel(filepath.Clean(rootAbs), filepath.Clean(pathAbs))
+	if err != nil {
+		return fmt.Errorf("compare workspace path: %w", err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("workspace path %s is outside workspace root", path)
+	}
+	current := filepath.Clean(rootAbs)
+	for _, component := range strings.Split(rel, string(filepath.Separator)) {
+		if component == "." || component == "" {
+			continue
+		}
+		current = filepath.Join(current, component)
+		info, err := os.Lstat(current)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect workspace path %s: %w", current, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("workspace path %s contains a symlink", path)
+		}
+	}
+	return nil
 }
 
 func ensureWorkflowAssets(root string, assets []WorkflowAsset) error {

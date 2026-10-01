@@ -23,7 +23,7 @@ var initCmd = &cobra.Command{
 		var path string
 		switch initProjectKind {
 		case "monorepo":
-			path, err = core.InitializeWorkspaceWithScaffold(cwd, workspaceScaffold)
+			path, err = core.InitializeWorkspace(cwd, workspaceScaffold.MiseTemplate, workspaceScaffold.WorkflowAssets...)
 		case "template-registry":
 			path, err = core.InitializeTemplateRegistry(cwd)
 		default:

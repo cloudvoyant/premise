@@ -30,5 +30,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
         with:
           flow: on-merge
+          release: auto
+          install-premise: build

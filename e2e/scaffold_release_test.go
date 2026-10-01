@@ -51,13 +51,40 @@ func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if strings.Contains(string(workflow), "github.event.before") {
+			contents := string(workflow)
+			if strings.Contains(contents, "github.event.before") {
 				t.Fatal("on-commit must validate the first push to a new branch")
+			}
+			for _, expected := range []string{
+				"fetch-depth: 0",
+				"fetch-tags: true",
+				"NODE_AUTH_TOKEN: >-",
+				"CRATES_TOKEN: >-",
+				"github.event_name == 'push'",
+				"contains(github.event.head_commit.message,",
+				"'[publish-rc]')",
+				"secrets.NPM_TOKEN || ''",
+				"secrets.CRATES_TOKEN || ''",
+				"release: auto",
+				"install-premise: build",
+			} {
+				if !strings.Contains(contents, expected) {
+					t.Fatalf("on-commit workflow missing %q", expected)
+				}
 			}
 		}
 		if name == "on-merge.yml" {
-			assertFileContains(t, path, "NODE_AUTH_TOKEN")
-			assertFileContains(t, path, "secrets.NPM_TOKEN")
+			for _, expected := range []string{
+				"NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}",
+				"CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}",
+				"release: auto",
+				"install-premise: build",
+			} {
+				assertFileContains(t, path, expected)
+			}
+		}
+		if name == "on-deploy.yml" {
+			assertFileContains(t, path, "install-premise: build")
 		}
 	}
 

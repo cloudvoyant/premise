@@ -27,3 +27,4 @@ jobs:
         with:
           flow: on-release
           environment: ${{ inputs.environment }}
+          install-premise: build

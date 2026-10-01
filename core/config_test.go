@@ -1,10 +1,67 @@
 package core
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestInitializeWorkspaceWorkflowCollisionDoesNotWriteScaffold(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "workspace")
+	if err := os.MkdirAll(filepath.Join(root, ".github", "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	collision := filepath.Join(root, ".github", "workflows", "ci.yml")
+	if err := os.WriteFile(collision, []byte("keep me"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := InitializeWorkspace(root, "monorepo_root = true\n", WorkflowAsset{Path: ".github/workflows/ci.yml", Content: "replace me"})
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("error = %v", err)
+	}
+	for _, path := range []string{ManifestFilename, "apps", "libs", "mise.toml"} {
+		if _, statErr := os.Lstat(filepath.Join(root, path)); statErr == nil {
+			t.Fatalf("scaffold wrote %s", path)
+		}
+	}
+	got, readErr := os.ReadFile(collision)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(got) != "keep me" {
+		t.Fatalf("collision content changed: %q", got)
+	}
+}
+
+func TestInitializeWorkspaceRejectsSymlinkedWorkflowParent(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "workspace")
+	external := filepath.Join(t.TempDir(), "external")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(external, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, filepath.Join(root, ".github")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := InitializeWorkspace(root, "monorepo_root = true\n", WorkflowAsset{Path: ".github/workflows/ci.yml", Content: "must not write"})
+	if err == nil || !strings.Contains(err.Error(), "contains a symlink") {
+		t.Fatalf("error = %v", err)
+	}
+	for _, path := range []string{ManifestFilename, "apps", "libs", "mise.toml"} {
+		if _, statErr := os.Lstat(filepath.Join(root, path)); statErr == nil {
+			t.Fatalf("scaffold wrote %s", path)
+		}
+	}
+	if _, statErr := os.Lstat(filepath.Join(external, "workflows", "ci.yml")); statErr == nil {
+		t.Fatal("workflow was written outside workspace")
+	}
+}
 
 func TestTemplateRegistryRequiresExplicitWorkspaceFiles(t *testing.T) {
 	manifest := NewManifest("registry")
