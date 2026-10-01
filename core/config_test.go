@@ -103,6 +103,7 @@ func TestTemplateRegistryRequiresExplicitSafeTemplatePaths(t *testing.T) {
 			template.Path = test.path
 			manifest := NewManifest("registry")
 			manifest.TemplateRegistry = &TemplateRegistry{WorkspaceFiles: []string{}, Templates: []Template{template}}
+			// TODO: Validate the rejected path behavior, not only the error message.
 			if err := manifest.Validate(); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Validate() error = %v, want %q", err, test.want)
 			}

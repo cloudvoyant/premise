@@ -2,12 +2,17 @@
 
 premise creates applications and libraries from live templates and records where each generated project came from. Templates remain valid projects before generation because premise uses literal string replacement instead of template-expression syntax.
 
-## Requirements
+## Install premise
 
-- Install premise with `install.sh`; the installer adds both `premise` and its `pm` alias. `go install` adds only `premise`. Use `pm update` for installations created by `install.sh`.
-- Install mise and trust the repository configuration.
-- Use a terminal for interactive questionnaires.
-- Allow network access when premise fetches a remote template repository for the first time.
+Use the installer to install the latest release. It adds the `premise` command and the `pm` alias:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/cloudvoyant/premise/main/install.sh | bash
+```
+
+If you use Go, install the binary with `go install`. This command adds `premise`, but not the `pm` alias. For an installer-managed installation, run `pm update` to install a newer release.
+
+Install [mise](https://mise.jdx.dev/) for workspace tools. Run commands in a terminal because some commands use interactive questions. Allow network access when you use a remote template for the first time.
 
 ## Getting Started
 
@@ -50,9 +55,9 @@ Premise resolves the current executable, follows the `pm` symlink when needed, a
 
 ### Initialize a workspace
 
-Run `pm init` at the repository root. The default `monorepo` kind creates `premise.yaml`, a root `mise.toml`, `apps/`, and `libs/`, plus the generated GitHub workflows for commit, merge, and deploy flows. Existing files are preserved: workflow files are created only when absent, and an existing file is never overwritten. The root Mise configuration discovers app and library projects and layers their tools and environment. Use `pm init --kind template-registry` to start with an empty `template_registry` configuration and a `templates/` directory. Either kind can later add templates or generated projects. Premise refuses to replace an existing manifest.
+Run `pm init` at the repository root. The default `monorepo` kind creates the manifest, root Mise configuration, project directories, and GitHub workflows. It does not replace an existing manifest or workflow file. Use `pm init --kind template-registry` to create a template registry with a `templates/` directory.
 
-Use `pm install` or `pm i` to install Mise tools declared by the workspace and its generated projects, then dispatch each generated project's `install` contract. CI uses the non-mutating `format:check` contract; it does not run `format`. Run project lifecycle tasks directly through Mise's monorepo pattern:
+Use `pm install` or `pm i` to install Mise tools declared by the workspace and its generated projects, then dispatch each generated project's `install` contract. CI runs `format` and then `format:check`. Run project lifecycle tasks directly through Mise's monorepo pattern:
 
 ```bash
 mise run --jobs 1 '//...:build'

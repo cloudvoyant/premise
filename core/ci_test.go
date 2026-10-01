@@ -199,6 +199,7 @@ func TestMonorepoCIFlowUsesLifecycleOrderAndPublishesMarkedRC(t *testing.T) {
 		"pm install",
 		"mise run --jobs 1 //...:build",
 		"mise run --jobs 1 //...:test",
+		"mise run --jobs 1 //...:format",
 		"mise run --jobs 1 //...:format:check",
 		"mise run --jobs 1 //...:lint",
 	}
@@ -378,7 +379,7 @@ func TestRegistryCIStopsFailedTemplateBeforeDeployAndContinues(t *testing.T) {
 	}
 }
 
-func TestRegistryCIUsesCheckOnlyFormattingContract(t *testing.T) {
+func TestRegistryCIUsesFormattingContract(t *testing.T) {
 	template := templateFixture("app", "app")
 	root := writeCIProject(t, []Template{template}, false)
 	directory := filepath.Join(root, "templates", template.Name)
@@ -402,11 +403,12 @@ func TestRegistryCIUsesCheckOnlyFormattingContract(t *testing.T) {
 		"run --jobs 1 install",
 		"run --jobs 1 build",
 		"run --jobs 1 test",
+		"run --jobs 1 format",
 		"run --jobs 1 format:check",
 		"run --jobs 1 lint",
 	}
 	if !reflect.DeepEqual(lifecycle, want) {
-		t.Fatalf("registry lifecycle = %#v, want check-only format contract %#v", lifecycle, want)
+		t.Fatalf("registry lifecycle = %#v, want format contract %#v", lifecycle, want)
 	}
 }
 

@@ -52,13 +52,13 @@ func TestInstallRunsDevToolAndRootTaskInstallation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := resolvedRoot + "|install\n" + resolvedRoot + "|install --monorepo\n" + resolvedRoot + "|run //...:install\n"
+	want := resolvedRoot + "|install\n" + resolvedRoot + "|install --monorepo\n" + resolvedRoot + "|run install\n" + resolvedRoot + "|run //...:install\n"
 	if got := string(data); got != want {
 		t.Fatalf("pm install Mise calls = %q, want %q", got, want)
 	}
 }
 
-func TestInstallSkipsRootTaskInstallationWhenNoProjects(t *testing.T) {
+func TestInstallRunsRootTaskInstallationWhenNoProjects(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "premise.yaml"), []byte("workspace: {}\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -99,7 +99,7 @@ func TestInstallSkipsRootTaskInstallationWhenNoProjects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := resolvedRoot + "|install\n"
+	want := resolvedRoot + "|install\n" + resolvedRoot + "|run install\n"
 	if got := string(data); got != want {
 		t.Fatalf("pm install Mise calls = %q, want %q", got, want)
 	}

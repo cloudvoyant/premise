@@ -49,6 +49,9 @@ var installCmd = &cobra.Command{
 		if err := core.InstallDevTools(cmd.Context(), workspaceRoot, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
 			return err
 		}
+		if err := core.RunRootTask(cmd.Context(), workspaceRoot, "install", nil, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
+			return err
+		}
 		if !hasProjectConfigs {
 			return nil
 		}

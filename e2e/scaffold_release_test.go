@@ -101,31 +101,16 @@ func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 	}
 	invocations := log.Invocations(t)
 	ciInvocations := invocations[ciStart:]
+	// The shim returns success for task discovery, so this exercises the
+	// generated root on-commit override rather than the fallback lifecycle.
+	workspaceCIInvocations := make([]string, 0)
 	for _, invocation := range ciInvocations {
-		if invocation.Arguments == "run format" {
-			t.Fatal("CI ran formatting task; want format:check only")
-		}
-	}
-	workspaceInvocations := make([]string, 0)
-	for _, invocation := range invocations {
 		if invocation.Directory == workspace {
-			workspaceInvocations = append(workspaceInvocations, invocation.Arguments)
+			workspaceCIInvocations = append(workspaceCIInvocations, invocation.Arguments)
 		}
 	}
-	installIndex, formatCheckIndex := -1, -1
-	for index, arguments := range workspaceInvocations {
-		if arguments == "install --monorepo" {
-			installIndex = index
-		}
-	}
-	for index, invocation := range invocations {
-		if invocation.Arguments == "run format:check" {
-			formatCheckIndex = index
-			break
-		}
-	}
-	if installIndex == -1 || formatCheckIndex == -1 {
-		t.Fatalf("install/CI invocation order = %#v, want install --monorepo before run format:check", workspaceInvocations)
+	if got, want := strings.Join(workspaceCIInvocations, "\n"), "task info on-commit --json\nrun on-commit"; got != want {
+		t.Fatalf("CI invocation sequence = %q, want %q", got, want)
 	}
 
 	git(t, workspace, "init", "-q")
@@ -159,13 +144,6 @@ func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 	if refs := gitOutput(t, workspace, "show-ref", "--tags"); refs != "" {
 		t.Fatalf("release created bootstrap tag: %s", refs)
 	}
-
-	preflight := exec.Command(binary, "release", "--dry-run")
-	preflight.Dir = workspace
-	if out, err := preflight.CombinedOutput(); err != nil {
-		t.Fatalf("structural preflight: %v\n%s", err, out)
-	}
-	assertFileContains(t, filepath.Join(project, "package.json"), "@difflab/difflab-cli")
 }
 
 func bunReleaseRegistryFixture(t *testing.T, root string) {

@@ -2,51 +2,27 @@
 
 ## Overview
 
-`premise` is a [`mise`](https://mise.jdx.dev/)-powered project with testing and GitHub Actions CI. The `pm release` command owns stable versioning, tagging, and publication.
+`premise` is a [`mise`](https://mise.jdx.dev/)-powered project with testing and GitHub Actions CI.
 
-## Design
+## Repository infrastructure
 
-- Mise manages environment, dev tools, and tasks
-- GitHub Actions drives CI/CD using mise tasks
-- Org-level secrets avoid per-project secret configuration
-- The build system is project-structure agnostic — only mise tasks need to work
+- `mise.toml` defines the development tools and repository tasks.
+- `action.yml` defines the published GitHub Action.
+- `.github/workflows/` contains the repository workflows for checks, merges, and deploys.
+- `install.sh` installs released CLI binaries.
+- `go.mod` and `go.sum` define the Go module dependencies.
 
 ## Implementation
 
-### Mise For Environment & Tasks
+### Mise
 
-Mise is the environment management tool and task runner. Since mise can manage a large array of languages and tools, it is a sensible choice for a language-agnostic build system that hooks into CI/CD and can be modified for any language.
-
-Environment is configured in `mise.toml` under `[env]`:
-
-```toml
-[env]
-GCP_REGISTRY_PROJECT_ID = "your-project-id"
-GCP_REGISTRY_REGION     = "us-central1"
-GCP_REGISTRY_NAME       = "your-repository-name"
-```
+Mise installs the pinned tools and runs repository tasks. The repository stores its environment values and task definitions in `mise.toml`.
 
 ### GitHub Actions For CI/CD
 
 `.github/workflows/on-commit.yml` verifies pull requests and feature-branch pushes through the root `action.yml`; for a feature-branch push whose HEAD commit contains `[publish-rc]`, the `on-commit` flow also invokes the opt-in RC task. For Go, that task only prints the standard skip message. `.github/workflows/on-merge.yml` delegates the complete trunk lifecycle to the `on-merge` flow, which invokes the stable release phase after validation. `.github/workflows/on-deploy.yml` exposes the deploy flow.
 
-Version calculation uses the svu Go SDK through `core/version.go`. Premise owns the stable-tag policy, so repositories do not carry `.svu.yml`. A repository without a stable tag uses a virtual `v0.0.0` baseline; the first conventional feature release plans `v0.1.0` without creating a bootstrap ref. GoReleaser configuration is generated inside Premise and written to a temporary file only while `pm release` runs. Calculated versions and generated configuration are never committed to source.
-
-The action delegates lifecycle and publication policy to `pm ci flow`. The supported flows are `on-commit`, `on-merge`, and `on-release`. A matching root Mise task replaces the fallback lifecycle, but the flow still owns its guarded publication phase. Otherwise, Premise runs the lifecycle selected by `workspace.kind`: monorepo lifecycle tasks or each declared registry template. A repository can contain both generated projects and `template_registry`; the kind selects lifecycle behavior rather than forbidding either capability.
-
-The action accepts one `install-premise` mode. `pre-built` uses `install.sh`, `build` compiles the checked-out action source, and `skip` requires an existing `pm` on `PATH`. Real RC and stable publication remain in separate credential-bearing workflow steps.
-
-### Release sequence and preflight
-
-Stable release work is ordered as: plan the version, resolve selected managers and publication targets, run structural preflight, run full package/task preflight, create or reuse the stable tag, publish GitHub artifacts, then publish language packages. Tagging does not happen when structural or full preflight fails. A rerun reuses the stable tag already at `HEAD` and replaces conflicting release assets; it does not create a second tag.
-
-Credentials are scoped to the step that needs them. GitHub credentials are available to tag and artifact publication, while `NPM_TOKEN`/`NODE_AUTH_TOKEN` and `CRATES_TOKEN` are passed only to their package publication tasks. A failed credential check stops before publication; fix the secret or task and rerun the same release.
-
-## Package and Artifact Publication Boundaries
-
-Package-manager backends select registry packages separately from application artifacts. Premise retains version planning, tagging, release order, and credentials. A Cargo direct package reaches crates.io only when `[package] publish` permits it. A matching direct application reaches generic GoReleaser even when its registry publication is disabled. A nested Tauri package uses neither direct path; its workflow and template task publish native installers.
-
-Bun packages with `private: false` and `publishConfig.registry` use their template publish tasks. Public and restricted registry visibility are separate from publish eligibility. Bun has no configured native GitHub archives, so the artifact step skips without blocking npm publication. Static-site uploads, OCI images, and deploy targets are not inferred from `kind: app`; they require explicit publication configuration. A template with no selected registry or artifact destination remains unpublished.
+The workflows run repository checks through `mise`. The merge workflow runs the stable release after validation. The deploy workflow runs the deploy flow. The action supports `pre-built`, `build`, and `skip` installation modes.
 
 ### CI/CD Secrets
 

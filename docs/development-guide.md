@@ -99,5 +99,3 @@ pm version next                     # next version from git history
 pm version bump patch|minor|major   # explicit bump
 pm version rc --identifier <id>     # MAJOR.MINOR.PATCH-rc.<id>
 ```
-
-A new repository does not need a bootstrap tag before CI runs. If no stable tag exists, Premise uses `v0.0.0` as a virtual baseline for version calculations. A feature commit can plan `v0.1.0` without creating a `v0.0.0` tag. Release preparation creates the planned stable tag only after publication checks pass.

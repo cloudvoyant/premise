@@ -40,14 +40,10 @@ workspace:
 
 The CLI registers built-ins in its composition root. Library clients register their own implementations explicitly; backends never self-register through `init`.
 
-## Implementation Details
+## Maintainer notes
 
-Backend selection uses only `workspace.package_managers`; native file presence never activates a backend. The selected manager list is the provenance of release policy and preserves declaration order. Publication targets are then derived from eligible workspace projects and their native metadata, not from template declarations alone. Selection rejects unknown IDs and two managers with the same ecosystem. Bun and pnpm therefore cannot both claim npm packages in one workspace, while Go, Cargo, and Bun can coexist.
+The package manager list in `premise.yaml` is the source of release policy. A manager runs only when it is listed. File presence does not select a manager.
 
-Generic native-file parsing lives in `core/bunx.go` and `core/cargox.go`. Built-in backends add Premise policy and convert native records to `PackageMetadata`. Bun package names can differ from template names; Cargo still checks its direct-package rules.
+The module keeps package-manager contracts separate from built-in backends. This lets library users register their own backends and keeps core independent of the built-in implementations.
 
-Bun and Cargo publication accumulate structural and task/registry preflight failures before mutation or publication. Any failure prevents the tag seam and all publication; after credentials or task configuration are corrected, rerun the release safely. Cargo backs up manifests and the lockfile, applies one version, regenerates the lockfile, publishes, and restores source files. Bun checks `NODE_AUTH_TOKEN` once per run and creates one temporary credential file per registry, reusing it for packages on that registry while isolating different registries.
-
-Artifact fragments may contain only GoReleaser `builds` and `archives`. The release module merges them and rejects duplicate IDs or unsupported sections. Structural preflight runs before full publication preflight, and tagging occurs only after both pass.
-
-Core cannot import built-in implementations because those implementations depend on core contracts. `cmd/package_manager_plugins.go` is therefore the composition root that wires built-ins into the registry.
+Before publication, the release process checks manager selection, artifact configuration, tasks, and credentials. If a check fails, no tag or package is published. Fix the cause and run the release again.
