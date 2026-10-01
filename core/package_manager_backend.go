@@ -28,6 +28,10 @@ type PackageManagerBackend interface {
 	// WillPublishOk preflights one package without mutation or publication.
 	WillPublishOk(context.Context, string, Template, string, string) (bool, error)
 
+	// PreflightPublication validates workspace-level publication structure and
+	// credentials without mutating files or publishing packages.
+	PreflightPublication(context.Context, string, string, string) error
+
 	// CreateGoReleaserConfig returns YAML with builds and/or archives lists,
 	// or an empty string when this manager has no downloadable artifacts.
 	CreateGoReleaserConfig(root string, manifest Config) (string, error)

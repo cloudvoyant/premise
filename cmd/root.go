@@ -4,10 +4,11 @@ package cmd
 import (
 	"os"
 
+	core "github.com/cloudvoyant/premise/core"
 	"github.com/spf13/cobra"
 )
 
-var workspaceMiseTemplate string
+var workspaceScaffold core.WorkspaceScaffold
 
 var rootCmd = &cobra.Command{
 	Use:   "pm",
@@ -18,8 +19,8 @@ projects converged on their templates, and runs lifecycle tasks in CI.`,
 }
 
 // Execute runs the root command.
-func Execute(miseTemplate string) {
-	workspaceMiseTemplate = miseTemplate
+func Execute(miseTemplate string, assets ...core.WorkflowAsset) {
+	workspaceScaffold = core.WorkspaceScaffold{MiseTemplate: miseTemplate, WorkflowAssets: assets}
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}

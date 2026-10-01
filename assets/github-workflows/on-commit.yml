@@ -1,0 +1,41 @@
+---
+name: On Commit
+
+"on":
+  pull_request:
+    branches:
+      - main
+  push:
+    branches-ignore:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Test, lint, and check formatting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Run on-commit flow
+        uses: cloudvoyant/premise@v0
+        env:
+          NODE_AUTH_TOKEN: >-
+            ${{ github.event_name == 'push' &&
+            contains(github.event.head_commit.message, '[publish-rc]') &&
+            secrets.NPM_TOKEN || '' }}
+          CRATES_TOKEN: >-
+            ${{ github.event_name == 'push' &&
+            contains(github.event.head_commit.message, '[publish-rc]') &&
+            secrets.CRATES_TOKEN || '' }}
+        with:
+          flow: on-commit
+          release: auto
+          install-premise: build

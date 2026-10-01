@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/cloudvoyant/premise/core"
 )
@@ -77,8 +79,44 @@ func (Bun) WillPublishOk(ctx context.Context, root string, template core.Templat
 	if _, err := core.ValidatePackagePublicationVersion(version, task); err != nil {
 		return false, err
 	}
-	_, found, err := preflightBunPackage(ctx, root, template, task, core.MiseTaskRunner{})
-	return found, err
+	publication, found, err := preflightBunPackage(ctx, root, template, task, core.MiseTaskRunner{})
+	if err != nil || !found {
+		return false, err
+	}
+	exists, err := bunVersionExists(ctx, &http.Client{Timeout: 30 * time.Second}, publication.registry, publication.name, strings.TrimPrefix(version, "v"))
+	return !exists, err
+}
+
+// PreflightPublication validates every Bun target before stable tagging.
+func (Bun) PreflightPublication(ctx context.Context, root, version, task string) error {
+	manifest, err := core.LoadManifest(filepath.Join(root, core.ManifestFilename))
+	if err != nil {
+		return fmt.Errorf("load Bun registry manifest: %w", err)
+	}
+	var failures []error
+	pending := false
+	for _, target := range manifest.PublicationTargets() {
+		metadata, found, metadataErr := (Bun{}).GetPackageMetadata(root, target)
+		if metadataErr != nil {
+			failures = append(failures, fmt.Errorf("package target %s: %w", target.Name, metadataErr))
+			continue
+		}
+		if !found || !metadata.Publishable {
+			continue
+		}
+		ready, checkErr := (Bun{}).WillPublishOk(ctx, root, target, version, task)
+		if checkErr != nil {
+			failures = append(failures, fmt.Errorf("package target %s: %w", target.Name, checkErr))
+			continue
+		}
+		if ready {
+			pending = true
+		}
+	}
+	if pending && os.Getenv("NODE_AUTH_TOKEN") == "" {
+		failures = append(failures, errors.New("NODE_AUTH_TOKEN is required for Bun registry publication"))
+	}
+	return errors.Join(failures...)
 }
 
 // SupportsPackages reports that Bun publishes registry packages.
@@ -137,6 +175,31 @@ type bunPublishTarget struct {
 	directory string
 	name      string
 	registry  *url.URL
+	exists    bool
+}
+
+func bunVersionExists(ctx context.Context, client *http.Client, registry *url.URL, name, version string) (bool, error) {
+	endpoint := *registry
+	basePath := strings.TrimSuffix(endpoint.Path, "/")
+	escapedBasePath := strings.TrimSuffix(endpoint.EscapedPath(), "/")
+	endpoint.Path = basePath + "/" + name + "/" + version
+	endpoint.RawPath = escapedBasePath + "/" + url.PathEscape(name) + "/" + url.PathEscape(version)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return false, fmt.Errorf("build Bun registry request for %s %s: %w", name, version, err)
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return false, fmt.Errorf("check Bun package %s version %s: %w", name, version, err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return false, fmt.Errorf("check Bun package %s version %s: registry returned HTTP %d", name, version, response.StatusCode)
+	}
+	return true, nil
 }
 
 func publishBunPackages(ctx context.Context, root, version, task string, stdout, stderr io.Writer) (resultErr error) {
@@ -151,25 +214,40 @@ func publishBunPackages(ctx context.Context, root, version, task string, stdout,
 	var publications []bunPublishTarget
 	var failures []error
 	preflight := core.MiseTaskRunner{Stderr: stderr}
-	for _, template := range manifest.DeclaredTemplates() {
-		publication, ready, err := preflightBunPackage(ctx, root, template, task, preflight)
+	client := &http.Client{Timeout: 30 * time.Second}
+	for _, target := range manifest.PublicationTargets() {
+		publication, ready, err := preflightBunPackage(ctx, root, target, task, preflight)
 		if err != nil {
-			failures = append(failures, fmt.Errorf("template %s: %w", template.Name, err))
+			failures = append(failures, fmt.Errorf("package target %s: %w", target.Name, err))
 			continue
 		}
 		if !ready {
-			fmt.Fprintf(stdout, "skip: %s Bun registry publication disabled\n", template.Name)
+			fmt.Fprintf(stdout, "skip: %s Bun registry publication disabled\n", target.Name)
 			continue
 		}
+		exists, err := bunVersionExists(ctx, client, publication.registry, publication.name, strings.TrimPrefix(version, "v"))
+		if err != nil {
+			failures = append(failures, fmt.Errorf("package target %s: %w", target.Name, err))
+			continue
+		}
+		publication.exists = exists
 		publications = append(publications, publication)
 	}
-	if len(publications) != 0 && os.Getenv("NODE_AUTH_TOKEN") == "" {
+	pending := false
+	for _, publication := range publications {
+		if publication.exists {
+			fmt.Fprintf(stdout, "skip: %s %s already published\n", publication.name, strings.TrimPrefix(version, "v"))
+		} else {
+			pending = true
+		}
+	}
+	if pending && os.Getenv("NODE_AUTH_TOKEN") == "" {
 		failures = append(failures, errors.New("NODE_AUTH_TOKEN is required for Bun registry publication"))
 	}
 	if err := errors.Join(failures...); err != nil {
 		return fmt.Errorf("Bun publication preflight: %w", err)
 	}
-	if len(publications) == 0 {
+	if !pending {
 		return nil
 	}
 
@@ -197,6 +275,9 @@ func publishBunPackages(ctx context.Context, root, version, task string, stdout,
 	}
 	publisher := core.MiseTaskRunner{Stdout: stdout, Stderr: stderr}
 	for _, publication := range publications {
+		if publication.exists {
+			continue
+		}
 		configPath := configs[bunRegistryAuthScope(publication.registry)]
 		fmt.Fprintf(stdout, "%s: %s %s\n", task, publication.name, version)
 		if err := publisher.Run(ctx, publication.directory, []string{

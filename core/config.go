@@ -24,6 +24,18 @@ var (
 )
 
 // Config is the validated in-memory form of premise.yaml.
+// WorkflowAsset is a client GitHub Actions workflow embedded in the CLI.
+type WorkflowAsset struct {
+	Path    string
+	Content string
+}
+
+// WorkspaceScaffold contains the embedded files used to initialize a workspace.
+type WorkspaceScaffold struct {
+	MiseTemplate   string
+	WorkflowAssets []WorkflowAsset
+}
+
 type Config struct {
 	Workspace        Workspace         `yaml:"workspace"`
 	TemplateRegistry *TemplateRegistry `yaml:"template_registry,omitempty"`
@@ -193,7 +205,7 @@ func InitializeTemplateRegistry(root string) (string, error) {
 	return manifestPath, nil
 }
 
-func InitializeWorkspace(root, workspaceMiseTemplate string) (string, error) {
+func InitializeWorkspace(root, workspaceMiseTemplate string, workflowAssets ...WorkflowAsset) (string, error) {
 	if strings.TrimSpace(workspaceMiseTemplate) == "" {
 		return "", errors.New("workspace mise template is empty")
 	}
@@ -208,6 +220,9 @@ func InitializeWorkspace(root, workspaceMiseTemplate string) (string, error) {
 	if err := ValidateProjectName(name); err != nil {
 		return "", fmt.Errorf("workspace directory name: %w", err)
 	}
+	if err := preflightWorkspace(root, workflowAssets); err != nil {
+		return "", err
+	}
 	for _, directory := range []string{"apps", "libs"} {
 		if err := os.MkdirAll(filepath.Join(root, directory), 0o755); err != nil {
 			return "", fmt.Errorf("create %s directory: %w", directory, err)
@@ -216,12 +231,146 @@ func InitializeWorkspace(root, workspaceMiseTemplate string) (string, error) {
 	if err := ensureWorkspaceMise(root, workspaceMiseTemplate); err != nil {
 		return "", err
 	}
+	if err := ensureWorkflowAssets(root, workflowAssets); err != nil {
+		return "", err
+	}
 	manifest := NewManifest(name)
 	manifest.Workspace.Kind = ProjectKindMonorepo
 	if err := SaveManifest(manifestPath, manifest); err != nil {
 		return "", err
 	}
 	return manifestPath, nil
+}
+
+func preflightWorkspace(root string, assets []WorkflowAsset) error {
+	for _, path := range []string{
+		filepath.Join(root, ManifestFilename),
+		filepath.Join(root, "apps"),
+		filepath.Join(root, "libs"),
+		filepath.Join(root, "mise.toml"),
+	} {
+		if err := rejectSymlinkComponents(root, path); err != nil {
+			return err
+		}
+	}
+	for _, directory := range []string{"apps", "libs"} {
+		path := filepath.Join(root, directory)
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return fmt.Errorf("workspace %s is not a directory", path)
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("inspect workspace %s: %w", path, err)
+		}
+	}
+	misePath := filepath.Join(root, "mise.toml")
+	if info, err := os.Stat(misePath); err == nil {
+		if info.IsDir() {
+			return fmt.Errorf("workspace mise config %s is a directory", misePath)
+		}
+		monorepo, err := hasMonorepoRoot(root)
+		if err != nil {
+			return fmt.Errorf("validate existing workspace mise config: %w", err)
+		}
+		if !monorepo {
+			return errors.New("existing mise.toml must declare top-level monorepo_root = true")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect workspace mise config: %w", err)
+	}
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("resolve workspace root: %w", err)
+	}
+	rootAbs = filepath.Clean(rootAbs)
+	seen := make(map[string]struct{}, len(assets))
+	for _, asset := range assets {
+		if strings.TrimSpace(asset.Path) == "" {
+			return errors.New("workflow asset path is empty")
+		}
+		path := filepath.Clean(filepath.Join(root, asset.Path))
+		if err := rejectSymlinkComponents(root, path); err != nil {
+			return err
+		}
+		pathAbs, err := filepath.Abs(path)
+		if err != nil {
+			return fmt.Errorf("resolve workflow %s: %w", path, err)
+		}
+		if pathAbs != rootAbs && !strings.HasPrefix(pathAbs, rootAbs+string(filepath.Separator)) {
+			return fmt.Errorf("workflow %s is outside workspace root", asset.Path)
+		}
+		if _, ok := seen[pathAbs]; ok {
+			return fmt.Errorf("workflow %s is duplicated", path)
+		}
+		seen[pathAbs] = struct{}{}
+		if _, err := os.Lstat(path); err == nil {
+			return fmt.Errorf("workflow %s already exists", path)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("inspect workflow %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
+func rejectSymlinkComponents(root, path string) error {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("resolve workspace root: %w", err)
+	}
+	pathAbs, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("resolve workspace path: %w", err)
+	}
+	rel, err := filepath.Rel(filepath.Clean(rootAbs), filepath.Clean(pathAbs))
+	if err != nil {
+		return fmt.Errorf("compare workspace path: %w", err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("workspace path %s is outside workspace root", path)
+	}
+	current := filepath.Clean(rootAbs)
+	for _, component := range strings.Split(rel, string(filepath.Separator)) {
+		if component == "." || component == "" {
+			continue
+		}
+		current = filepath.Join(current, component)
+		info, err := os.Lstat(current)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect workspace path %s: %w", current, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("workspace path %s contains a symlink", path)
+		}
+	}
+	return nil
+}
+
+func ensureWorkflowAssets(root string, assets []WorkflowAsset) error {
+	if len(assets) == 0 {
+		return nil
+	}
+	for _, asset := range assets {
+		if strings.TrimSpace(asset.Path) == "" {
+			return errors.New("workflow asset path is empty")
+		}
+		path := filepath.Join(root, asset.Path)
+		if _, err := os.Lstat(path); err == nil {
+			return fmt.Errorf("workflow %s already exists", path)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("inspect workflow %s: %w", path, err)
+		}
+	}
+	for _, asset := range assets {
+		path := filepath.Join(root, asset.Path)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return fmt.Errorf("create workflow directory: %w", err)
+		}
+		if err := os.WriteFile(path, []byte(asset.Content), 0o644); err != nil {
+			return fmt.Errorf("write workflow %s: %w", path, err)
+		}
+	}
+	return nil
 }
 
 func ensureWorkspaceMise(root, workspaceMiseTemplate string) error {
@@ -431,6 +580,36 @@ func (manifest Config) DeclaredTemplates() []Template {
 	return manifest.TemplateRegistry.Templates
 }
 
+// PublicationTargets returns the templates that represent publishable packages
+// for the configured workspace lifecycle. Registry workspaces publish their
+// declared templates; monorepos publish their registered projects. The
+// workspace kind is authoritative when both forms are present.
+func (manifest Config) PublicationTargets() []Template {
+	var targets []Template
+	switch manifest.Workspace.Kind {
+	case ProjectKindTemplateRegistry:
+		targets = append(targets, manifest.DeclaredTemplates()...)
+	default:
+		targets = make([]Template, 0, len(manifest.Workspace.Projects))
+		for _, project := range manifest.Workspace.Projects {
+			kind := ""
+			if strings.HasPrefix(filepath.ToSlash(project.Path), "apps/") {
+				kind = "app"
+			} else if strings.HasPrefix(filepath.ToSlash(project.Path), "libs/") {
+				kind = "lib"
+			}
+			targets = append(targets, Template{Name: project.Name, Kind: kind, Path: project.Path, Version: project.Version})
+		}
+	}
+	sort.SliceStable(targets, func(i, j int) bool {
+		if targets[i].Path == targets[j].Path {
+			return targets[i].Name < targets[j].Name
+		}
+		return targets[i].Path < targets[j].Path
+	})
+	return targets
+}
+
 func (manifest Config) FindTemplate(name string) (Template, error) {
 	for _, template := range manifest.DeclaredTemplates() {
 		if template.Name == name {
@@ -438,6 +617,23 @@ func (manifest Config) FindTemplate(name string) (Template, error) {
 		}
 	}
 	return Template{}, fmt.Errorf("template %q is not declared", name)
+}
+
+// MergePackageManagers appends package-manager IDs that are not already
+// declared, preserving both the existing order and the order of incoming IDs.
+func (manifest *Config) MergePackageManagers(packageManagers ...string) error {
+	seen := make(map[string]struct{}, len(manifest.Workspace.PackageManagers)+len(packageManagers))
+	for _, packageManager := range manifest.Workspace.PackageManagers {
+		seen[packageManager] = struct{}{}
+	}
+	for _, packageManager := range packageManagers {
+		if _, exists := seen[packageManager]; exists {
+			continue
+		}
+		manifest.Workspace.PackageManagers = append(manifest.Workspace.PackageManagers, packageManager)
+		seen[packageManager] = struct{}{}
+	}
+	return manifest.Validate()
 }
 
 func (manifest *Config) AddProject(project Project) error {

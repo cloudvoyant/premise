@@ -33,7 +33,7 @@ manifest.Workspace.PackageManagers = []string{"go", "cargo"}
 return core.SaveManifest(filepath.Join(root, core.ManifestFilename), manifest)
 ```
 
-Package managers are selected explicitly:
+Package managers are selected explicitly. The ordered list is also the provenance recorded for release resolution; publication targets are later derived from eligible generated projects, not inferred from template declarations or native files:
 
 ```yaml
 workspace:
@@ -52,4 +52,4 @@ The list is ordered. Conflicts between managers in the same ecosystem are checke
 
 `SaveManifest` writes to a temporary file in the destination directory, syncs and closes it, then uses a same-directory rename. A failed write does not partially replace the existing manifest.
 
-The configuration module does not inspect native package files, execute tasks, calculate versions, or publish releases. Those responsibilities belong to package-manager, task, version, and release modules.
+The configuration module does not inspect native package files, execute tasks, calculate versions, or publish releases. Those responsibilities belong to package-manager, task, version, and release modules. It also does not create tags or credentials; release preflight and publication own those boundaries.

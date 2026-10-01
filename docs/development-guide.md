@@ -99,5 +99,3 @@ pm version next                     # next version from git history
 pm version bump patch|minor|major   # explicit bump
 pm version rc --identifier <id>     # MAJOR.MINOR.PATCH-rc.<id>
 ```
-
-A `v0.0.0` stable bootstrap tag must exist before CI runs; it is created externally and is not produced by any task or workflow.

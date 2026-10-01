@@ -58,10 +58,6 @@ pm update
 pm update v0.2.1
 ```
 
-In an initialized Premise workspace, run `pm g` to choose a registry and a template. The Default registry provides language-agnostic monorepo scaffolding.
-
-Stable releases are planned, tagged, and published by `pm release` after merges to `main`; see [Infrastructure](docs/infrastructure.md) for the release pipeline.
-
 ## Documentation
 
 - [User Guide](docs/user-guide.md) - Complete setup and usage guide

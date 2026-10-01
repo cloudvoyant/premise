@@ -105,6 +105,7 @@ func TestSetCargoPackageVersionPreservesUnrelatedSections(t *testing.T) {
 func TestCargoPublicationPreflightsEveryPackageBeforePublishing(t *testing.T) {
 	root := t.TempDir()
 	manifest := NewManifest("cargo-fixture")
+	manifest.Workspace.Kind = core.ProjectKindTemplateRegistry
 	manifest.TemplateRegistry = &TemplateRegistry{WorkspaceFiles: []string{}, Templates: []Template{
 		templateFixture("a-first", "lib"),
 		templateFixture("z-second", "lib"),
@@ -167,6 +168,7 @@ esac
 func TestCargoPublicationAggregatesPreflightErrorsBeforeChangingFiles(t *testing.T) {
 	root := t.TempDir()
 	manifest := NewManifest("cargo-fixture")
+	manifest.Workspace.Kind = core.ProjectKindTemplateRegistry
 	for _, name := range []string{"ready", "bad-name", "missing-task"} {
 		template := templateFixture(name, "lib")
 		if manifest.TemplateRegistry == nil {
@@ -251,6 +253,7 @@ esac
 func TestCargoPublicationSkipsIneligiblePackagesWithoutCredentialsOrTasks(t *testing.T) {
 	root := t.TempDir()
 	manifest := NewManifest("cargo-fixture")
+	manifest.Workspace.Kind = core.ProjectKindTemplateRegistry
 	manifest.TemplateRegistry = &TemplateRegistry{WorkspaceFiles: []string{}, Templates: []Template{
 		templateFixture("nested-app", "app"),
 		templateFixture("internal-lib", "lib"),
@@ -293,7 +296,7 @@ func TestCargoPublicationSkipsIneligiblePackagesWithoutCredentialsOrTasks(t *tes
 	if err := publishCargoPackages(t.Context(), root, "v1.2.3", "publish", &output, &output); err != nil {
 		t.Fatal(err)
 	}
-	wantOutput := "skip: nested-app has no direct Cargo package\nskip: internal-lib Cargo registry publication disabled\n"
+	wantOutput := "skip: internal-lib Cargo registry publication disabled\nskip: nested-app has no direct Cargo package\n"
 	if output.String() != wantOutput {
 		t.Fatalf("publishCargoPackages() output = %q, want %q", output.String(), wantOutput)
 	}
@@ -317,6 +320,7 @@ func TestCargoPublicationSkipsIneligiblePackagesWithoutCredentialsOrTasks(t *tes
 func TestCargoPublicationPublishesOnlyEligiblePackages(t *testing.T) {
 	root := t.TempDir()
 	manifest := NewManifest("cargo-fixture")
+	manifest.Workspace.Kind = core.ProjectKindTemplateRegistry
 	manifest.TemplateRegistry = &TemplateRegistry{WorkspaceFiles: []string{}, Templates: []Template{
 		templateFixture("nested-app", "app"),
 		templateFixture("internal-lib", "lib"),
@@ -445,6 +449,7 @@ esac
 func TestPublishUsesCargoCredentialsAndRestoresVersions(t *testing.T) {
 	root := t.TempDir()
 	manifest := NewManifest("cargo-fixture")
+	manifest.Workspace.Kind = core.ProjectKindTemplateRegistry
 	manifest.TemplateRegistry = &TemplateRegistry{WorkspaceFiles: []string{}, Templates: []Template{templateFixture("example-crate", "lib")}}
 	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
 		t.Fatal(err)

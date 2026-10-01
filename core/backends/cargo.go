@@ -83,6 +83,47 @@ func (Cargo) WillPublishOk(ctx context.Context, root string, template core.Templ
 	return !exists && err == nil, err
 }
 
+// PreflightPublication validates every Cargo target before stable tagging.
+func (Cargo) PreflightPublication(ctx context.Context, root, version, task string) error {
+	manifest, err := core.LoadManifest(filepath.Join(root, core.ManifestFilename))
+	if err != nil {
+		return fmt.Errorf("load Cargo registry manifest: %w", err)
+	}
+	if len(manifest.PublicationTargets()) == 0 {
+		return errors.New("Cargo manifest declares no publication targets")
+	}
+	var failures []error
+	pending := false
+	workspace, found, workspaceErr := cargoWorkspaceDirectory(root)
+	if workspaceErr != nil {
+		failures = append(failures, fmt.Errorf("inspect Cargo registry workspace: %w", workspaceErr))
+	} else if !found || workspace == "" {
+		failures = append(failures, errors.New("Cargo registry workspace is missing Cargo.toml"))
+	}
+	for _, target := range manifest.PublicationTargets() {
+		metadata, found, metadataErr := (Cargo{}).GetPackageMetadata(root, target)
+		if metadataErr != nil {
+			failures = append(failures, fmt.Errorf("package target %s: %w", target.Name, metadataErr))
+			continue
+		}
+		if !found || !metadata.Publishable {
+			continue
+		}
+		ready, checkErr := (Cargo{}).WillPublishOk(ctx, root, target, version, task)
+		if checkErr != nil {
+			failures = append(failures, fmt.Errorf("package target %s: %w", target.Name, checkErr))
+			continue
+		}
+		if ready {
+			pending = true
+		}
+	}
+	if pending && os.Getenv("CRATES_TOKEN") == "" {
+		failures = append(failures, errors.New("CRATES_TOKEN is required for Cargo publication"))
+	}
+	return errors.Join(failures...)
+}
+
 // SupportsPackages reports that Cargo publishes registry packages.
 func (Cargo) SupportsPackages() bool { return true }
 
@@ -234,9 +275,9 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 	if err != nil {
 		return fmt.Errorf("load Cargo registry manifest: %w", err)
 	}
-	templates := manifest.DeclaredTemplates()
+	templates := manifest.PublicationTargets()
 	if len(templates) == 0 {
-		return errors.New("Cargo registry manifest declares no templates")
+		return errors.New("Cargo manifest declares no publication targets")
 	}
 
 	var failures []error
@@ -244,7 +285,7 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 	for _, template := range templates {
 		pkg, found, err := inspectCargoTemplatePackage(root, template)
 		if err != nil {
-			failures = append(failures, fmt.Errorf("template %s: %w", template.Name, err))
+			failures = append(failures, fmt.Errorf("package target %s: %w", template.Name, err))
 			continue
 		}
 		if !found {
@@ -274,7 +315,7 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 	for _, pkg := range packages {
 		versionExists, err := preflightCargoPackage(ctx, pkg, version, task, preflight, client)
 		if err != nil {
-			failures = append(failures, fmt.Errorf("template %s: %w", pkg.Template.Name, err))
+			failures = append(failures, fmt.Errorf("package target %s: %w", pkg.Template.Name, err))
 			continue
 		}
 		publications = append(publications, cargoPublishTarget{directory: pkg.Directory, name: pkg.Name, exists: versionExists})

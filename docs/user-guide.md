@@ -2,12 +2,17 @@
 
 premise creates applications and libraries from live templates and records where each generated project came from. Templates remain valid projects before generation because premise uses literal string replacement instead of template-expression syntax.
 
-## Requirements
+## Install premise
 
-- Install premise with `install.sh`; the installer adds both `premise` and its `pm` alias. `go install` adds only `premise`. Use `pm update` for installations created by `install.sh`.
-- Install mise and trust the repository configuration.
-- Use a terminal for interactive questionnaires.
-- Allow network access when premise fetches a remote template repository for the first time.
+Use the installer to install the latest release. It adds the `premise` command and the `pm` alias:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/cloudvoyant/premise/main/install.sh | bash
+```
+
+If you use Go, install the binary with `go install`. This command adds `premise`, but not the `pm` alias. For an installer-managed installation, run `pm update` to install a newer release.
+
+Install [mise](https://mise.jdx.dev/) for workspace tools. Run commands in a terminal because some commands use interactive questions. Allow network access when you use a remote template for the first time.
 
 ## Getting Started
 
@@ -50,9 +55,9 @@ Premise resolves the current executable, follows the `pm` symlink when needed, a
 
 ### Initialize a workspace
 
-Run `pm init` at the repository root. The default `monorepo` kind creates `premise.yaml`, a root `mise.toml`, `apps/`, and `libs/`. The root Mise configuration discovers app and library projects and layers their tools and environment. Use `pm init --kind template-registry` to start with an empty `template_registry` configuration and a `templates/` directory. Either kind can later add templates or generated projects. Premise preserves existing files and refuses to replace an existing manifest.
+Run `pm init` at the repository root. The default `monorepo` kind creates the manifest, root Mise configuration, project directories, and GitHub workflows. It does not replace an existing manifest or workflow file. Use `pm init --kind template-registry` to create a template registry with a `templates/` directory.
 
-Use `pm install` or `pm i` to install mise tools declared by the workspace and its generated projects. It does not install package-manager dependencies yet. Run project lifecycle tasks directly through mise's monorepo pattern:
+Use `pm install` or `pm i` to install Mise tools declared by the workspace and its generated projects, then dispatch each generated project's `install` contract. CI runs `format` and then `format:check`. Run project lifecycle tasks directly through Mise's monorepo pattern:
 
 ```bash
 mise run --jobs 1 '//...:build'
@@ -269,15 +274,15 @@ pm version rc --identifier <id>     # MAJOR.MINOR.PATCH-rc.<id>
 
 Each command prints exactly one version to stdout. Release-candidate identifiers must be valid SemVer prerelease identifiers: letters, digits, and hyphens, with numeric identifiers forbidding leading zeroes.
 
-Version calculation relies on a `v0.0.0` stable bootstrap tag that must exist before CI runs. That tag is created externally and is never produced by a task or workflow. Premise configures the SDK to read only stable SemVer tags (`vMAJOR.MINOR.PATCH`), so unrelated tags are ignored. No `.svu.yml` file or svu executable is required.
+If no stable tag exists, version calculation uses a virtual `v0.0.0` baseline. A first conventional feature release therefore plans `v0.1.0`; no bootstrap tag or other external ref is required. Premise configures the SDK to read only stable SemVer tags (`vMAJOR.MINOR.PATCH`), so unrelated tags are ignored. No `.svu.yml` file or svu executable is required.
 
 ### Publishing
 
 Stable releases happen on pushes to `main`. The workflow calls `pm ci flow on-merge`, which validates the trunk and then invokes the stable release phase. Premise reuses a stable tag already present at HEAD or computes, creates, and pushes the next `vMAJOR.MINOR.PATCH` tag. It generates temporary GoReleaser configuration and publishes the GitHub archives that `install.sh` downloads. If there is no release-worthy change, the command skips cleanly. Reruns reuse the tag and replace conflicting release assets. Repositories do not carry `.goreleaser.yml`.
 
-Run `pm release` for the full stable release. CI can separate tag preparation, GitHub artifact publication, and language-package publication through the Go release API to isolate credentials. `pm release --dry-run` prints `version` and `should_publish` key-value outputs without mutation, and `pm release --build` builds the complete artifact matrix without tagging or publishing. The composite action exposes the same values as action outputs for downstream artifact jobs.
+Run `pm release` for the full stable release. The release performs structural and full preflight before creating a tag. CI can separate tag preparation, GitHub artifact publication, and language-package publication through the Go release API to isolate credentials. `pm release --dry-run` prints `version` and `should_publish` key-value outputs without mutation, and `pm release --build` builds the complete artifact matrix without tagging or publishing. If credentials or a publication task fail, correct them and rerun; a rerun reuses the stable tag at `HEAD` and replaces conflicting assets. The composite action exposes the same values as action outputs for downstream artifact jobs.
 
-Package registry publication and application artifacts are separate decisions. Declare package managers explicitly under `workspace.package_managers`; native files do not select backends. The declaration order is the release order. Backends with the same ecosystem conflict, so Bun and pnpm cannot both manage npm packages in one workspace. A selected backend extracts shared package metadata, checks whether each template is eligible for its registry, prepares downloadable GoReleaser archives, and runs package publish tasks. Premise owns the common version, tag, release order, and credential boundaries. A template without an eligible registry package or artifact destination remains unpublished; being private does not by itself rule out publishing to a restricted registry. Deployable images and static-site uploads still need an explicit destination and are not inferred from `kind: app`.
+Package registry publication and application artifacts are separate decisions. Declare package managers explicitly under `workspace.package_managers`; native files do not select backends. Generation records that manager provenance in the workspace manifest, while publication targets are derived from eligible generated workspace projects and their native metadata, not from template declarations alone. The declaration order is the release order. Backends with the same ecosystem conflict, so Bun and pnpm cannot both manage npm packages in one workspace. A selected backend extracts shared package metadata, checks whether each template is eligible for its registry, prepares downloadable GoReleaser archives, and runs package publish tasks. Premise owns the common version, tag, release order, and credential boundaries. A template without an eligible registry package or artifact destination remains unpublished; being private does not by itself rule out publishing to a restricted registry. Deployable images and static-site uploads still need an explicit destination and are not inferred from `kind: app`.
 
 ```yaml
 workspace:

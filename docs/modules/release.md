@@ -23,17 +23,15 @@ The release module plans repository releases, creates and reuses stable tags, co
 
 ```bash
 pm release             # prepare and publish the stable release
-pm release --dry-run   # report version and should_publish without mutation
-pm release --build     # build release artifacts locally without publishing
+pm release --dry-run   # report the plan without changing the repository
+pm release --build     # build release artifacts without publishing
 ```
-
-The CLI does not expose `prepare`, `github`, `packages`, or `snapshot` subcommands. For CI jobs with separate credentials, use `PrepareStableRelease`, `PublishGitHubRelease`, and `PublishLanguagePackages` from Go. `pm ci flow on-merge` can also select `github` and `packages` release phases. `PublishStableRelease` performs all three steps when one process owns all credentials.
 
 ## Implementation Details
 
 Release loads `premise.yaml`, resolves explicitly selected registered backends, and rejects missing or conflicting managers before release work. It asks each selected backend for artifact fragments, merges `builds` and `archives`, and rejects unknown sections and duplicate artifact IDs.
 
-`PlanStableRelease` fetches tags, checks for a stable tag at HEAD, and compares current and next versions. `PrepareStableRelease` creates and pushes a tag only when needed; a failed push removes the local tag.
+`PlanStableRelease` reads tags and compares the current version with the next version. It reuses a stable tag at `HEAD`. When no stable tag exists, it uses `v0.0.0` as the version baseline and plans the first feature release as `v0.1.0`.
 
 GoReleaser configuration is written to a temporary file. Release calls the Mise subprocess boundary directly to resolve a pinned GoReleaser tool environment; it does not call the public Task module entry points. Package-registry credentials are removed, while GitHub credentials are added explicitly. Temporary configuration is removed after execution.
 
@@ -41,4 +39,4 @@ GoReleaser configuration is written to a temporary file. Release calls the Mise 
 
 Backends that contribute artifacts must agree on one release workspace. Their serial requirements are combined; Cargo requests serial GoReleaser execution after preparing its toolchain.
 
-Language-package credentials are excluded from general Mise and GoReleaser environments. Backends receive only the credentials needed for their publication subprocesses. Context cancellation propagates to Git operations, Mise, registry checks, and GoReleaser.
+Language-package credentials are excluded from general Mise and GoReleaser environments. Backends receive only the credentials needed for their publication subprocesses. Missing or invalid credentials fail before publication; correct them and rerun, reusing the existing tag. Context cancellation propagates to Git operations, Mise, registry checks, and GoReleaser.
