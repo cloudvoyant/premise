@@ -7,8 +7,8 @@ package core
 
 import (
 	"fmt"
+	"io"
 	"os"
-	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -85,7 +85,7 @@ func ValidateRCIdentifier(identifier string) error {
 // CurrentVersion returns the latest stable version tag reachable in the
 // repository. The svu SDK performs the calculation without invoking its CLI.
 func CurrentVersion(root string) (string, error) {
-	version, err := calculateVersion(root, svu.Current)
+	version, err := calculateVersion(root, versionActionCurrent)
 	if err != nil {
 		return "", fmt.Errorf("calculate current version: %w", err)
 	}
@@ -94,7 +94,7 @@ func CurrentVersion(root string) (string, error) {
 
 // NextVersion returns the next version inferred from conventional commits.
 func NextVersion(root string) (string, error) {
-	version, err := calculateVersion(root, svu.Next)
+	version, err := calculateVersion(root, versionActionNext)
 	if err != nil {
 		return "", fmt.Errorf("calculate next version: %w", err)
 	}
@@ -103,18 +103,18 @@ func NextVersion(root string) (string, error) {
 
 // BumpedVersion increments the requested version component.
 func BumpedVersion(root string, bump VersionBump) (string, error) {
-	var calculate func(...svu.Option) (string, error)
+	var action versionAction
 	switch bump {
 	case VersionBumpPatch:
-		calculate = svu.Patch
+		action = versionActionPatch
 	case VersionBumpMinor:
-		calculate = svu.Minor
+		action = versionActionMinor
 	case VersionBumpMajor:
-		calculate = svu.Major
+		action = versionActionMajor
 	default:
 		return "", fmt.Errorf("invalid bump %q: expected patch, minor, or major", bump)
 	}
-	version, err := calculateVersion(root, calculate)
+	version, err := calculateVersion(root, action)
 	if err != nil {
 		return "", fmt.Errorf("calculate %s version: %w", bump, err)
 	}
@@ -127,20 +127,51 @@ func ReleaseCandidateVersion(root, identifier string) (string, error) {
 	if err := ValidateRCIdentifier(identifier); err != nil {
 		return "", fmt.Errorf("validate release candidate: %w", err)
 	}
-	version, err := calculateVersion(root, svu.Next, svu.WithPreRelease("rc."+identifier))
+	version, err := calculateVersion(root, versionActionNext, "rc."+identifier)
 	if err != nil {
 		return "", fmt.Errorf("calculate release-candidate version: %w", err)
 	}
 	return version, nil
 }
 
-func calculateVersion(root string, calculate func(...svu.Option) (string, error), extra ...svu.Option) (string, error) {
+type versionAction uint8
+
+const (
+	versionActionCurrent versionAction = iota
+	versionActionNoBump
+	versionActionNext
+	versionActionPatch
+	versionActionMinor
+	versionActionMajor
+)
+
+var (
+	breakingBodyPattern  = regexp.MustCompile(`(?m).*BREAKING[ -]CHANGE:.*`)
+	breakingTitlePattern = regexp.MustCompile(`(?im).*(\w+)(\(.*\))?!:.*`)
+	featurePattern       = regexp.MustCompile(`(?im).*feat(\(.*\))?:.*`)
+	fixPattern           = regexp.MustCompile(`(?im).*fix(\(.*\))?:.*`)
+)
+
+func calculateVersion(root string, action versionAction, prerelease ...string) (string, error) {
 	stableTag, err := latestStableVersionTag(root)
 	if err != nil {
 		return "", fmt.Errorf("resolve stable version baseline: %w", err)
 	}
-	if stableTag == "v0.0.0" {
-		return calculateVirtualBaseline(root, calculate, extra...)
+	if stableTag == "" {
+		return calculateVirtualBaseline(root, action, prerelease...)
+	}
+	var calculate func(...svu.Option) (string, error)
+	switch action {
+	case versionActionCurrent:
+		calculate = svu.Current
+	case versionActionNext:
+		calculate = svu.Next
+	case versionActionPatch:
+		calculate = svu.Patch
+	case versionActionMinor:
+		calculate = svu.Minor
+	case versionActionMajor:
+		calculate = svu.Major
 	}
 	options := []svu.Option{
 		svu.WithPattern(stableTag),
@@ -148,7 +179,9 @@ func calculateVersion(root string, calculate func(...svu.Option) (string, error)
 		svu.ForAllBranches(),
 		svu.WithDirectories("."),
 	}
-	options = append(options, extra...)
+	for _, value := range prerelease {
+		options = append(options, svu.WithPreRelease(value))
+	}
 
 	versionDirectoryMu.Lock()
 	defer versionDirectoryMu.Unlock()
@@ -171,30 +204,59 @@ func calculateVersion(root string, calculate func(...svu.Option) (string, error)
 	return version, nil
 }
 
-func calculateVirtualBaseline(root string, calculate func(...svu.Option) (string, error), extra ...svu.Option) (string, error) {
+func calculateVirtualBaseline(root string, action versionAction, prerelease ...string) (string, error) {
+	if action == versionActionCurrent {
+		return "v0.0.0", nil
+	}
 	repository, err := git.PlainOpenWithOptions(root, &git.PlainOpenOptions{DetectDotGit: true})
 	if err != nil {
 		return "", fmt.Errorf("open version repository: %w", err)
 	}
 	head, err := repository.Head()
 	if err != nil {
-		return "", fmt.Errorf("read version HEAD: %w", err)
+		return "", fmt.Errorf("resolve repository HEAD: %w", err)
 	}
-	commit, err := repository.CommitObject(head.Hash())
+	commits, err := repository.Log(&git.LogOptions{From: head.Hash()})
 	if err != nil {
-		return "", fmt.Errorf("read version HEAD commit: %w", err)
+		return "", fmt.Errorf("scan repository commits: %w", err)
 	}
-	if reflect.ValueOf(calculate).Pointer() == reflect.ValueOf(svu.Current).Pointer() {
-		return "v0.0.0", nil
+	defer commits.Close()
+	bump := versionActionNoBump
+	for {
+		commit, err := commits.Next()
+		if err == io.EOF || err == plumbing.ErrObjectNotFound {
+			break
+		}
+		if err != nil {
+			return "", fmt.Errorf("read repository commit: %w", err)
+		}
+		message := commit.Message
+		switch {
+		case breakingBodyPattern.MatchString(message) || breakingTitlePattern.MatchString(message):
+			bump = versionActionMajor
+		case bump < versionActionMinor && featurePattern.MatchString(message):
+			bump = versionActionMinor
+		case fixPattern.MatchString(message):
+			// Keep the patch bump.
+		}
 	}
-	message := commit.Message
-	if strings.HasPrefix(message, "feat") || strings.Contains(message, "BREAKING CHANGE") || strings.Contains(message, "!:") {
-		return "v0.1.0", nil
+	if action != versionActionNext {
+		bump = action
 	}
-	if strings.HasPrefix(message, "fix") {
-		return "v0.0.1", nil
+	version := *semver.MustParse("0.0.0")
+	switch bump {
+	case versionActionMajor:
+		version = version.IncMajor()
+	case versionActionMinor:
+		version = version.IncMinor()
+	case versionActionPatch:
+		version = version.IncPatch()
 	}
-	return "v0.0.0", nil
+	result := "v" + version.String()
+	if len(prerelease) > 0 {
+		result += "-" + prerelease[0]
+	}
+	return result, nil
 }
 
 func latestStableVersionTag(root string) (string, error) {
@@ -226,10 +288,7 @@ func latestStableVersionTag(root string) (string, error) {
 		return "", fmt.Errorf("inspect version tags: %w", err)
 	}
 	if latestTag == "" {
-		// A repository without release refs starts from the virtual baseline.
-		// The baseline is passed to svu as a pattern, but no Git tag is created
-		// until a release is prepared.
-		return "v0.0.0", nil
+		return "", nil
 	}
 	return latestTag, nil
 }

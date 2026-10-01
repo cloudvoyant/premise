@@ -84,6 +84,90 @@ func TestRepositoryVersionsUseVirtualBaselineWithoutTags(t *testing.T) {
 	}
 	runGit("add", "README.md")
 	runGit("commit", "-q", "-m", "feat: first release")
+	if err := os.WriteFile(tracked, []byte("feature\ncleanup\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "README.md")
+	runGit("commit", "-q", "-m", "chore: cleanup")
+
+	if got, err := CurrentVersion(repository); err != nil || got != "v0.0.0" {
+		t.Fatalf("CurrentVersion() = %q, %v; want v0.0.0", got, err)
+	}
+	if got, err := NextVersion(repository); err != nil || got != "v0.1.0" {
+		t.Fatalf("NextVersion() = %q, %v; want v0.1.0", got, err)
+	}
+	if got, err := BumpedVersion(repository, VersionBumpMajor); err != nil || got != "v1.0.0" {
+		t.Fatalf("BumpedVersion(major) = %q, %v; want v1.0.0", got, err)
+	}
+	if got, err := BumpedVersion(repository, VersionBumpPatch); err != nil || got != "v0.0.1" {
+		t.Fatalf("BumpedVersion(patch) = %q, %v; want v0.0.1", got, err)
+	}
+}
+
+func TestTaglessChoreOnlyRepositoryKeepsZeroVersion(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	repository := t.TempDir()
+	runGit := func(arguments ...string) {
+		t.Helper()
+		command := exec.Command("git", append([]string{"-C", repository}, arguments...)...)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\\n%s", arguments, err, output)
+		}
+	}
+	runGit("init", "-q")
+	runGit("config", "user.email", "test@example.com")
+	runGit("config", "user.name", "test")
+	tracked := filepath.Join(repository, "README.md")
+	if err := os.WriteFile(tracked, []byte("bootstrap\\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "README.md")
+	runGit("commit", "-q", "-m", "chore: bootstrap")
+
+	if got, err := NextVersion(repository); err != nil || got != "v0.0.0" {
+		t.Fatalf("NextVersion() = %q, %v; want v0.0.0", got, err)
+	}
+	if got, err := ReleaseCandidateVersion(repository, "1"); err != nil || got != "v0.0.0-rc.1" {
+		t.Fatalf("ReleaseCandidateVersion() = %q, %v; want v0.0.0-rc.1", got, err)
+	}
+}
+
+func TestRepositoryVersionsIgnoreUnrelatedTagsWithoutStableBaseline(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	repository := t.TempDir()
+	runGit := func(arguments ...string) {
+		t.Helper()
+		command := exec.Command("git", append([]string{"-C", repository}, arguments...)...)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\\n%s", arguments, err, output)
+		}
+	}
+	runGit("init", "-q")
+	runGit("config", "user.email", "test@example.com")
+	runGit("config", "user.name", "test")
+	tracked := filepath.Join(repository, "README.md")
+	if err := os.WriteFile(tracked, []byte("bootstrap\\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "README.md")
+	runGit("commit", "-q", "-m", "chore: bootstrap")
+	runGit("tag", "bootstrap")
+	if err := os.WriteFile(tracked, []byte("bootstrap\\nfeature\\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "README.md")
+	runGit("commit", "-q", "-m", "feat: add feature")
+	if err := os.WriteFile(tracked, []byte("bootstrap\\nfeature\\ncleanup\\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "README.md")
+	runGit("commit", "-q", "-m", "chore: cleanup")
 
 	if got, err := CurrentVersion(repository); err != nil || got != "v0.0.0" {
 		t.Fatalf("CurrentVersion() = %q, %v; want v0.0.0", got, err)
