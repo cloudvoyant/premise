@@ -206,12 +206,6 @@ func InitializeTemplateRegistry(root string) (string, error) {
 }
 
 func InitializeWorkspace(root, workspaceMiseTemplate string, workflowAssets ...WorkflowAsset) (string, error) {
-	return initializeWorkspace(root, WorkspaceScaffold{MiseTemplate: workspaceMiseTemplate, WorkflowAssets: workflowAssets})
-}
-
-func initializeWorkspace(root string, scaffold WorkspaceScaffold) (string, error) {
-	workspaceMiseTemplate := scaffold.MiseTemplate
-	workflowAssets := scaffold.WorkflowAssets
 	if strings.TrimSpace(workspaceMiseTemplate) == "" {
 		return "", errors.New("workspace mise template is empty")
 	}
