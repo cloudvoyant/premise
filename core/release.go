@@ -212,6 +212,19 @@ func PublishLanguagePackages(ctx context.Context, root string, stdout, stderr io
 // PublishStableRelease plans, tags, and publishes all configured outputs. CI
 // can call the narrower functions in separate credential-bearing steps.
 func PublishStableRelease(ctx context.Context, root string, stdout, stderr io.Writer) (ReleasePlan, error) {
+	planned, err := PlanStableRelease(ctx, root)
+	if err != nil {
+		return ReleasePlan{}, fmt.Errorf("plan stable release: %w", err)
+	}
+	if !planned.Skip && !planned.ReuseTag {
+		_, plugins, err := loadReleaseBackends(root)
+		if err != nil {
+			return ReleasePlan{}, fmt.Errorf("resolve package managers: %w", err)
+		}
+		if err := executeGoReleaser(ctx, root, plugins, true, stdout, stderr); err != nil {
+			return ReleasePlan{}, fmt.Errorf("preflight release artifacts before tagging: %w", err)
+		}
+	}
 	plan, err := prepareStableRelease(ctx, root, stdout, true)
 	if err != nil || plan.Skip {
 		return plan, err
@@ -374,9 +387,11 @@ func runGoReleaser(ctx context.Context, root string, plugins []PackageManagerBac
 		return err
 	}
 	releaseEnvironment := withoutEnvironment(toolEnvironment, publicationCredentialEnvironment...)
-	for _, name := range []string{"GITHUB_TOKEN", "GH_TOKEN"} {
-		if value, ok := os.LookupEnv(name); ok {
-			releaseEnvironment = append(releaseEnvironment, name+"="+value)
+	if !snapshot {
+		for _, name := range []string{"GITHUB_TOKEN", "GH_TOKEN"} {
+			if value, ok := os.LookupEnv(name); ok {
+				releaseEnvironment = append(releaseEnvironment, name+"="+value)
+			}
 		}
 	}
 	command := exec.CommandContext(ctx, goreleaser, arguments...)

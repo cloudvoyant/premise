@@ -176,7 +176,7 @@ func inspectCargoTemplatePackage(root string, template core.Template) (cargoTemp
 func cargoReleaseBuilds(root string, manifest core.Config) (string, error) {
 	applications := []string{}
 	for _, template := range manifest.DeclaredTemplates() {
-		if template.Kind != "app" {
+		if template.Kind != "app" || (template.ReleaseArtifacts != nil && !*template.ReleaseArtifacts) {
 			continue
 		}
 		pkg, found, err := inspectCargoTemplatePackage(root, template)

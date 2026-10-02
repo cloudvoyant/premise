@@ -224,6 +224,36 @@ func TestPreflightFailurePreventsPushingReleaseTag(t *testing.T) {
 	}
 }
 
+func TestArtifactBuildFailurePreventsPushingReleaseTag(t *testing.T) {
+	root := writeTaggedCargoReleaseFixture(t)
+	repository, err := git.PlainOpen(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.DeleteTag("v1.2.3"); err != nil {
+		t.Fatal(err)
+	}
+	useTestPackageManagers(t, testPackageManager{id: "cargo", builds: "builds:\n  - id: app\n"})
+	originalGoReleaser := executeGoReleaser
+	defer func() { executeGoReleaser = originalGoReleaser }()
+	buildErr := errors.New("cross-build failed")
+	executeGoReleaser = func(_ context.Context, _ string, _ []PackageManagerBackend, snapshot bool, _, _ io.Writer) error {
+		if !snapshot {
+			t.Fatal("GoReleaser published after the preflight build failed")
+		}
+		return buildErr
+	}
+	originalPush := pushReleaseTag
+	defer func() { pushReleaseTag = originalPush }()
+	pushReleaseTag = func(context.Context, string, string, transport.AuthMethod) error {
+		t.Fatal("release tag was pushed after the artifact build failed")
+		return nil
+	}
+	if _, err := PublishStableRelease(t.Context(), root, io.Discard, io.Discard); !errors.Is(err, buildErr) {
+		t.Fatalf("PublishStableRelease() error = %v, want %v", err, buildErr)
+	}
+}
+
 func TestCreateAndPushReleaseTagRollsBackLocalTagOnFailure(t *testing.T) {
 	root := t.TempDir()
 	repository, err := git.PlainInit(root, false)
@@ -363,8 +393,21 @@ printf '%s\n' "$*" >> "$CAPTURE"
 		t.Fatal(err)
 	}
 	text := string(captured)
-	if !strings.Contains(text, "github:github-secret") || !strings.Contains(text, "release --clean") {
-		t.Fatalf("GoReleaser capture = %q", text)
+	if !strings.Contains(text, "github:\nrelease --clean") || !strings.Contains(text, "--snapshot") {
+		t.Fatalf("snapshot GoReleaser capture = %q", text)
+	}
+	if err := os.WriteFile(capture, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runGoReleaser(t.Context(), root, []PackageManagerBackend{goPlugin}, false, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	published, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(published), "github:github-secret") || strings.Contains(string(published), "--snapshot") {
+		t.Fatalf("publishing GoReleaser capture = %q", published)
 	}
 	fields := strings.Fields(text)
 	foundConfig := false
@@ -425,7 +468,7 @@ printf '%s\n' "$*" >> "$CAPTURE"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if text := string(captured); !strings.HasPrefix(text, "install\ngithub:github-secret\n") {
+	if text := string(captured); !strings.HasPrefix(text, "install\ngithub:\n") {
 		t.Fatalf("Cargo GoReleaser capture = %q", text)
 	}
 
