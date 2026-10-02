@@ -11,6 +11,7 @@ name: On Commit
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   verify:

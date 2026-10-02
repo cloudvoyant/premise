@@ -56,6 +56,7 @@ func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 				t.Fatal("on-commit must validate the first push to a new branch")
 			}
 			for _, expected := range []string{
+				"permissions:\n  contents: read\n  id-token: write",
 				"fetch-depth: 0",
 				"fetch-tags: true",
 				"NODE_AUTH_TOKEN: >-",
@@ -75,6 +76,7 @@ func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 		}
 		if name == "on-merge.yml" {
 			for _, expected := range []string{
+				"permissions:\n  contents: write\n  id-token: write",
 				"NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}",
 				"CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}",
 				"release: auto",

@@ -8,6 +8,7 @@ name: On Merge
 
 permissions:
   contents: write
+  id-token: write
 
 concurrency:
   group: stable-release
