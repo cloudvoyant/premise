@@ -9,15 +9,13 @@ import (
 	"github.com/cloudvoyant/premise/core"
 )
 
-func TestCargoReleaseArtifactsAreIndependentOfRegistryPublication(t *testing.T) {
+func TestCargoReleaseArtifactsExcludeDirectTauriApps(t *testing.T) {
 	root := t.TempDir()
-	optOut := false
 	manifest := NewManifest("cargo-fixture")
 	manifest.Workspace.Kind = core.ProjectKindTemplateRegistry
 	publicCLI := templateFixture("public-cli", "app")
 	privateCLI := templateFixture("private-cli", "app")
 	tauri := templateFixture("tauri-app", "app")
-	tauri.ReleaseArtifacts = &optOut
 	manifest.TemplateRegistry = &TemplateRegistry{
 		WorkspaceFiles: []string{},
 		Templates:      []Template{publicCLI, privateCLI, tauri},
@@ -35,6 +33,9 @@ func TestCargoReleaseArtifactsAreIndependentOfRegistryPublication(t *testing.T) 
 			t.Fatal(err)
 		}
 	}
+	if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(tauri.Path), "tauri.conf.json"), []byte(`{"productName":"tauri-app"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(root, ManifestFilename)
 	if err := SaveManifest(path, manifest); err != nil {
 		t.Fatal(err)
@@ -42,9 +43,6 @@ func TestCargoReleaseArtifactsAreIndependentOfRegistryPublication(t *testing.T) 
 	loaded, err := core.LoadManifest(path)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if loaded.TemplateRegistry.Templates[2].ReleaseArtifacts == nil || *loaded.TemplateRegistry.Templates[2].ReleaseArtifacts {
-		t.Fatal("release_artifacts: false was not preserved")
 	}
 	config, err := (Cargo{}).CreateGoReleaserConfig(root, loaded)
 	if err != nil {

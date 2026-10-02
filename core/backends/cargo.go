@@ -176,14 +176,22 @@ func inspectCargoTemplatePackage(root string, template core.Template) (cargoTemp
 func cargoReleaseBuilds(root string, manifest core.Config) (string, error) {
 	applications := []string{}
 	for _, template := range manifest.DeclaredTemplates() {
-		if template.Kind != "app" || (template.ReleaseArtifacts != nil && !*template.ReleaseArtifacts) {
+		if template.Kind != "app" {
 			continue
 		}
 		pkg, found, err := inspectCargoTemplatePackage(root, template)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("inspect Cargo template %q: %w", template.Name, err)
 		}
-		if found {
+		if !found {
+			continue
+		}
+		tauriConfig := filepath.Join(pkg.Directory, "tauri.conf.json")
+		isTauri, err := core.IsRegularFile(tauriConfig)
+		if err != nil {
+			return "", fmt.Errorf("inspect Tauri config for template %q: %w", template.Name, err)
+		}
+		if !isTauri {
 			applications = append(applications, pkg.Name)
 		}
 	}

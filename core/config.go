@@ -72,13 +72,12 @@ type Project struct {
 }
 
 type Template struct {
-	Name             string            `yaml:"name"`
-	Kind             string            `yaml:"kind"`
-	Path             string            `yaml:"path"`
-	Version          string            `yaml:"version,omitempty"`
-	ReleaseArtifacts *bool             `yaml:"release_artifacts,omitempty"`
-	Questions        []Question        `yaml:"questions"`
-	Substitutions    map[string]string `yaml:"substitutions,omitempty"`
+	Name          string            `yaml:"name"`
+	Kind          string            `yaml:"kind"`
+	Path          string            `yaml:"path"`
+	Version       string            `yaml:"version,omitempty"`
+	Questions     []Question        `yaml:"questions"`
+	Substitutions map[string]string `yaml:"substitutions,omitempty"`
 }
 
 type Question struct {
@@ -502,9 +501,6 @@ func (manifest Config) Validate() error {
 		}
 		if _, err := KindDirectory(template.Kind); err != nil {
 			return fmt.Errorf("template_registry.templates[%d]: %w", index, err)
-		}
-		if template.ReleaseArtifacts != nil && template.Kind != "app" {
-			return fmt.Errorf("template_registry.templates[%d].release_artifacts requires kind app", index)
 		}
 		if err := validateTemplatePath(template.Path); err != nil {
 			return fmt.Errorf("template_registry.templates[%d].path: %w", index, err)
