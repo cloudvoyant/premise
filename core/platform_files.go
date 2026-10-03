@@ -91,7 +91,12 @@ func CollectPlatformFiles(root, mode, source, suffixes string) error {
 			return walkErr
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
-			return fmt.Errorf("linked artifact path is not allowed: %s", path)
+			// Bundle staging directories (such as AppDir) contain their own
+			// links. Reject linked installers, not unrelated support files.
+			if allowed[filepath.Ext(entry.Name())] {
+				return fmt.Errorf("linked artifact path is not allowed: %s", path)
+			}
+			return nil
 		}
 		if entry.IsDir() {
 			return nil

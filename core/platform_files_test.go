@@ -38,12 +38,25 @@ func TestPlatformFileHandoff(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(bundle, "debug.txt"), []byte("ignore"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// AppImage staging includes support links that are not release files.
+	if err := os.Symlink("app.dmg", filepath.Join(bundle, ".DirIcon")); err == nil {
+		t.Cleanup(func() { os.Remove(filepath.Join(bundle, ".DirIcon")) })
+	}
 	if err := CollectPlatformFiles(root, "build", "target/release/bundle", ".dmg,.msi"); err != nil {
 		t.Fatal(err)
 	}
 	files, err := os.ReadDir(output)
 	if err != nil || len(files) != 1 || files[0].Name() != "app.dmg" {
 		t.Fatalf("artifact handoff = %v, error = %v", files, err)
+	}
+	linkedInstaller := filepath.Join(bundle, "linked.dmg")
+	if err := os.Symlink("app.dmg", linkedInstaller); err == nil {
+		if err := CollectPlatformFiles(root, "build", "target/release/bundle", ".dmg"); err == nil || !strings.Contains(err.Error(), "linked artifact") {
+			t.Fatalf("accepted a linked installer: %v", err)
+		}
+		if err := os.Remove(linkedInstaller); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := CollectPlatformFiles(root, "build", "target/release/bundle", ".dmg"); err == nil || !strings.Contains(err.Error(), "exists") {
 		t.Fatalf("staging over an existing file must fail, got %v", err)
