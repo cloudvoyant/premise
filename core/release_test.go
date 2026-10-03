@@ -473,3 +473,91 @@ printf '%s\n' "$*" >> "$CAPTURE"
 	}
 
 }
+
+func TestValidateReleaseFiles(t *testing.T) {
+	makeGroup := func(t *testing.T, root, group, filename string) string {
+		t.Helper()
+		dir := filepath.Join(root, group)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(dir, filename)
+		if err := os.WriteFile(path, []byte("installer"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	for _, test := range []struct {
+		name      string
+		setup     func(*testing.T, string)
+		groups    []string
+		wantError string
+	}{
+		{name: "ordinary only"},
+		{name: "complete", groups: []string{"app-linux", "app-macos"}, setup: func(t *testing.T, dir string) {
+			makeGroup(t, dir, "app-linux", "app.deb")
+			makeGroup(t, dir, "app-macos", "app.dmg")
+		}},
+		{name: "missing group", groups: []string{"app-linux"}, wantError: "missing"},
+		{name: "unexpected group", setup: func(t *testing.T, dir string) { makeGroup(t, dir, "unknown-linux", "other.deb") }, wantError: "unexpected"},
+		{name: "duplicate basename", groups: []string{"app-linux", "app-macos"}, setup: func(t *testing.T, dir string) {
+			makeGroup(t, dir, "app-linux", "same.zip")
+			makeGroup(t, dir, "app-macos", "same.zip")
+		}, wantError: "duplicate release asset"},
+		{name: "empty file", groups: []string{"app-linux"}, setup: func(t *testing.T, dir string) {
+			path := makeGroup(t, dir, "app-linux", "app.deb")
+			if err := os.WriteFile(path, nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}, wantError: "nonempty regular"},
+		{name: "symlink", groups: []string{"app-linux"}, setup: func(t *testing.T, dir string) {
+			path := makeGroup(t, dir, "app-linux", "app.deb")
+			if err := os.Symlink(path, filepath.Join(dir, "app-linux", "alias.deb")); err != nil {
+				t.Fatal(err)
+			}
+		}, wantError: "nonempty regular"},
+		{name: "nested files", groups: []string{"app-linux"}, setup: func(t *testing.T, dir string) {
+			makeGroup(t, dir, "app-linux", "app.deb")
+			if err := os.Mkdir(filepath.Join(dir, "app-linux", "nested"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}, wantError: "nonempty regular"},
+		{name: "unsafe group", groups: []string{"../app-linux"}, wantError: "invalid release file group"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			if test.setup != nil {
+				test.setup(t, root)
+			}
+			files, err := validateReleaseFiles(root, test.groups)
+			if test.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantError) {
+					t.Fatalf("error = %v, want %q", err, test.wantError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(files) != len(test.groups) {
+				t.Fatalf("files = %v, want %d", files, len(test.groups))
+			}
+		})
+	}
+}
+
+func TestGoReleaserConfigWithFiles(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "my installer.dmg")
+	configuration, err := goReleaserConfigWithFiles(root, NewManifest("native-app"), nil, []string{file})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(configuration)
+	if !strings.Contains(text, "skip: true") || !strings.Contains(text, `extra_files:`) || !strings.Contains(text, `my installer.dmg`) {
+		t.Fatalf("file-only config = %q", text)
+	}
+	if _, err := goReleaserConfigWithFiles(root, NewManifest("native-app"), nil, []string{"relative.dmg"}); err == nil {
+		t.Fatal("relative extra file accepted")
+	}
+}

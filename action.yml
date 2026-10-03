@@ -45,6 +45,10 @@ inputs:
     description: "Absolute artifact output directory for an on-platform build"
     required: false
     default: ""
+  platform:
+    description: "Logical target platform for cache isolation"
+    required: false
+    default: ""
 
 outputs:
   version:
@@ -83,14 +87,16 @@ runs:
         # A unique writer per job, but a common restore prefix across workflows.
         # Scope locks to the caller; the checked-out action is not a dependency.
         key: >-
-          premise-v2-${{ runner.os }}-${{ runner.arch }}-${{
+          premise-v2-${{ runner.os }}-${{ runner.name }}-${{
+          inputs.platform }}-${{ inputs.project }}-${{ runner.arch }}-${{
           hashFiles('Cargo.lock', 'go.sum', 'bun.lock*',
           'apps/**/Cargo.lock', 'apps/**/go.sum', 'apps/**/bun.lock*',
           'libs/**/Cargo.lock', 'libs/**/go.sum', 'libs/**/bun.lock*',
           'templates/**/Cargo.lock', 'templates/**/go.sum',
           'templates/**/bun.lock*') }}-${{ github.run_id }}-${{ github.job }}
         restore-keys: >-
-          premise-v2-${{ runner.os }}-${{ runner.arch }}-${{
+          premise-v2-${{ runner.os }}-${{ runner.name }}-${{
+          inputs.platform }}-${{ inputs.project }}-${{ runner.arch }}-${{
           hashFiles('Cargo.lock', 'go.sum', 'bun.lock*',
           'apps/**/Cargo.lock', 'apps/**/go.sum', 'apps/**/bun.lock*',
           'libs/**/Cargo.lock', 'libs/**/go.sum', 'libs/**/bun.lock*',

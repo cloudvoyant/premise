@@ -8,6 +8,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -28,6 +29,7 @@ import (
 const goreleaserVersion = "2.18.1"
 
 var stableVersionPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
+var releaseVersionPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$`)
 
 var executeGoReleaser = runGoReleaser
 var pushReleaseTag = createAndPushReleaseTag
@@ -37,6 +39,62 @@ type ReleasePlan struct {
 	Version  string
 	ReuseTag bool
 	Skip     bool
+}
+
+// ReleasePublishOptions describes the narrow convergence publication step.
+// Validation and tag creation happen before GoReleaser is invoked.
+type ReleasePublishOptions struct {
+	Channel          string
+	ExpectedVersion  string
+	TriggeringCommit string
+	FilesDir         string
+	ExpectedGroups   []string
+}
+
+// PublishRelease validates staged files, creates or reuses the matching tag,
+// and invokes GoReleaser once with ordinary and staged assets.
+func PublishRelease(ctx context.Context, root string, options ReleasePublishOptions, stdout, stderr io.Writer) (ReleasePlan, error) {
+	if options.Channel != "stable" && options.Channel != "rc" {
+		return ReleasePlan{}, fmt.Errorf("invalid release channel %q", options.Channel)
+	}
+	if !releaseVersionPattern.MatchString(options.ExpectedVersion) {
+		return ReleasePlan{}, fmt.Errorf("invalid expected version %q", options.ExpectedVersion)
+	}
+	files, err := validateReleaseFiles(options.FilesDir, options.ExpectedGroups)
+	if err != nil {
+		return ReleasePlan{}, err
+	}
+	plan, err := PlanStableRelease(ctx, root)
+	if err != nil {
+		return ReleasePlan{}, err
+	}
+	if options.TriggeringCommit != "" {
+		repository, openErr := git.PlainOpenWithOptions(root, &git.PlainOpenOptions{DetectDotGit: true})
+		if openErr != nil {
+			return ReleasePlan{}, openErr
+		}
+		head, headErr := repository.Head()
+		if headErr != nil || !strings.EqualFold(head.Hash().String(), options.TriggeringCommit) {
+			return ReleasePlan{}, fmt.Errorf("release HEAD does not match triggering commit %q", options.TriggeringCommit)
+		}
+	}
+	if plan.Skip || plan.Version != options.ExpectedVersion {
+		return ReleasePlan{}, fmt.Errorf("expected release %s does not match planned version %s", options.ExpectedVersion, plan.Version)
+	}
+	if !plan.ReuseTag {
+		if err := pushReleaseTag(ctx, root, plan.Version, releaseAuthentication()); err != nil {
+			return ReleasePlan{}, fmt.Errorf("create release tag: %w", err)
+		}
+		plan.ReuseTag = true
+	}
+	_, plugins, err := loadReleaseBackends(root)
+	if err != nil {
+		return ReleasePlan{}, err
+	}
+	if err := runGoReleaserWithFiles(ctx, root, plugins, files, false, stdout, stderr); err != nil {
+		return ReleasePlan{}, fmt.Errorf("publish GitHub release: %w", err)
+	}
+	return plan, nil
 }
 
 func publishReleaseCandidate(ctx context.Context, root string, kind ProjectKind, stdout, stderr io.Writer) error {
@@ -308,18 +366,27 @@ func GoReleaserConfig(root string) ([]byte, error) {
 }
 
 func goReleaserConfig(root string, manifest Config, plugins []PackageManagerBackend) ([]byte, error) {
+	return goReleaserConfigWithFiles(root, manifest, plugins, nil)
+}
+
+func goReleaserConfigWithFiles(root string, manifest Config, plugins []PackageManagerBackend, files []string) ([]byte, error) {
 	project := manifest.Workspace.Name
 	if project == "" {
 		project = filepath.Base(filepath.Clean(root))
 	}
 
 	builds, err := packageManagerReleaseConfig(root, manifest, plugins)
-	if err != nil || builds == "" {
+	if err != nil || (builds == "" && len(files) == 0) {
 		return nil, err
 	}
 	var builder strings.Builder
 	fmt.Fprintf(&builder, "version: 2\n\nproject_name: %s\n\n", project)
-	builder.WriteString(builds)
+	if builds == "" {
+		// Explicitly disable GoReleaser's implicit default Go build for file-only releases.
+		builder.WriteString("builds:\n  - skip: true\n\n")
+	} else {
+		builder.WriteString(builds)
+	}
 	builder.WriteString(`checksum:
   name_template: "checksums.txt"
 
@@ -336,15 +403,105 @@ release:
   mode: keep-existing
   replace_existing_artifacts: true
 `)
+	for _, file := range files {
+		if !filepath.IsAbs(file) {
+			return nil, fmt.Errorf("release file %q must be absolute", file)
+		}
+	}
+	if len(files) != 0 {
+		builder.WriteString("  extra_files:\n")
+		for _, file := range files {
+			quoted, err := json.Marshal(file)
+			if err != nil {
+				return nil, fmt.Errorf("encode release file %q: %w", file, err)
+			}
+			fmt.Fprintf(&builder, "    - glob: %s\n", quoted)
+		}
+	}
 	return []byte(builder.String()), nil
 }
 
+// validateReleaseFiles checks the entire downloaded artifact tree before any
+// tag is created. Each expected group is a flat project-platform directory.
+func validateReleaseFiles(filesDir string, groups []string) ([]string, error) {
+	if filesDir == "" && len(groups) == 0 {
+		return nil, nil
+	}
+	if !filepath.IsAbs(filesDir) {
+		return nil, errors.New("release files-dir must be absolute")
+	}
+	root, err := os.Lstat(filesDir)
+	if err != nil {
+		return nil, fmt.Errorf("inspect release files-dir: %w", err)
+	}
+	if !root.IsDir() {
+		return nil, errors.New("release files-dir must be a real directory")
+	}
+	expected := make(map[string]bool, len(groups))
+	for _, group := range groups {
+		if group == "" || group == "." || group == ".." || filepath.Base(group) != group || strings.ContainsAny(group, `/\\`) {
+			return nil, fmt.Errorf("invalid release file group %q", group)
+		}
+		if expected[group] {
+			return nil, fmt.Errorf("duplicate release file group %q", group)
+		}
+		expected[group] = true
+	}
+	entries, err := os.ReadDir(filesDir)
+	if err != nil {
+		return nil, fmt.Errorf("read release files-dir: %w", err)
+	}
+	files := make([]string, 0)
+	basenames := map[string]bool{}
+	for _, entry := range entries {
+		if !expected[entry.Name()] {
+			return nil, fmt.Errorf("unexpected release file group %q", entry.Name())
+		}
+		groupDir := filepath.Join(filesDir, entry.Name())
+		info, err := os.Lstat(groupDir)
+		if err != nil || !info.IsDir() {
+			return nil, fmt.Errorf("release file group %q must be a real directory: %v", entry.Name(), err)
+		}
+		contents, err := os.ReadDir(groupDir)
+		if err != nil {
+			return nil, fmt.Errorf("read release file group %q: %w", entry.Name(), err)
+		}
+		if len(contents) == 0 {
+			return nil, fmt.Errorf("release file group %q is empty", entry.Name())
+		}
+		for _, asset := range contents {
+			path := filepath.Join(groupDir, asset.Name())
+			file, err := os.Lstat(path)
+			if err != nil {
+				return nil, fmt.Errorf("inspect release file %s: %w", path, err)
+			}
+			if !file.Mode().IsRegular() || file.Size() == 0 {
+				return nil, fmt.Errorf("release file %s must be a nonempty regular file", path)
+			}
+			if basenames[asset.Name()] {
+				return nil, fmt.Errorf("duplicate release asset name %q", asset.Name())
+			}
+			basenames[asset.Name()] = true
+			files = append(files, path)
+		}
+		delete(expected, entry.Name())
+	}
+	for group := range expected {
+		return nil, fmt.Errorf("missing release file group %q", group)
+	}
+	return files, nil
+}
+
 func runGoReleaser(ctx context.Context, root string, plugins []PackageManagerBackend, snapshot bool, stdout, stderr io.Writer) error {
+	return runGoReleaserWithFiles(ctx, root, plugins, nil, snapshot, stdout, stderr)
+}
+
+func runGoReleaserWithFiles(ctx context.Context, root string, plugins []PackageManagerBackend, files []string, snapshot bool, stdout, stderr io.Writer) error {
 	manifest, _, err := loadReleaseBackends(root)
 	if err != nil {
 		return err
 	}
-	configuration, err := goReleaserConfig(root, manifest, plugins)
+	configuration, err := goReleaserConfigWithFiles(root, manifest, plugins, files)
 	if err != nil {
 		return fmt.Errorf("generate GoReleaser configuration: %w", err)
 	}

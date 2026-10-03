@@ -45,8 +45,8 @@ func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 	assertFileContains(t, filepath.Join(project, "package.json"), `"format:check"`)
 	for _, name := range []string{"on-commit.yml", "on-merge.yml", "on-deploy.yml"} {
 		path := filepath.Join(workspace, ".github", "workflows", name)
-		assertFileContains(t, path, "cloudvoyant/premise@v0")
 		if name == "on-commit.yml" {
+			assertFileContains(t, path, "cloudvoyant/premise/.github/workflows/release-platform.yml@v0")
 			workflow, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
@@ -56,18 +56,10 @@ func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 				t.Fatal("on-commit must validate the first push to a new branch")
 			}
 			for _, expected := range []string{
-				"permissions:\n  contents: read\n  id-token: write",
-				"fetch-depth: 0",
-				"fetch-tags: true",
-				"NODE_AUTH_TOKEN: >-",
-				"CRATES_TOKEN: >-",
-				"github.event_name == 'push'",
-				"contains(github.event.head_commit.message,",
-				"'[publish-rc]')",
-				"secrets.NPM_TOKEN || ''",
-				"secrets.CRATES_TOKEN || ''",
-				"release: auto",
-				"install-premise: build",
+				"permissions:\n  contents: read",
+				"uses: cloudvoyant/premise/.github/workflows/release-platform.yml@v0",
+				"flow: on-commit",
+				"release: none",
 			} {
 				if !strings.Contains(contents, expected) {
 					t.Fatalf("on-commit workflow missing %q", expected)
@@ -76,17 +68,20 @@ func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 		}
 		if name == "on-merge.yml" {
 			for _, expected := range []string{
-				"permissions:\n  contents: write\n  id-token: write",
-				"NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}",
-				"CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}",
+				"permissions:\n  contents: read",
+				"uses: cloudvoyant/premise/.github/workflows/release-platform.yml@v0",
+				"flow: on-merge",
 				"release: auto",
-				"install-premise: build",
 			} {
 				assertFileContains(t, path, expected)
 			}
 		}
-		if name == "on-deploy.yml" {
-			assertFileContains(t, path, "install-premise: build")
+		if name == "on-merge.yml" || name == "on-deploy.yml" {
+			if name == "on-deploy.yml" {
+				assertFileContains(t, path, "install-premise: build")
+			} else {
+				assertFileContains(t, path, "cloudvoyant/premise/.github/workflows/release-platform.yml@v0")
+			}
 		}
 	}
 

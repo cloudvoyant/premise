@@ -1,197 +1,180 @@
----
-name: Release platform files
+name: Premise CI flow
 
-"on":
+on:
   workflow_call:
     inputs:
-      project:
-        description: Template with a release:build task for native files
+      flow:
         required: true
         type: string
-      channel:
-        description: stable or rc
-        required: true
-        type: string
-      version:
-        description: SemVer without a leading v
-        required: true
-        type: string
-      premise-ref:
-        description: Premise action revision matching this reusable workflow
-        required: true
-        type: string
-      platforms:
-        description: JSON array of runner labels to build and collect
+      release:
         required: false
         type: string
-        default: '["ubuntu-22.04", "macos-14", "windows-2022"]'
+        default: none
+      premise-ref:
+        required: false
+        type: string
+        default: v0
+      package-environment:
+        required: false
+        type: string
+        default: ""
 
 jobs:
-  build:
-    name: Build ${{ inputs.project }} on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+  plan:
+    runs-on: ubuntu-22.04
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        os: ${{ fromJSON(inputs.platforms) }}
+    outputs:
+      mode: ${{ steps.schedule.outputs.mode }}
+      matrix: ${{ steps.schedule.outputs.matrix }}
+      version: ${{ steps.schedule.outputs.version }}
     steps:
-      - name: Checkout project at triggering commit
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
-          ref: ${{ github.sha }}
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
-
-      - name: Checkout matching Premise action
-        uses: actions/checkout@v6
+      - uses: ./
         with:
-          repository: cloudvoyant/premise
-          ref: ${{ inputs.premise-ref }}
-          path: .premise-action
-          persist-credentials: false
-
-      - name: Build native release files
-        uses: ./.premise-action
-        with:
-          flow: on-platform
+          flow: ${{ inputs.flow }}
+          release: none
           install-premise: build
-          project: ${{ inputs.project }}
-          channel: ${{ inputs.channel }}
-          version: ${{ inputs.version }}
-          output-dir: ${{ runner.temp }}/premise-platform-files
+      - id: schedule
+        shell: bash
+        env:
+          FLOW: ${{ inputs.flow }}
+          RELEASE: ${{ inputs.release }}
+        run: |
+          set -euo pipefail
+          schedule="$(pm ci plan --flow "$FLOW" --github-output)"
+          mode="$(jq -r '.mode' <<<"$schedule")"
+          matrix="$(jq -c \
+            '{include: [.matrix[] | {project, platform}]}' \
+            <<<"$schedule")"
+          printf 'mode=%s\n' "$mode" >> "$GITHUB_OUTPUT"
+          printf 'matrix=%s\n' "$matrix" >> "$GITHUB_OUTPUT"
+          if [[ "$RELEASE" == github || "$RELEASE" == auto ]]; then
+            version="$(pm release --dry-run | awk -F= \
+              '$1=="version"{print $2}')"
+            printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          else
+            printf 'version=\n' >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Transfer files to publication job
-        uses: actions/upload-artifact@v4
+  single:
+    needs: plan
+    if: needs.plan.outputs.mode == 'single'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
         with:
-          name: platform-${{ matrix.os }}
-          path: ${{ runner.temp }}/premise-platform-files/
-          if-no-files-found: error
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - uses: ./
+        with:
+          flow: ${{ inputs.flow }}
+          release: none
+          install-premise: build
+      - name: Run complete flow
+        run: |
+          pm ci flow "${{ inputs.flow }}" --release none \
+            --output-dir "${{ runner.temp }}/premise-files"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: premise-single-files
+          path: ${{ runner.temp }}/premise-files/
+          if-no-files-found: ignore
           retention-days: 7
 
-  publish:
-    name: Publish platform files to GitHub Release
-    needs: build
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+  matrix:
+    needs: plan
+    if: needs.plan.outputs.mode != 'single'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.platform == 'macos' && 'macos-14' ||
+      matrix.platform == 'windows' && 'windows-2022' || 'ubuntu-22.04' }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - uses: ./
+        with:
+          flow: ${{ inputs.flow }}
+          release: none
+          install-premise: build
+          project: ${{ matrix.project }}
+          platform: ${{ matrix.platform }}
+      - name: Run scoped complete flow
+        shell: bash
+        run: |
+          pm ci flow "${{ inputs.flow }}" --release none \
+            --project "${{ matrix.project }}" \
+            --platform "${{ matrix.platform }}" --skip-root \
+            --output-dir "${{ runner.temp }}/premise-files"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: premise-${{ matrix.project }}-${{ matrix.platform }}
+          path: ${{ runner.temp }}/premise-files/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  publish-release:
+    needs: [plan, single, matrix]
+    outputs:
+      version: ${{ needs.plan.outputs.version }}
+    if: inputs.release == 'github' || inputs.release == 'auto'
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
     steps:
-      - name: Checkout project and release tags
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
-          ref: ${{ github.sha }}
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
-
-      - name: Collect native files
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          pattern: platform-*
-          path: platform-files
-
-      - name: Create or reuse the release and upload files
-        shell: bash
+          pattern: premise-*-files
+          path: premise-files
+          merge-multiple: true
+      - uses: ./
+        with:
+          flow: ${{ inputs.flow }}
+          release: none
+          install-premise: build
+      - name: Publish combined release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_CHANNEL: ${{ inputs.channel }}
-          RELEASE_VERSION: ${{ inputs.version }}
-          RELEASE_PROJECT: ${{ inputs.project }}
-          PLATFORMS: ${{ inputs.platforms }}
         run: |
-          set -euo pipefail
-          if [[ "$RELEASE_CHANNEL" != "stable" && \
-                "$RELEASE_CHANNEL" != "rc" ]]; then
-            echo "error: unsupported release channel" >&2
-            exit 1
-          fi
-          pattern='^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9A-Za-z-]+)?$'
-          if ! [[ "$RELEASE_VERSION" =~ $pattern ]]; then
-            echo "error: invalid release version" >&2
-            exit 1
-          fi
-          tag="v${RELEASE_VERSION}"
-          sha="$(git rev-parse HEAD)"
-          if git show-ref --verify --quiet "refs/tags/$tag"; then
-            tag_sha="$(git rev-parse "$tag^{commit}")"
-            if [[ "$tag_sha" != "$sha" ]]; then
-              echo "error: $tag points to $tag_sha, not $sha" >&2
-              exit 1
-            fi
-          elif [[ "$RELEASE_CHANNEL" == "stable" ]]; then
-            echo "error: stable tag $tag is missing at $sha" >&2
-            exit 1
-          fi
+          pm release publish --channel stable \
+            --expected-version "${{ needs.plan.outputs.version }}" \
+            --files-dir premise-files
 
-          declare -A seen=()
-          files=()
-          # PLATFORMS is injected through the step environment.
-          # shellcheck disable=SC2153
-          mapfile -t platforms < <(jq -er '.[] | select(type == "string")' \
-            <<< "$PLATFORMS")
-          if [[ ${#platforms[@]} -eq 0 ]]; then
-            echo "error: the platform matrix is empty" >&2
-            exit 1
-          fi
-          for os in "${platforms[@]}"; do
-            if ! [[ "$os" =~ ^[A-Za-z0-9._-]+$ ]]; then
-              echo "error: invalid platform runner label" >&2
-              exit 1
-            fi
-            dir="platform-files/platform-$os"
-            if [[ ! -d "$dir" ]]; then
-              echo "error: missing artifacts for $os" >&2
-              exit 1
-            fi
-            found=false
-            while IFS= read -r -d '' file; do
-              if [[ ! -s "$file" || -L "$file" ]]; then
-                echo "error: empty or linked artifact: $file" >&2
-                exit 1
-              fi
-              name="${file##*/}"
-              if [[ -n "${seen[$name]:-}" ]]; then
-                echo "error: duplicate artifact filename $name" >&2
-                exit 1
-              fi
-              seen[$name]=1
-              files+=("$file")
-              found=true
-            done < <(find "$dir" -type f -print0)
-            if [[ "$found" != "true" ]]; then
-              echo "error: no files for $os" >&2
-              exit 1
-            fi
-          done
-
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" \
-            >/dev/null 2>&1; then
-            prerelease="$(gh release view "$tag" \
-              --repo "$GITHUB_REPOSITORY" --json isPrerelease \
-              --jq .isPrerelease)"
-            if [[ "$RELEASE_CHANNEL" == "rc" && \
-                  "$prerelease" != "true" ]] ||
-               [[ "$RELEASE_CHANNEL" == "stable" && \
-                  "$prerelease" != "false" ]]; then
-              echo "error: existing release $tag has the wrong channel" >&2
-              exit 1
-            fi
-          elif [[ "$RELEASE_CHANNEL" == "rc" ]]; then
-            if git show-ref --verify --quiet "refs/tags/$tag"; then
-              gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
-                --verify-tag --prerelease --title "$tag" \
-                --notes "RC build for $RELEASE_PROJECT"
-            else
-              gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
-                --target "$sha" --prerelease --title "$tag" \
-                --notes "RC build for $RELEASE_PROJECT"
-            fi
-          else
-            gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
-              --verify-tag --title "$tag" --generate-notes
-          fi
-          gh release upload "$tag" "${files[@]}" --clobber \
-            --repo "$GITHUB_REPOSITORY"
+  publish-packages:
+    needs: publish-release
+    if: inputs.release == 'github' || inputs.release == 'auto'
+    runs-on: ubuntu-22.04
+    environment: ${{ inputs.package-environment }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: ./
+        with:
+          flow: ${{ inputs.flow }}
+          release: none
+          install-premise: build
+      - run: |
+          pm release packages --channel stable \
+            --expected-version "${{ needs.publish-release.outputs.version }}"
