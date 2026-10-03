@@ -163,6 +163,7 @@ func Generate(ctx context.Context, cwd, selector string, options GenerateOptions
 		Name:     name,
 		Template: selector,
 		Version:  template.Version,
+		CI:       template.CI,
 		Path:     filepath.ToSlash(relativeDestination),
 		Answers:  answers,
 	}

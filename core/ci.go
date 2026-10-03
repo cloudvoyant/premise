@@ -13,6 +13,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 
 	git "github.com/go-git/go-git/v5"
@@ -23,10 +25,186 @@ import (
 type CIFlow string
 
 const (
-	CIFlowOnCommit  CIFlow = "on-commit"
-	CIFlowOnMerge   CIFlow = "on-merge"
-	CIFlowOnRelease CIFlow = "on-release"
+	CIFlowOnCommit   CIFlow = "on-commit"
+	CIFlowOnMerge    CIFlow = "on-merge"
+	CIFlowOnRelease  CIFlow = "on-release"
+	CIFlowOnPlatform CIFlow = "on-platform"
 )
+
+// CIPlatformProject is the shared, build-system-neutral project selection.
+type CIPlatformProject struct {
+	Name             string   `json:"name"`
+	Path             string   `json:"path"`
+	Kind             string   `json:"kind"`
+	Source           string   `json:"source"`
+	CheckPlatforms   []string `json:"check_platforms"`
+	ReleasePlatforms []string `json:"release_platforms"`
+	Eligible         bool     `json:"eligible"`
+	ExclusionReasons []string `json:"exclusion_reasons"`
+}
+
+// HostCIPlatform returns the logical platform for the current host.
+func HostCIPlatform() (string, error) {
+	switch runtime.GOOS {
+	case "linux":
+		return "linux", nil
+	case "darwin":
+		return "macos", nil
+	case "windows":
+		return "windows", nil
+	default:
+		return "", fmt.Errorf("unsupported CI host %q", runtime.GOOS)
+	}
+}
+
+// CIRunner maps a logical platform to its fixed GitHub runner image.
+func CIRunner(platform string) (string, error) {
+	switch platform {
+	case "linux":
+		return "ubuntu-22.04", nil
+	case "macos":
+		return "macos-14", nil
+	case "windows":
+		return "windows-2022", nil
+	default:
+		return "", fmt.Errorf("unknown CI platform %q", platform)
+	}
+}
+
+func (project CIPlatformProject) Platforms() []string {
+	platforms := append([]string{}, project.CheckPlatforms...)
+	for _, release := range project.ReleasePlatforms {
+		if !slices.Contains(platforms, release) {
+			platforms = append(platforms, release)
+		}
+	}
+	return platforms
+}
+
+// SelectCIProjects normalizes declared projects in manifest order and checks paths.
+func SelectCIProjects(root string, manifest Config, flow CIFlow) ([]CIPlatformProject, error) {
+	if err := manifest.Validate(); err != nil {
+		return nil, err
+	}
+	if flow == CIFlowOnPlatform {
+		return nil, errors.New("on-platform is not a project selection flow")
+	}
+	host, err := HostCIPlatform()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]CIPlatformProject, 0)
+	if manifest.Workspace.Kind == ProjectKindTemplateRegistry {
+		for _, template := range manifest.DeclaredTemplates() {
+			if _, err := TemplateDirectory(root, template.Path); err != nil {
+				return nil, fmt.Errorf("template %q: %w", template.Name, err)
+			}
+			out = append(out, ciProject(template.Name, template.Path, template.Kind, "registry", template.CI, host))
+		}
+	} else {
+		for _, project := range manifest.Workspace.Projects {
+			if _, err := TemplateDirectory(root, project.Path); err != nil {
+				return nil, fmt.Errorf("project %q: %w", project.Name, err)
+			}
+			kind := ""
+			switch {
+			case strings.HasPrefix(project.Path, "apps/"):
+				kind = "app"
+			case strings.HasPrefix(project.Path, "libs/"):
+				kind = "lib"
+			default:
+				return nil, fmt.Errorf("project %q must be inside apps/ or libs/", project.Name)
+			}
+			out = append(out, ciProject(project.Name, project.Path, kind, "workspace", project.CI, host))
+		}
+	}
+	seenNames := map[string]struct{}{}
+	seenPaths := map[string]struct{}{}
+	for _, project := range out {
+		if _, exists := seenNames[project.Name]; exists {
+			return nil, fmt.Errorf("duplicate project identity %q", project.Name)
+		}
+		if _, exists := seenPaths[project.Path]; exists {
+			return nil, fmt.Errorf("duplicate project path %q", project.Path)
+		}
+		seenNames[project.Name] = struct{}{}
+		seenPaths[project.Path] = struct{}{}
+	}
+	return out, nil
+}
+
+func ciProject(name, path, kind, source string, declaration PlatformDeclaration, host string) CIPlatformProject {
+	checks := append([]string{}, declaration.CheckPlatforms...)
+	if len(checks) == 0 {
+		checks = []string{host}
+	}
+	project := CIPlatformProject{
+		Name: name, Path: path, Kind: kind, Source: source,
+		CheckPlatforms:   checks,
+		ReleasePlatforms: append([]string{}, declaration.ReleasePlatforms...),
+		ExclusionReasons: []string{},
+	}
+	platforms := project.Platforms()
+	switch {
+	case len(platforms) > 1:
+		project.ExclusionReasons = append(project.ExclusionReasons, "multiple platforms: use --project and --platform")
+	case len(platforms) == 1 && platforms[0] != host:
+		project.ExclusionReasons = append(project.ExclusionReasons, "requires "+platforms[0]+" host")
+	}
+	project.Eligible = len(project.ExclusionReasons) == 0
+	return project
+}
+
+// CIMatrixRow describes one complete project/platform flow, not an internal phase.
+type CIMatrixRow struct {
+	Project  string `json:"project"`
+	Platform string `json:"platform"`
+	Runner   string `json:"runner"`
+	Checks   bool   `json:"checks"`
+	Native   bool   `json:"native"`
+	Artifact string `json:"artifact"`
+}
+
+type CISchedule struct {
+	Mode     string              `json:"mode"`
+	Runner   string              `json:"runner,omitempty"`
+	Matrix   []CIMatrixRow       `json:"matrix"`
+	Excluded []CIPlatformProject `json:"excluded"`
+}
+
+// PlanCISchedule chooses one whole-runner flow or one unified matrix.
+func PlanCISchedule(projects []CIPlatformProject) (CISchedule, error) {
+	plan := CISchedule{Matrix: []CIMatrixRow{}, Excluded: []CIPlatformProject{}}
+	platforms := make(map[string]bool)
+	for _, project := range projects {
+		if !project.Eligible {
+			plan.Excluded = append(plan.Excluded, project)
+		}
+		for _, platform := range project.Platforms() {
+			runner, err := CIRunner(platform)
+			if err != nil {
+				return CISchedule{}, err
+			}
+			platforms[platform] = true
+			plan.Matrix = append(plan.Matrix, CIMatrixRow{
+				Project: project.Name, Platform: platform, Runner: runner,
+				Checks:   slices.Contains(project.CheckPlatforms, platform),
+				Native:   slices.Contains(project.ReleasePlatforms, platform),
+				Artifact: project.Name + "-" + platform,
+			})
+		}
+	}
+	if len(platforms) <= 1 {
+		plan.Mode = "single"
+		if len(platforms) == 1 {
+			plan.Runner, _ = CIRunner(plan.Matrix[0].Platform)
+		}
+		plan.Matrix = []CIMatrixRow{}
+	} else {
+		plan.Mode = "matrix"
+	}
+	return plan, nil
+}
 
 // CIReleaseMode controls the release phase owned by an on-merge flow.
 type CIReleaseMode string
@@ -42,10 +220,10 @@ const (
 func ParseCIFlow(value string) (CIFlow, error) {
 	flow := CIFlow(value)
 	switch flow {
-	case CIFlowOnCommit, CIFlowOnMerge, CIFlowOnRelease:
+	case CIFlowOnCommit, CIFlowOnMerge, CIFlowOnRelease, CIFlowOnPlatform:
 		return flow, nil
 	default:
-		return "", fmt.Errorf("invalid CI flow %q: expected on-commit, on-merge, or on-release", value)
+		return "", fmt.Errorf("invalid CI flow %q: expected on-commit, on-merge, on-release, or on-platform", value)
 	}
 }
 
@@ -60,8 +238,36 @@ func ParseCIReleaseMode(value string) (CIReleaseMode, error) {
 	}
 }
 
+// CIFlowOptions controls the narrow orchestration controls for a complete flow.
+type CIFlowOptions struct {
+	Project   string
+	Platform  string
+	OutputDir string
+	RootOnly  bool
+	SkipRoot  bool
+}
+
 // RunCIFlow executes one complete CI flow, including its guarded release phase.
 func RunCIFlow(ctx context.Context, root string, flow CIFlow, environment string, releaseMode CIReleaseMode, stdout, stderr io.Writer) error {
+	return RunCIFlowWithOptions(ctx, root, flow, environment, releaseMode, CIFlowOptions{}, stdout, stderr)
+}
+
+func RunCIFlowWithOptions(ctx context.Context, root string, flow CIFlow, environment string, releaseMode CIReleaseMode, options CIFlowOptions, stdout, stderr io.Writer) error {
+	if options.RootOnly && (options.Project != "" || options.Platform != "" || options.OutputDir != "") {
+		return errors.New("--root-only cannot be combined with project, platform, or output-dir")
+	}
+	if options.SkipRoot && options.RootOnly {
+		return errors.New("--root-only and --skip-root cannot be used together")
+	}
+	if flow == CIFlowOnPlatform {
+		return fmt.Errorf("%s is no longer a public flow; use --project and --platform", flow)
+	}
+	if options.Project != "" || options.Platform != "" || options.OutputDir != "" {
+		if options.Project == "" || options.Platform == "" {
+			return errors.New("--project and --platform are required for a scoped flow")
+		}
+		return runScopedCIFlow(ctx, root, flow, environment, releaseMode, options, stdout, stderr)
+	}
 	target, err := ciTarget(flow, environment)
 	if err != nil {
 		return err
@@ -75,7 +281,172 @@ func RunCIFlow(ctx context.Context, root string, flow CIFlow, environment string
 			Ceiling: filepath.Dir(filepath.Clean(root)),
 		},
 	}
-	return runCIFlow(ctx, filepath.Clean(root), flow, target, releaseMode, runner)
+	if options.RootOnly {
+		return runRootHook(ctx, filepath.Clean(root), flow, runner)
+	}
+	if !options.SkipRoot {
+		if err := runRootHook(ctx, filepath.Clean(root), flow, runner); err != nil {
+			return err
+		}
+	}
+	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
+	if err != nil {
+		return err
+	}
+	projects, err := SelectCIProjects(root, manifest, flow)
+	if err != nil {
+		return err
+	}
+	eligible := 0
+	for _, project := range projects {
+		if !project.Eligible {
+			fmt.Fprintf(stderr, "excluded %s: %s; use --project %s --platform <target>\n", project.Name, strings.Join(project.ExclusionReasons, "; "), project.Name)
+			continue
+		}
+		eligible++
+		if err := runSelectedProject(ctx, filepath.Clean(root), project, project.Platforms()[0], flow, target, "", runner); err != nil {
+			return err
+		}
+	}
+	if eligible == 0 {
+		return errors.New("no eligible projects for the current host")
+	}
+	kind, err := DetectProjectKind(filepath.Clean(root))
+	if err != nil {
+		return err
+	}
+	if err := runCIReleasePhase(ctx, filepath.Clean(root), flow, releaseMode, kind, runner); err != nil {
+		return err
+	}
+	return nil
+}
+
+func runRootHook(ctx context.Context, root string, flow CIFlow, runner ciRunner) error {
+	exists, err := runner.TaskExists(ctx, root, string(flow))
+	if err != nil {
+		return fmt.Errorf("inspect root %s hook: %w", flow, err)
+	}
+	if !exists {
+		return nil
+	}
+	if err := runner.Run(ctx, root, nil, "mise", "run", string(flow)); err != nil {
+		return fmt.Errorf("run root %s hook: %w", flow, err)
+	}
+	return nil
+}
+
+func runScopedCIFlow(ctx context.Context, root string, flow CIFlow, environment string, _ CIReleaseMode, options CIFlowOptions, stdout, stderr io.Writer) error {
+	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
+	if err != nil {
+		return err
+	}
+	projects, err := SelectCIProjects(root, manifest, flow)
+	if err != nil {
+		return err
+	}
+	var selected *CIPlatformProject
+	for i := range projects {
+		if projects[i].Name == options.Project {
+			selected = &projects[i]
+			break
+		}
+	}
+	if selected == nil {
+		return fmt.Errorf("unknown project %q", options.Project)
+	}
+	if !slices.Contains(selected.Platforms(), options.Platform) {
+		return fmt.Errorf("platform %q is not declared for project %q", options.Platform, options.Project)
+	}
+	host, err := HostCIPlatform()
+	if err != nil {
+		return err
+	}
+	if host != options.Platform {
+		return fmt.Errorf("platform %q requires %s host (current host is %s)", options.Platform, options.Platform, host)
+	}
+	if options.OutputDir != "" && !filepath.IsAbs(options.OutputDir) {
+		return errors.New("output-dir must be an absolute path")
+	}
+	target, err := ciTarget(flow, environment)
+	if err != nil {
+		return err
+	}
+	runner := &commandCIRunner{stdout: stdout, stderr: stderr, mise: miseRunner{Stdout: stdout, Stderr: stderr, Ceiling: filepath.Dir(filepath.Clean(root))}}
+	if !options.SkipRoot {
+		if err := runRootHook(ctx, root, flow, runner); err != nil {
+			return err
+		}
+	}
+	if err := runSelectedProject(ctx, root, *selected, options.Platform, flow, target, options.OutputDir, runner); err != nil {
+		return err
+	}
+	return nil
+}
+
+func runSelectedProject(ctx context.Context, root string, project CIPlatformProject, platform string, _ CIFlow, target, output string, runner ciRunner) error {
+	directory := filepath.Join(root, project.Path)
+	if project.Source == "registry" {
+		if d, err := TemplateDirectory(root, project.Path); err == nil {
+			directory = d
+		} else {
+			return err
+		}
+	}
+	for _, args := range [][]string{{"install"}, {"run", "build"}, {"run", "test"}, {"run", "format:check"}, {"run", "lint"}} {
+		if err := runner.Run(ctx, directory, nil, "mise", args...); err != nil {
+			return fmt.Errorf("project %s platform %s: %w", project.Name, project.Platforms()[0], err)
+		}
+	}
+	if project.Kind == "app" {
+		for _, task := range []string{"deploy", "e2e"} {
+			exists, err := runner.TaskExists(ctx, directory, task)
+			if err != nil {
+				return err
+			}
+			if exists {
+				if err := runner.Run(ctx, directory, nil, "mise", "run", task, "--", target); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if slices.Contains(project.ReleasePlatforms, platform) && output != "" {
+		if err := os.MkdirAll(output, 0o755); err != nil {
+			return fmt.Errorf("create output directory: %w", err)
+		}
+		entries, err := os.ReadDir(output)
+		if err != nil {
+			return err
+		}
+		if len(entries) != 0 {
+			return errors.New("output-dir must be empty before native staging")
+		}
+		env := []string{"PREMISE_ARTIFACT_DIR=" + output}
+		if err := runner.Run(ctx, directory, env, "mise", "run", "release:build"); err != nil {
+			return fmt.Errorf("stage native artifacts: %w", err)
+		}
+		valid := false
+		err = filepath.Walk(output, func(path string, info os.FileInfo, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if info.IsDir() {
+				return nil
+			}
+			if !info.Mode().IsRegular() || info.Size() == 0 {
+				return fmt.Errorf("invalid artifact %s", path)
+			}
+			valid = true
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		if !valid {
+			return errors.New("native staging produced no artifacts")
+		}
+	}
+	return nil
 }
 
 type ciRunner interface {

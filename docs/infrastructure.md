@@ -22,7 +22,9 @@ Mise installs the pinned tools and runs repository tasks. The repository stores 
 
 `.github/workflows/on-commit.yml` verifies pull requests and feature-branch pushes through the root `action.yml`; for a feature-branch push whose HEAD commit contains `[publish-rc]`, the `on-commit` flow also invokes the opt-in RC task. For Go, that task only prints the standard skip message. `.github/workflows/on-merge.yml` delegates the complete trunk lifecycle to the `on-merge` flow, which invokes the stable release phase after validation. `.github/workflows/on-deploy.yml` exposes the deploy flow.
 
-The workflows run repository checks through `mise`. The merge workflow runs the stable release after validation. The deploy workflow runs the deploy flow. The action supports `pre-built`, `build`, and `skip` installation modes.
+The workflows run repository checks through `mise`. The merge workflow runs the stable release after validation. The deploy workflow runs the deploy flow. Generated commit and merge workflows grant `id-token: write` so npm can request a GitHub OIDC token for trusted publishing or provenance. The commit flow publishes release candidates only on marked feature-branch pushes, not on pull requests. The action supports `pre-built`, `build`, and `skip` installation modes.
+
+The action restores the standard Go, Cargo, and Bun caches and project `target` directories before it runs tasks. It uses the same OS, architecture, and dependency-lockfile restore prefix in commit, merge, and platform-build workflows. Each job saves a new snapshot so a later job can reuse its newly compiled dependencies. GitHub's branch access rules and cache quota still apply; this is not a shared disk across runners. CI does not override the local build target: Cargo release tasks resolve its workspace target with `cargo metadata`. Template tests inspect `clean` without running it, and release tasks remove only stale packaged installer files.
 
 ### CI/CD Secrets
 

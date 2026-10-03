@@ -1,37 +1,20 @@
----
 name: On Merge
 
 "on":
   push:
-    branches:
-      - main
+    branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: stable-release
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: Validate and publish
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          fetch-tags: true
-          persist-credentials: false
-
-      - name: Run on-merge flow
-        uses: cloudvoyant/premise@v0
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
-        with:
-          flow: on-merge
-          release: auto
-          install-premise: build
+  flow:
+    uses: cloudvoyant/premise/.github/workflows/release-platform.yml@v0
+    with:
+      flow: on-merge
+      release: auto
+      package-environment: production

@@ -1,0 +1,180 @@
+name: Premise CI flow
+
+on:
+  workflow_call:
+    inputs:
+      flow:
+        required: true
+        type: string
+      release:
+        required: false
+        type: string
+        default: none
+      premise-ref:
+        required: false
+        type: string
+        default: v0
+      package-environment:
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  plan:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    outputs:
+      mode: ${{ steps.schedule.outputs.mode }}
+      matrix: ${{ steps.schedule.outputs.matrix }}
+      version: ${{ steps.schedule.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - uses: ./
+        with:
+          flow: ${{ inputs.flow }}
+          release: none
+          install-premise: build
+      - id: schedule
+        shell: bash
+        env:
+          FLOW: ${{ inputs.flow }}
+          RELEASE: ${{ inputs.release }}
+        run: |
+          set -euo pipefail
+          schedule="$(pm ci plan --flow "$FLOW" --github-output)"
+          mode="$(jq -r '.mode' <<<"$schedule")"
+          matrix="$(jq -c \
+            '{include: [.matrix[] | {project, platform}]}' \
+            <<<"$schedule")"
+          printf 'mode=%s\n' "$mode" >> "$GITHUB_OUTPUT"
+          printf 'matrix=%s\n' "$matrix" >> "$GITHUB_OUTPUT"
+          if [[ "$RELEASE" == github || "$RELEASE" == auto ]]; then
+            version="$(pm release --dry-run | awk -F= \
+              '$1=="version"{print $2}')"
+            printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          else
+            printf 'version=\n' >> "$GITHUB_OUTPUT"
+          fi
+
+  single:
+    needs: plan
+    if: needs.plan.outputs.mode == 'single'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - uses: ./
+        with:
+          flow: ${{ inputs.flow }}
+          release: none
+          install-premise: build
+      - name: Run complete flow
+        run: |
+          pm ci flow "${{ inputs.flow }}" --release none \
+            --output-dir "${{ runner.temp }}/premise-files"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: premise-single-files
+          path: ${{ runner.temp }}/premise-files/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  matrix:
+    needs: plan
+    if: needs.plan.outputs.mode != 'single'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.platform == 'macos' && 'macos-14' ||
+      matrix.platform == 'windows' && 'windows-2022' || 'ubuntu-22.04' }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - uses: ./
+        with:
+          flow: ${{ inputs.flow }}
+          release: none
+          install-premise: build
+          project: ${{ matrix.project }}
+          platform: ${{ matrix.platform }}
+      - name: Run scoped complete flow
+        shell: bash
+        run: |
+          pm ci flow "${{ inputs.flow }}" --release none \
+            --project "${{ matrix.project }}" \
+            --platform "${{ matrix.platform }}" --skip-root \
+            --output-dir "${{ runner.temp }}/premise-files"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: premise-${{ matrix.project }}-${{ matrix.platform }}
+          path: ${{ runner.temp }}/premise-files/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  publish-release:
+    needs: [plan, single, matrix]
+    outputs:
+      version: ${{ needs.plan.outputs.version }}
+    if: inputs.release == 'github' || inputs.release == 'auto'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: premise-*-files
+          path: premise-files
+          merge-multiple: true
+      - uses: ./
+        with:
+          flow: ${{ inputs.flow }}
+          release: none
+          install-premise: build
+      - name: Publish combined release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pm release publish --channel stable \
+            --expected-version "${{ needs.plan.outputs.version }}" \
+            --files-dir premise-files
+
+  publish-packages:
+    needs: publish-release
+    if: inputs.release == 'github' || inputs.release == 'auto'
+    runs-on: ubuntu-22.04
+    environment: ${{ inputs.package-environment }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: ./
+        with:
+          flow: ${{ inputs.flow }}
+          release: none
+          install-premise: build
+      - run: |
+          pm release packages --channel stable \
+            --expected-version "${{ needs.publish-release.outputs.version }}"

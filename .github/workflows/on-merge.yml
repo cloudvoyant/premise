@@ -1,36 +1,20 @@
----
 name: On Merge
 
-# Premise owns stable release planning, tagging, and publication. Reruns reuse a
-# stable tag already at HEAD and replace conflicting GitHub release assets.
 "on":
   push:
-    branches:
-      - main
+    branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: stable-release
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: Validate and publish
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          fetch-tags: true
-          persist-credentials: false
-
-      - name: Run on-merge flow
-        uses: ./
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        with:
-          flow: on-merge
-          install-premise: build
+  flow:
+    uses: ./.github/workflows/release-platform.yml
+    with:
+      flow: on-merge
+      release: auto
+      package-environment: production
