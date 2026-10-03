@@ -23,9 +23,10 @@ import (
 type CIFlow string
 
 const (
-	CIFlowOnCommit  CIFlow = "on-commit"
-	CIFlowOnMerge   CIFlow = "on-merge"
-	CIFlowOnRelease CIFlow = "on-release"
+	CIFlowOnCommit   CIFlow = "on-commit"
+	CIFlowOnMerge    CIFlow = "on-merge"
+	CIFlowOnRelease  CIFlow = "on-release"
+	CIFlowOnPlatform CIFlow = "on-platform"
 )
 
 // CIReleaseMode controls the release phase owned by an on-merge flow.
@@ -42,10 +43,10 @@ const (
 func ParseCIFlow(value string) (CIFlow, error) {
 	flow := CIFlow(value)
 	switch flow {
-	case CIFlowOnCommit, CIFlowOnMerge, CIFlowOnRelease:
+	case CIFlowOnCommit, CIFlowOnMerge, CIFlowOnRelease, CIFlowOnPlatform:
 		return flow, nil
 	default:
-		return "", fmt.Errorf("invalid CI flow %q: expected on-commit, on-merge, or on-release", value)
+		return "", fmt.Errorf("invalid CI flow %q: expected on-commit, on-merge, on-release, or on-platform", value)
 	}
 }
 
@@ -62,6 +63,9 @@ func ParseCIReleaseMode(value string) (CIReleaseMode, error) {
 
 // RunCIFlow executes one complete CI flow, including its guarded release phase.
 func RunCIFlow(ctx context.Context, root string, flow CIFlow, environment string, releaseMode CIReleaseMode, stdout, stderr io.Writer) error {
+	if flow == CIFlowOnPlatform {
+		return fmt.Errorf("%s requires explicit project, channel, version, and output directory inputs", flow)
+	}
 	target, err := ciTarget(flow, environment)
 	if err != nil {
 		return err

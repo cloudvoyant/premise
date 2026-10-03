@@ -24,6 +24,8 @@ Mise installs the pinned tools and runs repository tasks. The repository stores 
 
 The workflows run repository checks through `mise`. The merge workflow runs the stable release after validation. The deploy workflow runs the deploy flow. Generated commit and merge workflows grant `id-token: write` so npm can request a GitHub OIDC token for trusted publishing or provenance. The commit flow publishes release candidates only on marked feature-branch pushes, not on pull requests. The action supports `pre-built`, `build`, and `skip` installation modes.
 
+The action restores the standard Go, Cargo, and Bun caches and project `target` directories before it runs tasks. It uses the same OS, architecture, and dependency-lockfile restore prefix in commit, merge, and platform-build workflows. Each job saves a new snapshot so a later job can reuse its newly compiled dependencies. GitHub's branch access rules and cache quota still apply; this is not a shared disk across runners. CI does not override the local build target: Cargo release tasks resolve its workspace target with `cargo metadata`. Template tests inspect `clean` without running it, and release tasks remove only stale packaged installer files.
+
 ### CI/CD Secrets
 
 Org-level secrets are utilized to avoid the need for setting up secrets for every new project. This means setup is only needed once.

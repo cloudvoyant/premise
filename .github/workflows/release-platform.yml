@@ -1,0 +1,197 @@
+---
+name: Release platform files
+
+"on":
+  workflow_call:
+    inputs:
+      project:
+        description: Template with a release:build task for native files
+        required: true
+        type: string
+      channel:
+        description: stable or rc
+        required: true
+        type: string
+      version:
+        description: SemVer without a leading v
+        required: true
+        type: string
+      premise-ref:
+        description: Premise action revision matching this reusable workflow
+        required: true
+        type: string
+      platforms:
+        description: JSON array of runner labels to build and collect
+        required: false
+        type: string
+        default: '["ubuntu-22.04", "macos-14", "windows-2022"]'
+
+jobs:
+  build:
+    name: Build ${{ inputs.project }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.platforms) }}
+    steps:
+      - name: Checkout project at triggering commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Checkout matching Premise action
+        uses: actions/checkout@v6
+        with:
+          repository: cloudvoyant/premise
+          ref: ${{ inputs.premise-ref }}
+          path: .premise-action
+          persist-credentials: false
+
+      - name: Build native release files
+        uses: ./.premise-action
+        with:
+          flow: on-platform
+          install-premise: build
+          project: ${{ inputs.project }}
+          channel: ${{ inputs.channel }}
+          version: ${{ inputs.version }}
+          output-dir: ${{ runner.temp }}/premise-platform-files
+
+      - name: Transfer files to publication job
+        uses: actions/upload-artifact@v4
+        with:
+          name: platform-${{ matrix.os }}
+          path: ${{ runner.temp }}/premise-platform-files/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish platform files to GitHub Release
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout project and release tags
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Collect native files
+        uses: actions/download-artifact@v4
+        with:
+          pattern: platform-*
+          path: platform-files
+
+      - name: Create or reuse the release and upload files
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_PROJECT: ${{ inputs.project }}
+          PLATFORMS: ${{ inputs.platforms }}
+        run: |
+          set -euo pipefail
+          if [[ "$RELEASE_CHANNEL" != "stable" && \
+                "$RELEASE_CHANNEL" != "rc" ]]; then
+            echo "error: unsupported release channel" >&2
+            exit 1
+          fi
+          pattern='^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9A-Za-z-]+)?$'
+          if ! [[ "$RELEASE_VERSION" =~ $pattern ]]; then
+            echo "error: invalid release version" >&2
+            exit 1
+          fi
+          tag="v${RELEASE_VERSION}"
+          sha="$(git rev-parse HEAD)"
+          if git show-ref --verify --quiet "refs/tags/$tag"; then
+            tag_sha="$(git rev-parse "$tag^{commit}")"
+            if [[ "$tag_sha" != "$sha" ]]; then
+              echo "error: $tag points to $tag_sha, not $sha" >&2
+              exit 1
+            fi
+          elif [[ "$RELEASE_CHANNEL" == "stable" ]]; then
+            echo "error: stable tag $tag is missing at $sha" >&2
+            exit 1
+          fi
+
+          declare -A seen=()
+          files=()
+          # PLATFORMS is injected through the step environment.
+          # shellcheck disable=SC2153
+          mapfile -t platforms < <(jq -er '.[] | select(type == "string")' \
+            <<< "$PLATFORMS")
+          if [[ ${#platforms[@]} -eq 0 ]]; then
+            echo "error: the platform matrix is empty" >&2
+            exit 1
+          fi
+          for os in "${platforms[@]}"; do
+            if ! [[ "$os" =~ ^[A-Za-z0-9._-]+$ ]]; then
+              echo "error: invalid platform runner label" >&2
+              exit 1
+            fi
+            dir="platform-files/platform-$os"
+            if [[ ! -d "$dir" ]]; then
+              echo "error: missing artifacts for $os" >&2
+              exit 1
+            fi
+            found=false
+            while IFS= read -r -d '' file; do
+              if [[ ! -s "$file" || -L "$file" ]]; then
+                echo "error: empty or linked artifact: $file" >&2
+                exit 1
+              fi
+              name="${file##*/}"
+              if [[ -n "${seen[$name]:-}" ]]; then
+                echo "error: duplicate artifact filename $name" >&2
+                exit 1
+              fi
+              seen[$name]=1
+              files+=("$file")
+              found=true
+            done < <(find "$dir" -type f -print0)
+            if [[ "$found" != "true" ]]; then
+              echo "error: no files for $os" >&2
+              exit 1
+            fi
+          done
+
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" \
+            >/dev/null 2>&1; then
+            prerelease="$(gh release view "$tag" \
+              --repo "$GITHUB_REPOSITORY" --json isPrerelease \
+              --jq .isPrerelease)"
+            if [[ "$RELEASE_CHANNEL" == "rc" && \
+                  "$prerelease" != "true" ]] ||
+               [[ "$RELEASE_CHANNEL" == "stable" && \
+                  "$prerelease" != "false" ]]; then
+              echo "error: existing release $tag has the wrong channel" >&2
+              exit 1
+            fi
+          elif [[ "$RELEASE_CHANNEL" == "rc" ]]; then
+            if git show-ref --verify --quiet "refs/tags/$tag"; then
+              gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
+                --verify-tag --prerelease --title "$tag" \
+                --notes "RC build for $RELEASE_PROJECT"
+            else
+              gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
+                --target "$sha" --prerelease --title "$tag" \
+                --notes "RC build for $RELEASE_PROJECT"
+            fi
+          else
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
+              --verify-tag --title "$tag" --generate-notes
+          fi
+          gh release upload "$tag" "${files[@]}" --clobber \
+            --repo "$GITHUB_REPOSITORY"
