@@ -7,7 +7,7 @@ branding:
 
 inputs:
   flow:
-    description: "CI flow: on-commit | on-merge | on-release | on-platform"
+    description: "CI flow: on-commit | on-merge | on-release"
     required: false
     default: on-commit
   environment:
@@ -49,6 +49,10 @@ inputs:
     description: "Logical target platform for cache isolation"
     required: false
     default: ""
+  setup-only:
+    description: "Install tooling without launching a CI flow"
+    required: false
+    default: "false"
 
 outputs:
   version:
@@ -202,6 +206,7 @@ runs:
         fi
 
     - name: Launch CI flow
+      if: inputs.setup-only != 'true'
       shell: bash
       env:
         FLOW: ${{ inputs.flow }}
@@ -214,9 +219,8 @@ runs:
       run: |
         set -euo pipefail
         if [[ "$FLOW" == "on-platform" ]]; then
-          pm ci flow on-platform --release none \
-            --project "$PROJECT" --channel "$CHANNEL" \
-            --version "$VERSION" --output-dir "$OUTPUT_DIR"
+          echo "::error::on-platform is not supported by this action"
+          exit 1
         else
           args=(ci flow "$FLOW" --release "$RELEASE_MODE")
           if [[ -n "$DEPLOY_ENVIRONMENT" ]]; then

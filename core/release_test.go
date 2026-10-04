@@ -285,6 +285,107 @@ func TestCreateAndPushReleaseTagRollsBackLocalTagOnFailure(t *testing.T) {
 	}
 }
 
+func TestCreateAndPushReleaseCandidateTagRollsBackOnFailure(t *testing.T) {
+	root := writeTaggedCargoReleaseFixture(t)
+	repository, err := git.PlainOpen(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GITHUB_TOKEN", "test-token")
+	version := "v1.2.4-rc.123"
+	err = createAndPushReleaseTag(t.Context(), root, version, releaseAuthentication())
+	if err == nil || !strings.Contains(err.Error(), "origin") {
+		t.Fatalf("RC tag push without origin = %v, want missing remote (not a version rejection)", err)
+	}
+	if _, err := repository.Reference(plumbing.ReferenceName("refs/tags/"+version), true); !errors.Is(err, plumbing.ErrReferenceNotFound) {
+		t.Fatalf("local RC tag was not rolled back: %v", err)
+	}
+}
+
+func TestPublishReleaseValidatesChannelVersionBeforeTags(t *testing.T) {
+	for _, tc := range []struct{ channel, version string }{
+		{"stable", "v1.2.3-rc.42"}, {"rc", "v1.2.3"}, {"rc", "v1.2.3-beta.1"},
+	} {
+		_, err := PublishRelease(t.Context(), t.TempDir(), ReleasePublishOptions{
+			Channel: tc.channel, ExpectedVersion: tc.version,
+		}, io.Discard, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "invalid") {
+			t.Errorf("%s %s error = %v, want invalid version", tc.channel, tc.version, err)
+		}
+	}
+}
+
+func TestExpectedReleaseGroupsUsesDeclaredNativeTargets(t *testing.T) {
+	root := writeTaggedCargoReleaseFixture(t)
+	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.Workspace.Kind = ProjectKindTemplateRegistry
+	manifest.TemplateRegistry.Templates[0].CI = PlatformDeclaration{
+		CheckPlatforms: []string{"linux", "macos"}, ReleasePlatforms: []string{"linux", "macos"},
+	}
+	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
+		t.Fatal(err)
+	}
+	groups, err := ExpectedReleaseGroups(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(groups, ",") != "premise-rust-app-linux,premise-rust-app-macos" {
+		t.Fatalf("native groups = %#v", groups)
+	}
+}
+
+func TestPublishReleasePackagesRCRequiresMatchingTag(t *testing.T) {
+	root := writeTaggedCargoReleaseFixture(t)
+	repository, err := git.PlainOpen(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := repository.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := 0
+	useTestPackageManagers(t, testPackageManager{id: "cargo", publish: func(_ context.Context, _ string, version, task string, _, _ io.Writer) error {
+		called++
+		if version != "v1.2.4-rc.42" || task != "publish:rc" {
+			t.Fatalf("wrong RC publication %s %s", version, task)
+		}
+		return nil
+	}})
+	if _, err := PublishReleasePackages(t.Context(), root, "rc", "v1.2.4-rc.42", io.Discard, io.Discard); err == nil {
+		t.Fatal("RC packages published without matching tag")
+	}
+	if called != 0 {
+		t.Fatalf("publisher called before tag check: %d", called)
+	}
+	if _, err := repository.CreateTag("v1.2.4-rc.42", head.Hash(), nil); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PublishReleasePackages(t.Context(), root, "rc", "v1.2.4-rc.42", io.Discard, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Version != "v1.2.4-rc.42" || called != 1 {
+		t.Fatalf("RC publication %#v, calls %d", plan, called)
+	}
+}
+
+func TestPublishReleasePackagesRejectsWrongVersionBeforePublishing(t *testing.T) {
+	root := writeTaggedCargoReleaseFixture(t)
+	called := false
+	useTestPackageManagers(t, testPackageManager{id: "cargo", publish: func(context.Context, string, string, string, io.Writer, io.Writer) error {
+		called = true
+		return nil
+	}})
+	_, err := PublishReleasePackages(t.Context(), root, "stable", "v1.2.4", io.Discard, io.Discard)
+	if err == nil || called {
+		t.Fatalf("wrong stable version: err=%v published=%v", err, called)
+	}
+}
+
 func TestStableTagAtIgnoresUnrelatedTags(t *testing.T) {
 	repository, err := git.PlainInit(t.TempDir(), false)
 	if err != nil {

@@ -56,10 +56,10 @@ func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 				t.Fatal("on-commit must validate the first push to a new branch")
 			}
 			for _, expected := range []string{
-				"permissions:\n  contents: read",
+				"permissions:\n  contents: write\n  id-token: write",
 				"uses: cloudvoyant/premise/.github/workflows/release-platform.yml@v0",
 				"flow: on-commit",
-				"release: none",
+				"release: auto",
 			} {
 				if !strings.Contains(contents, expected) {
 					t.Fatalf("on-commit workflow missing %q", expected)
@@ -68,7 +68,7 @@ func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 		}
 		if name == "on-merge.yml" {
 			for _, expected := range []string{
-				"permissions:\n  contents: read",
+				"permissions:\n  contents: write\n  id-token: write",
 				"uses: cloudvoyant/premise/.github/workflows/release-platform.yml@v0",
 				"flow: on-merge",
 				"release: auto",

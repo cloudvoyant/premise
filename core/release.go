@@ -29,7 +29,7 @@ import (
 const goreleaserVersion = "2.18.1"
 
 var stableVersionPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
-var releaseVersionPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$`)
+var releaseVersionPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?$`)
 
 var executeGoReleaser = runGoReleaser
 var pushReleaseTag = createAndPushReleaseTag
@@ -57,16 +57,65 @@ func PublishRelease(ctx context.Context, root string, options ReleasePublishOpti
 	if options.Channel != "stable" && options.Channel != "rc" {
 		return ReleasePlan{}, fmt.Errorf("invalid release channel %q", options.Channel)
 	}
-	if !releaseVersionPattern.MatchString(options.ExpectedVersion) {
-		return ReleasePlan{}, fmt.Errorf("invalid expected version %q", options.ExpectedVersion)
+	if options.ExpectedVersion == "" {
+		return ReleasePlan{}, errors.New("expected release version is required")
+	}
+	if !releaseVersionPattern.MatchString(options.ExpectedVersion) ||
+		(options.Channel == "stable" && !stableVersionPattern.MatchString(options.ExpectedVersion)) ||
+		(options.Channel == "rc" && stableVersionPattern.MatchString(options.ExpectedVersion)) {
+		return ReleasePlan{}, fmt.Errorf("invalid %s expected version %q", options.Channel, options.ExpectedVersion)
+	}
+	// RC publication must never consult stable version planning: an RC tag is
+	// intentionally not a stable release candidate for PlanStableRelease.
+	var plan ReleasePlan
+	var err error
+	if options.Channel == "rc" {
+		plan = ReleasePlan{Version: options.ExpectedVersion}
+	} else {
+		plan, err = PlanStableRelease(ctx, root)
+		if err != nil {
+			return ReleasePlan{}, err
+		}
 	}
 	files, err := validateReleaseFiles(options.FilesDir, options.ExpectedGroups)
 	if err != nil {
 		return ReleasePlan{}, err
 	}
-	plan, err := PlanStableRelease(ctx, root)
-	if err != nil {
-		return ReleasePlan{}, err
+	repository, openErr := git.PlainOpenWithOptions(root, &git.PlainOpenOptions{DetectDotGit: true})
+	if openErr != nil {
+		return ReleasePlan{}, openErr
+	}
+	head, headErr := repository.Head()
+	if headErr != nil {
+		return ReleasePlan{}, headErr
+	}
+	if options.Channel == "rc" {
+		if err := fetchReleaseTags(ctx, repository, releaseAuthentication()); err != nil {
+			return ReleasePlan{}, fmt.Errorf("refresh RC tags: %w", err)
+		}
+		tagHash, tagErr := repository.Tags()
+		if tagErr != nil {
+			return ReleasePlan{}, tagErr
+		}
+		conflict := false
+		_ = tagHash.ForEach(func(ref *plumbing.Reference) error {
+			if ref.Name().Short() != options.ExpectedVersion {
+				return nil
+			}
+			target := ref.Hash()
+			if annotated, e := repository.TagObject(target); e == nil {
+				target = annotated.Target
+			}
+			if target == head.Hash() {
+				plan.ReuseTag = true
+			} else {
+				conflict = true
+			}
+			return nil
+		})
+		if conflict {
+			return ReleasePlan{}, fmt.Errorf("release tag %s exists away from HEAD", options.ExpectedVersion)
+		}
 	}
 	if options.TriggeringCommit != "" {
 		repository, openErr := git.PlainOpenWithOptions(root, &git.PlainOpenOptions{DetectDotGit: true})
@@ -267,6 +316,73 @@ func PublishLanguagePackages(ctx context.Context, root string, stdout, stderr io
 	return plan, nil
 }
 
+// PublishReleasePackages checks the exact tag at HEAD before invoking any
+// registry publisher. The workflow runs this only after GitHub publication.
+func PublishReleasePackages(ctx context.Context, root, channel, expectedVersion string, stdout, stderr io.Writer) (ReleasePlan, error) {
+	if (channel != "stable" && channel != "rc") || !releaseVersionPattern.MatchString(expectedVersion) ||
+		(channel == "stable" && !stableVersionPattern.MatchString(expectedVersion)) ||
+		(channel == "rc" && stableVersionPattern.MatchString(expectedVersion)) {
+		return ReleasePlan{}, fmt.Errorf("invalid %s package release version %q", channel, expectedVersion)
+	}
+	var plan ReleasePlan
+	if channel == "stable" {
+		var err error
+		plan, err = requirePreparedRelease(ctx, root, stdout)
+		if err != nil {
+			return ReleasePlan{}, err
+		}
+		if plan.Skip || plan.Version != expectedVersion {
+			return ReleasePlan{}, fmt.Errorf("expected stable release %s does not match planned version %s", expectedVersion, plan.Version)
+		}
+	} else {
+		repository, err := git.PlainOpenWithOptions(root, &git.PlainOpenOptions{DetectDotGit: true})
+		if err != nil {
+			return ReleasePlan{}, err
+		}
+		if err := fetchReleaseTags(ctx, repository, releaseAuthentication()); err != nil {
+			return ReleasePlan{}, fmt.Errorf("refresh RC tags: %w", err)
+		}
+		head, err := repository.Head()
+		if err != nil {
+			return ReleasePlan{}, err
+		}
+		ref, err := repository.Tag(expectedVersion)
+		if err != nil {
+			return ReleasePlan{}, fmt.Errorf("expected RC tag %s is missing: %w", expectedVersion, err)
+		}
+		target := ref.Hash()
+		if annotated, err := repository.TagObject(target); err == nil {
+			target = annotated.Target
+		}
+		if target != head.Hash() {
+			return ReleasePlan{}, fmt.Errorf("expected RC tag %s is not at HEAD", expectedVersion)
+		}
+		plan = ReleasePlan{Version: expectedVersion, ReuseTag: true}
+	}
+	_, plugins, err := loadReleaseBackends(root)
+	if err != nil {
+		return ReleasePlan{}, fmt.Errorf("resolve package managers: %w", err)
+	}
+	published := false
+	task := "publish"
+	if channel == "rc" {
+		task = "publish:rc"
+	}
+	for _, plugin := range plugins {
+		if !plugin.SupportsPackages() {
+			continue
+		}
+		published = true
+		if err := plugin.PublishPackages(ctx, root, plan.Version, task, stdout, stderr); err != nil {
+			return ReleasePlan{}, fmt.Errorf("publish %s packages: %w", plugin.ID(), err)
+		}
+	}
+	if !published {
+		return ReleasePlan{}, errors.New("workspace package managers do not publish language packages")
+	}
+	return plan, nil
+}
+
 // PublishStableRelease plans, tags, and publishes all configured outputs. CI
 // can call the narrower functions in separate credential-bearing steps.
 func PublishStableRelease(ctx context.Context, root string, stdout, stderr io.Writer) (ReleasePlan, error) {
@@ -419,6 +535,26 @@ release:
 		}
 	}
 	return []byte(builder.String()), nil
+}
+
+// ExpectedReleaseGroups derives native artifact groups from the manifest, not
+// from the downloaded tree. Unexpected uploaded groups must fail closed.
+func ExpectedReleaseGroups(root string) ([]string, error) {
+	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
+	if err != nil {
+		return nil, err
+	}
+	projects, err := SelectCIProjects(root, manifest, CIFlowOnCommit)
+	if err != nil {
+		return nil, err
+	}
+	groups := []string{}
+	for _, project := range projects {
+		for _, platform := range project.ReleasePlatforms {
+			groups = append(groups, project.Name+"-"+platform)
+		}
+	}
+	return groups, nil
 }
 
 // validateReleaseFiles checks the entire downloaded artifact tree before any
@@ -582,11 +718,11 @@ func executableFromEnvironment(name string, environment []string) (string, error
 }
 
 func createAndPushReleaseTag(ctx context.Context, root, version string, auth transport.AuthMethod) (resultErr error) {
-	if !stableVersionPattern.MatchString(version) {
-		return fmt.Errorf("release version %q is not a stable vMAJOR.MINOR.PATCH tag", version)
+	if !releaseVersionPattern.MatchString(version) {
+		return fmt.Errorf("release version %q is not a stable or RC vMAJOR.MINOR.PATCH tag", version)
 	}
 	if auth == nil {
-		return errors.New("GITHUB_TOKEN or GH_TOKEN is required to push a stable release tag")
+		return errors.New("GITHUB_TOKEN or GH_TOKEN is required to push a release tag")
 	}
 	repository, err := git.PlainOpenWithOptions(root, &git.PlainOpenOptions{DetectDotGit: true})
 	if err != nil {
@@ -597,14 +733,14 @@ func createAndPushReleaseTag(ctx context.Context, root, version string, auth tra
 		return fmt.Errorf("read release HEAD: %w", err)
 	}
 	if _, err := repository.CreateTag(version, head.Hash(), nil); err != nil {
-		return fmt.Errorf("create stable tag %s: %w", version, err)
+		return fmt.Errorf("create release tag %s: %w", version, err)
 	}
 	defer func() {
 		if resultErr == nil {
 			return
 		}
 		if err := repository.DeleteTag(version); err != nil {
-			resultErr = errors.Join(resultErr, fmt.Errorf("remove unpushed local tag %s: %w", version, err))
+			resultErr = errors.Join(resultErr, fmt.Errorf("remove unpushed local release tag %s: %w", version, err))
 		}
 	}()
 
@@ -614,7 +750,7 @@ func createAndPushReleaseTag(ctx context.Context, root, version string, auth tra
 	}
 	refspec := gitconfig.RefSpec("refs/tags/" + version + ":refs/tags/" + version)
 	if err := remote.PushContext(ctx, &git.PushOptions{Auth: auth, RefSpecs: []gitconfig.RefSpec{refspec}}); err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
-		return fmt.Errorf("push stable tag %s: %w", version, err)
+		return fmt.Errorf("push release tag %s: %w", version, err)
 	}
 	return nil
 }

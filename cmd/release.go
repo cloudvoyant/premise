@@ -62,7 +62,11 @@ var releasePublishCmd = &cobra.Command{
 		if err := registerPackageManagerBackends(); err != nil {
 			return err
 		}
-		_, err = core.PublishRelease(cmd.Context(), root, core.ReleasePublishOptions{Channel: releaseChannel, ExpectedVersion: releaseExpectedVersion, FilesDir: releaseFilesDir}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		groups, err := core.ExpectedReleaseGroups(root)
+		if err != nil {
+			return err
+		}
+		_, err = core.PublishRelease(cmd.Context(), root, core.ReleasePublishOptions{Channel: releaseChannel, ExpectedVersion: releaseExpectedVersion, FilesDir: releaseFilesDir, ExpectedGroups: groups}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		return err
 	},
 }
@@ -79,14 +83,8 @@ var releasePackagesCmd = &cobra.Command{
 		if err := registerPackageManagerBackends(); err != nil {
 			return err
 		}
-		plan, err := core.PublishLanguagePackages(cmd.Context(), root, cmd.OutOrStdout(), cmd.ErrOrStderr())
-		if err != nil {
-			return err
-		}
-		if releaseExpectedVersion != "" && strings.TrimPrefix(plan.Version, "v") != strings.TrimPrefix(releaseExpectedVersion, "v") {
-			return fmt.Errorf("published package version %s does not match expected version %s", plan.Version, releaseExpectedVersion)
-		}
-		return nil
+		_, err = core.PublishReleasePackages(cmd.Context(), root, releaseChannel, releaseExpectedVersion, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		return err
 	},
 }
 

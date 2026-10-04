@@ -18,6 +18,9 @@ on:
         required: false
         type: string
         default: ""
+    secrets:
+      CRATES_TOKEN:
+        required: false
 
 jobs:
   plan:
@@ -26,65 +29,117 @@ jobs:
       contents: read
     outputs:
       mode: ${{ steps.schedule.outputs.mode }}
+      runner: ${{ steps.schedule.outputs.runner }}
       matrix: ${{ steps.schedule.outputs.matrix }}
+      native: ${{ steps.schedule.outputs.native }}
       version: ${{ steps.schedule.outputs.version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
-      - uses: ./
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: cloudvoyant/premise
+          ref: >-
+            ${{ github.repository == 'cloudvoyant/premise' &&
+                github.sha || inputs.premise-ref }}
+          path: .premise-action
+          persist-credentials: false
+      - uses: ./.premise-action
         with:
           flow: ${{ inputs.flow }}
           release: none
           install-premise: build
+          setup-only: true
       - id: schedule
         shell: bash
         env:
           FLOW: ${{ inputs.flow }}
           RELEASE: ${{ inputs.release }}
+          EVENT_NAME: ${{ github.event_name }}
+          MARKED_PUSH: >-
+            ${{ github.event_name == 'push' &&
+                github.ref_type == 'branch' &&
+                github.ref != 'refs/heads/main' &&
+                contains(github.event.head_commit.message, '[publish-rc]') }}
         run: |
           set -euo pipefail
           schedule="$(pm ci plan --flow "$FLOW" --github-output)"
           mode="$(jq -r '.mode' <<<"$schedule")"
+          runner="$(jq -r '.runner' <<<"$schedule")"
+          native="$(jq -r '.has_native' <<<"$schedule")"
           matrix="$(jq -c \
-            '{include: [.matrix[] | {project, platform}]}' \
+            '{include: [.matrix[] | {project, platform, artifact, runner}]}' \
             <<<"$schedule")"
-          printf 'mode=%s\n' "$mode" >> "$GITHUB_OUTPUT"
+          printf 'mode=%s\nrunner=%s\nnative=%s\n' \
+            "$mode" "$runner" "$native" >> "$GITHUB_OUTPUT"
           printf 'matrix=%s\n' "$matrix" >> "$GITHUB_OUTPUT"
-          if [[ "$RELEASE" == github || "$RELEASE" == auto ]]; then
-            version="$(pm release --dry-run | awk -F= \
-              '$1=="version"{print $2}')"
+          if [[ "$FLOW" == on-commit && "$RELEASE" == auto && \
+                "$EVENT_NAME" == push && "$MARKED_PUSH" == true ]]; then
+            version="$(pm version rc --identifier "$GITHUB_RUN_NUMBER")"
             printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          elif [[ "$FLOW" == on-merge && \
+                ("$RELEASE" == github || "$RELEASE" == auto) ]]; then
+            release_plan="$(pm release --dry-run)"
+            if grep -qx 'should_publish=true' <<<"$release_plan"; then
+              version="$(awk -F= '$1=="version"{print $2}' <<<"$release_plan")"
+              printf 'version=v%s\n' "${version#v}" >> "$GITHUB_OUTPUT"
+            else
+              printf 'version=\n' >> "$GITHUB_OUTPUT"
+            fi
           else
             printf 'version=\n' >> "$GITHUB_OUTPUT"
           fi
+      - name: Run the root hook once before matrix rows
+        if: steps.schedule.outputs.mode == 'matrix'
+        env:
+          FLOW: ${{ inputs.flow }}
+        run: pm ci flow "$FLOW" --release none --root-only
 
   single:
     needs: plan
     if: needs.plan.outputs.mode == 'single'
-    runs-on: ubuntu-22.04
+    runs-on: ${{ needs.plan.outputs.runner }}
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
-      - uses: ./
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: cloudvoyant/premise
+          ref: >-
+            ${{ github.repository == 'cloudvoyant/premise' &&
+                github.sha || inputs.premise-ref }}
+          path: .premise-action
+          persist-credentials: false
+      - uses: ./.premise-action
         with:
           flow: ${{ inputs.flow }}
           release: none
           install-premise: build
+          setup-only: true
       - name: Run complete flow
+        env:
+          FLOW: ${{ inputs.flow }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          FILES_DIR: ${{ runner.temp }}/premise-files
         run: |
-          pm ci flow "${{ inputs.flow }}" --release none \
-            --output-dir "${{ runner.temp }}/premise-files"
-      - uses: actions/upload-artifact@v4
+          args=(pm ci flow "$FLOW" --release none --output-dir "$FILES_DIR")
+          if [[ -n "$VERSION" ]]; then
+            channel=stable
+            if [[ "$FLOW" == on-commit ]]; then channel=rc; fi
+            args+=(--channel "$channel" --version "$VERSION")
+          fi
+          "${args[@]}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: premise-single-files
+          name: single
           path: ${{ runner.temp }}/premise-files/
           if-no-files-found: ignore
           retention-days: 7
@@ -95,86 +150,186 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
-    runs-on: ${{ matrix.platform == 'macos' && 'macos-14' ||
-      matrix.platform == 'windows' && 'windows-2022' || 'ubuntu-22.04' }}
+    runs-on: ${{ matrix.runner || needs.plan.outputs.runner }}
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
-      - uses: ./
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: cloudvoyant/premise
+          ref: >-
+            ${{ github.repository == 'cloudvoyant/premise' &&
+                github.sha || inputs.premise-ref }}
+          path: .premise-action
+          persist-credentials: false
+      - uses: ./.premise-action
         with:
           flow: ${{ inputs.flow }}
           release: none
           install-premise: build
+          setup-only: true
           project: ${{ matrix.project }}
           platform: ${{ matrix.platform }}
       - name: Run scoped complete flow
         shell: bash
+        env:
+          FLOW: ${{ inputs.flow }}
+          PROJECT: ${{ matrix.project }}
+          PLATFORM: ${{ matrix.platform }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          FILES_DIR: ${{ runner.temp }}/premise-files
         run: |
-          pm ci flow "${{ inputs.flow }}" --release none \
-            --project "${{ matrix.project }}" \
-            --platform "${{ matrix.platform }}" --skip-root \
-            --output-dir "${{ runner.temp }}/premise-files"
-      - uses: actions/upload-artifact@v4
+          args=(pm ci flow "$FLOW" --release none \
+            --project "$PROJECT" --platform "$PLATFORM" --skip-root \
+            --output-dir "$FILES_DIR")
+          if [[ -n "$VERSION" ]]; then
+            channel=stable
+            if [[ "$FLOW" == on-commit ]]; then channel=rc; fi
+            args+=(--channel "$channel" --version "$VERSION")
+          fi
+          "${args[@]}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: premise-${{ matrix.project }}-${{ matrix.platform }}
+          name: ${{ matrix.project }}-${{ matrix.platform }}
           path: ${{ runner.temp }}/premise-files/
           if-no-files-found: ignore
           retention-days: 7
 
-  publish-release:
+  preflight-packages:
     needs: [plan, single, matrix]
+    if: >-
+      always() && inputs.package-environment != '' &&
+      needs.plan.outputs.version != '' &&
+      (inputs.release == 'github' || inputs.release == 'auto') &&
+      needs.plan.result == 'success' &&
+      ((needs.plan.outputs.mode == 'single' &&
+        needs.single.result == 'success') ||
+       (needs.plan.outputs.mode != 'single' &&
+        needs.matrix.result == 'success'))
+    runs-on: ubuntu-22.04
+    environment: ${{ inputs.package-environment }}
+    permissions:
+      contents: read
+    steps:
+      - name: Check registry credential before creating a release
+        env:
+          CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
+        run: |
+          if [[ -z "$CRATES_TOKEN" ]]; then
+            echo '::error::CRATES_TOKEN is unavailable before release'
+            exit 1
+          fi
+
+  publish-release:
+    needs: [plan, single, matrix, preflight-packages]
     outputs:
       version: ${{ needs.plan.outputs.version }}
-    if: inputs.release == 'github' || inputs.release == 'auto'
+    if: >-
+      always() && needs.plan.outputs.version != '' &&
+      (inputs.release == 'github' || inputs.release == 'auto') &&
+      (inputs.package-environment == '' ||
+        needs.preflight-packages.result == 'success') &&
+      needs.plan.result == 'success' &&
+      ((needs.plan.outputs.mode == 'single' &&
+        needs.single.result == 'success') ||
+       (needs.plan.outputs.mode != 'single' &&
+        needs.matrix.result == 'success'))
     runs-on: ubuntu-22.04
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        if: >-
+          needs.plan.outputs.mode == 'single' &&
+          needs.plan.outputs.native == 'true'
         with:
-          pattern: premise-*-files
-          path: premise-files
-          merge-multiple: true
-      - uses: ./
+          name: single
+          path: ${{ github.workspace }}/premise-files
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        if: >-
+          needs.plan.outputs.mode == 'matrix' &&
+          needs.plan.outputs.native == 'true'
+        with:
+          pattern: "*-*"
+          path: ${{ github.workspace }}/premise-files
+          merge-multiple: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: cloudvoyant/premise
+          ref: >-
+            ${{ github.repository == 'cloudvoyant/premise' &&
+                github.sha || inputs.premise-ref }}
+          path: .premise-action
+          persist-credentials: false
+      - uses: ./.premise-action
         with:
           flow: ${{ inputs.flow }}
           release: none
           install-premise: build
+          setup-only: true
       - name: Publish combined release
         env:
           GH_TOKEN: ${{ github.token }}
+          FLOW: ${{ inputs.flow }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          NATIVE: ${{ needs.plan.outputs.native }}
+          FILES_DIR: ${{ github.workspace }}/premise-files
         run: |
-          pm release publish --channel stable \
-            --expected-version "${{ needs.plan.outputs.version }}" \
-            --files-dir premise-files
+          channel=stable
+          if [[ "$FLOW" == on-commit ]]; then channel=rc; fi
+          args=(pm release publish --channel "$channel" \
+            --expected-version "$VERSION")
+          if [[ "$NATIVE" == true ]]; then
+            args+=(--files-dir "$FILES_DIR")
+          fi
+          "${args[@]}"
 
   publish-packages:
     needs: publish-release
-    if: inputs.release == 'github' || inputs.release == 'auto'
+    if: >-
+      needs.publish-release.result == 'success' &&
+      needs.publish-release.outputs.version != '' &&
+      (inputs.release == 'github' || inputs.release == 'auto')
     runs-on: ubuntu-22.04
     environment: ${{ inputs.package-environment }}
     permissions:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - uses: ./
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: cloudvoyant/premise
+          ref: >-
+            ${{ github.repository == 'cloudvoyant/premise' &&
+                github.sha || inputs.premise-ref }}
+          path: .premise-action
+          persist-credentials: false
+      - uses: ./.premise-action
         with:
           flow: ${{ inputs.flow }}
           release: none
           install-premise: build
-      - run: |
-          pm release packages --channel stable \
-            --expected-version "${{ needs.publish-release.outputs.version }}"
+          setup-only: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
+          FLOW: ${{ inputs.flow }}
+          VERSION: ${{ needs.publish-release.outputs.version }}
+        run: |
+          channel=stable
+          if [[ "$FLOW" == on-commit ]]; then channel=rc; fi
+          pm release packages --channel "$channel" \
+            --expected-version "$VERSION"

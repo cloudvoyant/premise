@@ -142,7 +142,7 @@ var ciFlowCmd = &cobra.Command{
 		if ciRootOnly && ciSkipRoot {
 			return fmt.Errorf("--root-only and --skip-root cannot be used together")
 		}
-		options := core.CIFlowOptions{Project: ciProject, Platform: ciPlatform, OutputDir: ciOutputDir, RootOnly: ciRootOnly, SkipRoot: ciSkipRoot}
+		options := core.CIFlowOptions{Project: ciProject, Platform: ciPlatform, OutputDir: ciOutputDir, Channel: ciChannel, Version: ciVersion, RootOnly: ciRootOnly, SkipRoot: ciSkipRoot}
 		if err := core.RunCIFlowWithOptions(cmd.Context(), root, flow, ciEnvironment, releaseMode, options, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
 			return fmt.Errorf("run CI flow %s: %w", flow, err)
 		}
@@ -159,7 +159,7 @@ func init() {
 	ciFlowCmd.Flags().StringVar(&ciPlatform, "platform", "", "declared target platform")
 	ciFlowCmd.Flags().BoolVar(&ciRootOnly, "root-only", false, "run only the root hook (hosted orchestration)")
 	ciFlowCmd.Flags().BoolVar(&ciSkipRoot, "skip-root", false, "skip the root hook")
-	ciFlowCmd.Flags().StringVar(&ciReleaseMode, "release", "auto", "release mode: auto, none, github, or packages")
+	ciFlowCmd.Flags().StringVar(&ciReleaseMode, "release", "none", "release mode: none (publish with pm release after all flows pass)")
 	ciPlanCmd.Flags().StringVar(&ciPlanFlow, "flow", "on-commit", "CI flow")
 	ciPlanCmd.Flags().BoolVar(&ciPlanJSON, "json", false, "emit JSON")
 	ciPlanCmd.Flags().BoolVar(&ciGitHubOutput, "github-output", false, "emit GitHub schedule JSON")
