@@ -254,14 +254,14 @@ jobs:
           needs.plan.outputs.native == 'true'
         with:
           name: single
-          path: ${{ github.workspace }}/premise-files
+          path: ${{ runner.temp }}/premise-files
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         if: >-
           needs.plan.outputs.mode == 'matrix' &&
           needs.plan.outputs.native == 'true'
         with:
           pattern: "*-*"
-          path: ${{ github.workspace }}/premise-files
+          path: ${{ runner.temp }}/premise-files
           merge-multiple: false
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -277,13 +277,21 @@ jobs:
           release: none
           install-premise: build
           setup-only: true
+      - name: Keep the release checkout clean
+        run: |
+          printf '\n/.premise-action/\n' >> .git/info/exclude
+          if [[ -n "$(git status --porcelain --untracked-files=all)" ]]; then
+            git status --short
+            echo '::error::Release checkout is dirty before tagging'
+            exit 1
+          fi
       - name: Publish combined release
         env:
           GH_TOKEN: ${{ github.token }}
           FLOW: ${{ inputs.flow }}
           VERSION: ${{ needs.plan.outputs.version }}
           NATIVE: ${{ needs.plan.outputs.native }}
-          FILES_DIR: ${{ github.workspace }}/premise-files
+          FILES_DIR: ${{ runner.temp }}/premise-files
         run: |
           channel=stable
           if [[ "$FLOW" == on-commit ]]; then channel=rc; fi
