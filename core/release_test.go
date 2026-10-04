@@ -315,6 +315,37 @@ func TestPublishReleaseValidatesChannelVersionBeforeTags(t *testing.T) {
 	}
 }
 
+func TestGoReleaserAcceptsGHToGitHubTokenAlias(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "alias-token")
+	if got := goreleaserToken(); got != "alias-token" {
+		t.Fatalf("GoReleaser alias = %q", got)
+	}
+	t.Setenv("GITHUB_TOKEN", "preferred-token")
+	if got := goreleaserToken(); got != "preferred-token" {
+		t.Fatalf("GoReleaser preferred token = %q", got)
+	}
+}
+
+func TestPublishReleaseRejectsMissingCredentialBeforeTagging(t *testing.T) {
+	root := writeTaggedCargoReleaseFixture(t)
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "")
+	_, err := PublishRelease(t.Context(), root, ReleasePublishOptions{
+		Channel: "rc", ExpectedVersion: "v1.2.4-rc.42",
+	}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "GITHUB_TOKEN or GH_TOKEN") {
+		t.Fatalf("missing credential error = %v", err)
+	}
+	repository, err := git.PlainOpen(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.Reference(plumbing.ReferenceName("refs/tags/v1.2.4-rc.42"), true); !errors.Is(err, plumbing.ErrReferenceNotFound) {
+		t.Fatalf("RC tag created before credential check: %v", err)
+	}
+}
+
 func TestExpectedReleaseGroupsUsesDeclaredNativeTargets(t *testing.T) {
 	root := writeTaggedCargoReleaseFixture(t)
 	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))

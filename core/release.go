@@ -65,6 +65,9 @@ func PublishRelease(ctx context.Context, root string, options ReleasePublishOpti
 		(options.Channel == "rc" && stableVersionPattern.MatchString(options.ExpectedVersion)) {
 		return ReleasePlan{}, fmt.Errorf("invalid %s expected version %q", options.Channel, options.ExpectedVersion)
 	}
+	if goreleaserToken() == "" {
+		return ReleasePlan{}, errors.New("GITHUB_TOKEN or GH_TOKEN is required before creating a release tag")
+	}
 	// RC publication must never consult stable version planning: an RC tag is
 	// intentionally not a stable release candidate for PlanStableRelease.
 	var plan ReleasePlan
@@ -98,7 +101,7 @@ func PublishRelease(ctx context.Context, root string, options ReleasePublishOpti
 			return ReleasePlan{}, tagErr
 		}
 		conflict := false
-		_ = tagHash.ForEach(func(ref *plumbing.Reference) error {
+		if err := tagHash.ForEach(func(ref *plumbing.Reference) error {
 			if ref.Name().Short() != options.ExpectedVersion {
 				return nil
 			}
@@ -112,7 +115,9 @@ func PublishRelease(ctx context.Context, root string, options ReleasePublishOpti
 				conflict = true
 			}
 			return nil
-		})
+		}); err != nil {
+			return ReleasePlan{}, fmt.Errorf("inspect RC tags: %w", err)
+		}
 		if conflict {
 			return ReleasePlan{}, fmt.Errorf("release tag %s exists away from HEAD", options.ExpectedVersion)
 		}
@@ -681,10 +686,8 @@ func runGoReleaserWithFiles(ctx context.Context, root string, plugins []PackageM
 	}
 	releaseEnvironment := withoutEnvironment(toolEnvironment, publicationCredentialEnvironment...)
 	if !snapshot {
-		for _, name := range []string{"GITHUB_TOKEN", "GH_TOKEN"} {
-			if value, ok := os.LookupEnv(name); ok {
-				releaseEnvironment = append(releaseEnvironment, name+"="+value)
-			}
+		if token := goreleaserToken(); token != "" {
+			releaseEnvironment = append(releaseEnvironment, "GITHUB_TOKEN="+token)
 		}
 	}
 	command := exec.CommandContext(ctx, goreleaser, arguments...)
@@ -696,6 +699,13 @@ func runGoReleaserWithFiles(ctx context.Context, root string, plugins []PackageM
 		return fmt.Errorf("run GoReleaser: %w", err)
 	}
 	return nil
+}
+
+func goreleaserToken() string {
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		return token
+	}
+	return os.Getenv("GH_TOKEN")
 }
 
 func executableFromEnvironment(name string, environment []string) (string, error) {
