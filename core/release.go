@@ -525,14 +525,14 @@ release:
   replace_existing_artifacts: true
 `)
 	for _, file := range files {
-		if !filepath.IsAbs(file) {
-			return nil, fmt.Errorf("release file %q must be absolute", file)
+		if !filepath.IsLocal(file) {
+			return nil, fmt.Errorf("GoReleaser extra file %q must be relative to the release workspace", file)
 		}
 	}
 	if len(files) != 0 {
 		builder.WriteString("  extra_files:\n")
 		for _, file := range files {
-			quoted, err := json.Marshal(file)
+			quoted, err := json.Marshal(filepath.ToSlash(file))
 			if err != nil {
 				return nil, fmt.Errorf("encode release file %q: %w", file, err)
 			}
@@ -633,6 +633,62 @@ func validateReleaseFiles(filesDir string, groups []string) ([]string, error) {
 	return files, nil
 }
 
+// GoReleaser's extra-file globber only resolves paths inside its working
+// directory. Keep a private copy in the git directory so the files are local
+// to that workspace without making the release checkout dirty.
+func stageGoReleaserFiles(workspace string, files []string) ([]string, func(), error) {
+	if len(files) == 0 {
+		return nil, func() {}, nil
+	}
+	gitDir := filepath.Join(workspace, ".git")
+	info, err := os.Lstat(gitDir)
+	if err != nil || !info.IsDir() {
+		return nil, nil, fmt.Errorf("release workspace requires a local .git directory to stage extra files: %v", err)
+	}
+	dir, err := os.MkdirTemp(gitDir, "premise-release-files-")
+	if err != nil {
+		return nil, nil, fmt.Errorf("stage release files: %w", err)
+	}
+	cleanup := func() { os.RemoveAll(dir) }
+	staged := make([]string, 0, len(files))
+	for _, source := range files {
+		if !filepath.IsAbs(source) {
+			cleanup()
+			return nil, nil, fmt.Errorf("release file %q must be absolute", source)
+		}
+		info, err := os.Lstat(source)
+		if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+			cleanup()
+			return nil, nil, fmt.Errorf("release file %q must be a nonempty regular file: %v", source, err)
+		}
+		destination := filepath.Join(dir, filepath.Base(source))
+		input, err := os.Open(source)
+		if err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("open release file %q: %w", source, err)
+		}
+		output, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			input.Close()
+			cleanup()
+			return nil, nil, fmt.Errorf("stage release file %q: %w", source, err)
+		}
+		_, copyErr := io.Copy(output, input)
+		copyErr = errors.Join(copyErr, output.Close(), input.Close())
+		if copyErr != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("copy release file %q: %w", source, copyErr)
+		}
+		relative, err := filepath.Rel(workspace, destination)
+		if err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("locate staged release file %q: %w", source, err)
+		}
+		staged = append(staged, relative)
+	}
+	return staged, cleanup, nil
+}
+
 func runGoReleaser(ctx context.Context, root string, plugins []PackageManagerBackend, snapshot bool, stdout, stderr io.Writer) error {
 	return runGoReleaserWithFiles(ctx, root, plugins, nil, snapshot, stdout, stderr)
 }
@@ -642,17 +698,22 @@ func runGoReleaserWithFiles(ctx context.Context, root string, plugins []PackageM
 	if err != nil {
 		return err
 	}
-	configuration, err := goReleaserConfigWithFiles(root, manifest, plugins, files)
+	workingDirectory, serial, err := prepareReleaseWorkspace(ctx, root, manifest, plugins, stdout, stderr)
+	if err != nil {
+		return err
+	}
+	stagedFiles, cleanup, err := stageGoReleaserFiles(workingDirectory, files)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	configuration, err := goReleaserConfigWithFiles(root, manifest, plugins, stagedFiles)
 	if err != nil {
 		return fmt.Errorf("generate GoReleaser configuration: %w", err)
 	}
 	if len(configuration) == 0 {
 		fmt.Fprintln(stdout, "skip: workspace has no downloadable release artifacts")
 		return nil
-	}
-	workingDirectory, serial, err := prepareReleaseWorkspace(ctx, root, manifest, plugins, stdout, stderr)
-	if err != nil {
-		return err
 	}
 	temporary, err := os.CreateTemp("", "premise-goreleaser-*.yml")
 	if err != nil {

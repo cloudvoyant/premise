@@ -680,16 +680,111 @@ func TestValidateReleaseFiles(t *testing.T) {
 
 func TestGoReleaserConfigWithFiles(t *testing.T) {
 	root := t.TempDir()
-	file := filepath.Join(root, "my installer.dmg")
+	file := filepath.Join(".git", "premise-release-files-123", "my installer.dmg")
 	configuration, err := goReleaserConfigWithFiles(root, NewManifest("native-app"), nil, []string{file})
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(configuration)
-	if !strings.Contains(text, "skip: true") || !strings.Contains(text, `extra_files:`) || !strings.Contains(text, `my installer.dmg`) {
+	if !strings.Contains(text, "skip: true") || !strings.Contains(text, `extra_files:`) || !strings.Contains(text, `glob: ".git/premise-release-files-123/my installer.dmg"`) {
 		t.Fatalf("file-only config = %q", text)
 	}
-	if _, err := goReleaserConfigWithFiles(root, NewManifest("native-app"), nil, []string{"relative.dmg"}); err == nil {
-		t.Fatal("relative extra file accepted")
+	for _, invalid := range []string{filepath.Join(root, "installer.dmg"), "../installer.dmg"} {
+		if _, err := goReleaserConfigWithFiles(root, NewManifest("native-app"), nil, []string{invalid}); err == nil {
+			t.Fatalf("unsafe GoReleaser glob %q accepted", invalid)
+		}
+	}
+}
+
+func TestRunGoReleaserStagesExtraFiles(t *testing.T) {
+	root := t.TempDir()
+	if _, err := git.PlainInit(root, false); err != nil {
+		t.Fatal(err)
+	}
+	manifest := NewManifest("native-app")
+	manifest.Workspace.PackageManagers = []string{"go"}
+	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
+		t.Fatal(err)
+	}
+	plugin := testPackageManager{id: "go"}
+	useTestPackageManagers(t, plugin)
+	source := filepath.Join(t.TempDir(), "installer.dmg")
+	if err := os.WriteFile(source, []byte("native installer"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	mise := "#!/bin/sh\nif [ \"$1\" = exec ]; then /usr/bin/env -0; else exit 1; fi\n"
+	if err := os.WriteFile(filepath.Join(bin, "mise"), []byte(mise), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	capture := filepath.Join(t.TempDir(), "config.yml")
+	goreleaser := "#!/bin/sh\ncp \"$4\" \"$CAPTURE\"\nexit 7\n"
+	if err := os.WriteFile(filepath.Join(bin, "goreleaser"), []byte(goreleaser), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CAPTURE", capture)
+	var output bytes.Buffer
+	runErr := runGoReleaserWithFiles(t.Context(), root, []PackageManagerBackend{plugin}, []string{source}, false, &output, &output)
+	if runErr == nil {
+		t.Fatal("expected GoReleaser shim failure")
+	}
+	config, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatalf("read GoReleaser configuration after %v: %v; output: %s", runErr, err, output.String())
+	}
+	if !strings.Contains(string(config), `glob: ".git/premise-release-files-`) || strings.Contains(string(config), source) {
+		t.Fatalf("GoReleaser config uses a non-local extra file: %s", config)
+	}
+	entries, err := os.ReadDir(filepath.Join(root, ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "premise-release-files-") {
+			t.Fatalf("staged files remain after GoReleaser failure: %s", entry.Name())
+		}
+	}
+}
+
+func TestStageGoReleaserFiles(t *testing.T) {
+	root := t.TempDir()
+	repository, err := git.PlainInit(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(t.TempDir(), "installer.dmg")
+	if err := os.WriteFile(source, []byte("native installer"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	files, cleanup, err := stageGoReleaserFiles(root, []string{source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || !filepath.IsLocal(files[0]) || !strings.HasPrefix(files[0], ".git"+string(filepath.Separator)) {
+		t.Fatalf("staged GoReleaser files = %v", files)
+	}
+	staged := filepath.Join(root, files[0])
+	contents, err := os.ReadFile(staged)
+	if err != nil || string(contents) != "native installer" {
+		t.Fatalf("staged file = %q, %v", contents, err)
+	}
+	worktree, err := repository.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := worktree.Status()
+	if err != nil || !status.IsClean() {
+		t.Fatalf("release checkout became dirty: %v, %v", status, err)
+	}
+	cleanup()
+	if _, err := os.Stat(staged); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("staged file remains after cleanup: %v", err)
+	}
+	if _, _, err := stageGoReleaserFiles(root, []string{source, source}); err == nil {
+		t.Fatal("duplicate staged asset name accepted")
+	}
+	if _, _, err := stageGoReleaserFiles(root, []string{"relative.dmg"}); err == nil {
+		t.Fatal("relative source accepted")
 	}
 }
