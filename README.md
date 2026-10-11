@@ -62,6 +62,7 @@ pm update v0.2.1
 
 - [User Guide](docs/guides/README.md) - Complete setup and usage guide
 - [Architecture](docs/architecture.md) - Overall Premise architecture
+- [Go Projects and Library Releases](docs/go-modules.md) - Separate modules with shared release versions
 - [Generation Architecture](docs/generation.md) - Create-only generation and template merging
 - [Infrastructure](docs/infrastructure.md) - Infrastructure and CI/CD details
 

@@ -53,3 +53,7 @@ Registry loading reads only manifest declarations. Physical files under `templat
 `DetectProjectKind` reads `workspace.kind`; it does not infer lifecycle behavior from directory or package files. A repository may contain both generated projects and template declarations, while its configured kind selects the fallback CI lifecycle.
 
 The registry module identifies and retrieves templates. Generation owns materialization, and the task/template contract boundary owns execution-based validation.
+
+The official Go registry is `cloudvoyant/premise-go`.
+It supplies Cobra, Connect/gRPC, HTMX, Go library, and Pulumi component templates.
+Use an explicit local source during tandem development until the new registry has a published commit.

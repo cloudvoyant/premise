@@ -87,3 +87,14 @@ Language-package credentials are excluded from general Mise and GoReleaser envir
 Project `release:build` tasks copy native output into the directory selected by the CI flow. They do not tag or publish. The hosted release job downloads every required native file and validates the complete set before creating or reusing a tag at the triggering commit. `pm release publish --channel rc --expected-version VERSION --files-dir DIRECTORY` publishes one combined GitHub release. `pm release packages` runs afterward with registry credentials isolated to that job.
 
 A `[publish-rc]` feature-branch push requests a GitHub prerelease. RCs do not replace the latest stable release. A dry release plan validates inputs without tags or publication. Native files are transferred as artifacts rather than caches. For Tauri, the project-owned Cargo/Mise task stages NSIS output for Windows RCs and can stage MSI output for stable releases.
+
+## Go module tags
+
+Go projects use separate modules with one shared repository version.
+Premise creates directory-prefixed tags for public modules in the GitHub release step.
+It pushes those tags atomically with the repository tag, where GitHub write credentials are available.
+Go does not use the later registry package upload step.
+
+`pm release modules prepare --version v1.2.3` updates public sibling requirements before the user commits the release candidate.
+Release checks test public modules outside the local Go workspace.
+See [Go projects and library releases](../go-modules.md) for policy files, external consumption, and major-version paths.

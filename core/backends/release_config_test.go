@@ -144,3 +144,68 @@ func TestBuiltinDetectionAndGoReleaserConfig(t *testing.T) {
 		t.Fatalf("GoReleaserConfig(Go and Cargo library only) = %q, %v", config, err)
 	}
 }
+
+func TestGoMultiModuleArtifactsAndLibraryOnly(t *testing.T) {
+	root := t.TempDir()
+	manifest := core.NewManifest("workspace")
+	manifest.Workspace.Kind = core.ProjectKindMonorepo
+	manifest.Workspace.PackageManagers = []string{"go"}
+	for _, name := range []string{"cli", "service", "math"} {
+		kind := "apps"
+		main := "."
+		if name == "math" {
+			kind = "libs"
+			main = ""
+		}
+		path := kind + "/" + name
+		manifest.Workspace.Projects = append(manifest.Workspace.Projects, core.Project{Name: name, Path: path, Template: "go:" + name})
+		dir := filepath.Join(root, path)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/repo/"+path+"\ngo 1.25.0\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".premise-go.toml"), []byte("publication = 'private-local'\nmain = '"+main+"'\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fragment, err := (Go{}).CreateGoReleaserConfig(root, manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"dir: apps/cli", "dir: apps/service", "id: go-cli", "id: go-service"} {
+		if !strings.Contains(fragment, want) {
+			t.Fatalf("missing %s in %s", want, fragment)
+		}
+	}
+	if strings.Contains(fragment, "math") || strings.Contains(fragment, "main: workspace") {
+		t.Fatalf("library invented an artifact: %s", fragment)
+	}
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/repo\ngo 1.25.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fragment, err = (Go{}).CreateGoReleaserConfig(root, manifest)
+	if err != nil || !strings.Contains(fragment, "id: go-cli") || !strings.Contains(fragment, "binary: workspace") {
+		t.Fatalf("root plus project apps: %s, %v", fragment, err)
+	}
+	if err := os.Remove(filepath.Join(root, "go.mod")); err != nil {
+		t.Fatal(err)
+	}
+	manifest.Workspace.Projects = manifest.Workspace.Projects[2:]
+	fragment, err = (Go{}).CreateGoReleaserConfig(root, manifest)
+	if err != nil || fragment != "" {
+		t.Fatalf("library only = %s, %v", fragment, err)
+	}
+	registerBuiltins(t)
+	if err := os.WriteFile(filepath.Join(root, "libs/math/.premise-go.toml"), []byte("publication='public'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.SaveManifest(filepath.Join(root, core.ManifestFilename), manifest); err != nil {
+		t.Fatal(err)
+	}
+	config, err := core.GoReleaserConfig(root)
+	if err != nil || !strings.Contains(string(config), "skip: true") || strings.Contains(string(config), "binary:") {
+		t.Fatalf("module-only release: %s, %v", config, err)
+	}
+}

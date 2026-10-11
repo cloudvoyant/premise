@@ -25,6 +25,7 @@ var OfficialSources = []string{
 	NativeTemplateSource,
 	"cloudvoyant/premise-cargo",
 	"cloudvoyant/premise-bun",
+	"cloudvoyant/premise-go",
 }
 
 // Public types ---------------------------------------------------------------
