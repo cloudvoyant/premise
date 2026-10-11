@@ -26,13 +26,7 @@ import (
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 )
 
-const goreleaserVersion = "2.18.1"
-
-var stableVersionPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
-var releaseVersionPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?$`)
-
-var executeGoReleaser = runGoReleaser
-var pushReleaseTag = createAndPushReleaseTag
+// Public API -----------------------------------------------------------------
 
 // ReleasePlan describes the stable release decision for the current HEAD.
 type ReleasePlan struct {
@@ -151,64 +145,6 @@ func PublishRelease(ctx context.Context, root string, options ReleasePublishOpti
 	return plan, nil
 }
 
-func publishReleaseCandidate(ctx context.Context, root string, kind ProjectKind, stdout, stderr io.Writer) error {
-	_, plugins, err := loadReleaseBackends(root)
-	if err != nil {
-		return err
-	}
-	packagePublishers := make([]PackageManagerBackend, 0, len(plugins))
-	for _, plugin := range plugins {
-		if plugin.SupportsPackages() {
-			packagePublishers = append(packagePublishers, plugin)
-		}
-	}
-	if len(packagePublishers) != 0 {
-		identifier := os.Getenv("GITHUB_RUN_NUMBER")
-		if err := ValidateRCIdentifier(identifier); err != nil {
-			return fmt.Errorf("resolve RC identifier: %w", err)
-		}
-		version, err := ReleaseCandidateVersion(root, identifier)
-		if err != nil {
-			return err
-		}
-		for _, plugin := range packagePublishers {
-			if err := plugin.PublishPackages(ctx, root, version, "publish:rc", stdout, stderr); err != nil {
-				return fmt.Errorf("publish %s RC packages: %w", plugin.ID(), err)
-			}
-		}
-		return nil
-	}
-
-	if kind == "" {
-		kind, err = DetectProjectKind(root)
-		if err != nil {
-			return fmt.Errorf("detect RC project kind: %w", err)
-		}
-	}
-	mise := miseRunner{
-		Stdout:  stdout,
-		Stderr:  stderr,
-		Ceiling: filepath.Dir(filepath.Clean(root)),
-	}
-	exists, err := mise.taskExists(ctx, root, "publish:rc")
-	if err != nil {
-		return fmt.Errorf("inspect publish:rc task: %w", err)
-	}
-	if exists {
-		if err := mise.run(ctx, root, nil, "run", "publish:rc"); err != nil {
-			return fmt.Errorf("publish RC: %w", err)
-		}
-		return nil
-	}
-	if kind != ProjectKindMonorepo {
-		return errors.New("marked RC push requires a root publish:rc task")
-	}
-	if err := mise.run(ctx, root, nil, "run", "--jobs", "1", "//...:publish:rc"); err != nil {
-		return fmt.Errorf("publish monorepo RC: %w", err)
-	}
-	return nil
-}
-
 // PlanStableRelease fetches stable tags and decides whether HEAD should reuse a
 // tag, create the next one, or skip because no release-worthy change exists.
 func PlanStableRelease(ctx context.Context, root string) (ReleasePlan, error) {
@@ -249,32 +185,6 @@ func PlanStableRelease(ctx context.Context, root string) (ReleasePlan, error) {
 // needed. It does not build or publish artifacts.
 func PrepareStableRelease(ctx context.Context, root string, stdout io.Writer) (ReleasePlan, error) {
 	return prepareStableRelease(ctx, root, stdout, false)
-}
-
-func prepareStableRelease(ctx context.Context, root string, stdout io.Writer, fullPublish bool) (ReleasePlan, error) {
-	plan, err := PlanStableRelease(ctx, root)
-	if err != nil {
-		return ReleasePlan{}, fmt.Errorf("plan stable release: %w", err)
-	}
-	if plan.Skip {
-		fmt.Fprintln(stdout, "No release-worthy change.")
-		return plan, nil
-	}
-	if plan.ReuseTag {
-		fmt.Fprintf(stdout, "Reusing existing stable tag at HEAD: %s\n", plan.Version)
-		return plan, nil
-	}
-	if fullPublish {
-		if err := preflightStablePublication(ctx, root, plan.Version); err != nil {
-			return ReleasePlan{}, fmt.Errorf("preflight stable publication: %w", err)
-		}
-	}
-	if err := pushReleaseTag(ctx, root, plan.Version, releaseAuthentication()); err != nil {
-		return ReleasePlan{}, fmt.Errorf("prepare stable release: %w", err)
-	}
-	plan.ReuseTag = true
-	fmt.Fprintf(stdout, "Created stable tag: %s\n", plan.Version)
-	return plan, nil
 }
 
 // PublishGitHubRelease publishes artifacts for a stable tag already at HEAD.
@@ -426,6 +336,145 @@ func PublishStableRelease(ctx context.Context, root string, stdout, stderr io.Wr
 	return plan, nil
 }
 
+// BuildReleaseArtifacts builds the complete release matrix without publishing
+// a release, creating a tag, or publishing language packages.
+func BuildReleaseArtifacts(ctx context.Context, root string, stdout, stderr io.Writer) error {
+	_, plugins, err := loadReleaseBackends(root)
+	if err != nil {
+		return fmt.Errorf("resolve package managers: %w", err)
+	}
+	if err := executeGoReleaser(ctx, root, plugins, true, stdout, stderr); err != nil {
+		return fmt.Errorf("build release artifacts: %w", err)
+	}
+	return nil
+}
+
+// GoReleaserConfig generates Premise-owned GoReleaser configuration for a
+// conventionally structured repository. Consumers do not need a config file.
+func GoReleaserConfig(root string) ([]byte, error) {
+	manifest, plugins, err := loadReleaseBackends(root)
+	if err != nil {
+		return nil, err
+	}
+	return goReleaserConfig(root, manifest, plugins)
+}
+
+// ExpectedReleaseGroups derives native artifact groups from the manifest, not
+// from the downloaded tree. Unexpected uploaded groups must fail closed.
+func ExpectedReleaseGroups(root string) ([]string, error) {
+	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
+	if err != nil {
+		return nil, err
+	}
+	projects, err := SelectCIProjects(root, manifest, CIFlowOnCommit)
+	if err != nil {
+		return nil, err
+	}
+	groups := []string{}
+	for _, project := range projects {
+		for _, platform := range project.ReleasePlatforms {
+			groups = append(groups, project.Name+"-"+platform)
+		}
+	}
+	return groups, nil
+}
+
+// Private helpers ------------------------------------------------------------
+
+const goreleaserVersion = "2.18.1"
+
+var stableVersionPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
+
+var releaseVersionPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?$`)
+
+var executeGoReleaser = runGoReleaser
+
+var pushReleaseTag = createAndPushReleaseTag
+
+func publishReleaseCandidate(ctx context.Context, root string, kind ProjectKind, stdout, stderr io.Writer) error {
+	_, plugins, err := loadReleaseBackends(root)
+	if err != nil {
+		return err
+	}
+	packagePublishers := make([]PackageManagerBackend, 0, len(plugins))
+	for _, plugin := range plugins {
+		if plugin.SupportsPackages() {
+			packagePublishers = append(packagePublishers, plugin)
+		}
+	}
+	if len(packagePublishers) != 0 {
+		identifier := os.Getenv("GITHUB_RUN_NUMBER")
+		if err := ValidateRCIdentifier(identifier); err != nil {
+			return fmt.Errorf("resolve RC identifier: %w", err)
+		}
+		version, err := ReleaseCandidateVersion(root, identifier)
+		if err != nil {
+			return err
+		}
+		for _, plugin := range packagePublishers {
+			if err := plugin.PublishPackages(ctx, root, version, "publish:rc", stdout, stderr); err != nil {
+				return fmt.Errorf("publish %s RC packages: %w", plugin.ID(), err)
+			}
+		}
+		return nil
+	}
+
+	if kind == "" {
+		kind, err = DetectProjectKind(root)
+		if err != nil {
+			return fmt.Errorf("detect RC project kind: %w", err)
+		}
+	}
+	mise := miseRunner{
+		Stdout:  stdout,
+		Stderr:  stderr,
+		Ceiling: filepath.Dir(filepath.Clean(root)),
+	}
+	exists, err := mise.taskExists(ctx, root, "publish:rc")
+	if err != nil {
+		return fmt.Errorf("inspect publish:rc task: %w", err)
+	}
+	if exists {
+		if err := mise.run(ctx, root, nil, "run", "publish:rc"); err != nil {
+			return fmt.Errorf("publish RC: %w", err)
+		}
+		return nil
+	}
+	if kind != ProjectKindMonorepo {
+		return errors.New("marked RC push requires a root publish:rc task")
+	}
+	if err := mise.run(ctx, root, nil, "run", "--jobs", "1", "//...:publish:rc"); err != nil {
+		return fmt.Errorf("publish monorepo RC: %w", err)
+	}
+	return nil
+}
+
+func prepareStableRelease(ctx context.Context, root string, stdout io.Writer, fullPublish bool) (ReleasePlan, error) {
+	plan, err := PlanStableRelease(ctx, root)
+	if err != nil {
+		return ReleasePlan{}, fmt.Errorf("plan stable release: %w", err)
+	}
+	if plan.Skip {
+		fmt.Fprintln(stdout, "No release-worthy change.")
+		return plan, nil
+	}
+	if plan.ReuseTag {
+		fmt.Fprintf(stdout, "Reusing existing stable tag at HEAD: %s\n", plan.Version)
+		return plan, nil
+	}
+	if fullPublish {
+		if err := preflightStablePublication(ctx, root, plan.Version); err != nil {
+			return ReleasePlan{}, fmt.Errorf("preflight stable publication: %w", err)
+		}
+	}
+	if err := pushReleaseTag(ctx, root, plan.Version, releaseAuthentication()); err != nil {
+		return ReleasePlan{}, fmt.Errorf("prepare stable release: %w", err)
+	}
+	plan.ReuseTag = true
+	fmt.Fprintf(stdout, "Created stable tag: %s\n", plan.Version)
+	return plan, nil
+}
+
 func preflightStablePublication(ctx context.Context, root, version string) error {
 	_, plugins, err := loadReleaseBackends(root)
 	if err != nil {
@@ -461,29 +510,6 @@ func requirePreparedRelease(ctx context.Context, root string, stdout io.Writer) 
 	}
 	fmt.Fprintf(stdout, "Using stable tag at HEAD: %s\n", plan.Version)
 	return plan, nil
-}
-
-// BuildReleaseArtifacts builds the complete release matrix without publishing
-// a release, creating a tag, or publishing language packages.
-func BuildReleaseArtifacts(ctx context.Context, root string, stdout, stderr io.Writer) error {
-	_, plugins, err := loadReleaseBackends(root)
-	if err != nil {
-		return fmt.Errorf("resolve package managers: %w", err)
-	}
-	if err := executeGoReleaser(ctx, root, plugins, true, stdout, stderr); err != nil {
-		return fmt.Errorf("build release artifacts: %w", err)
-	}
-	return nil
-}
-
-// GoReleaserConfig generates Premise-owned GoReleaser configuration for a
-// conventionally structured repository. Consumers do not need a config file.
-func GoReleaserConfig(root string) ([]byte, error) {
-	manifest, plugins, err := loadReleaseBackends(root)
-	if err != nil {
-		return nil, err
-	}
-	return goReleaserConfig(root, manifest, plugins)
 }
 
 func goReleaserConfig(root string, manifest Config, plugins []PackageManagerBackend) ([]byte, error) {
@@ -542,26 +568,6 @@ release:
 		}
 	}
 	return []byte(builder.String()), nil
-}
-
-// ExpectedReleaseGroups derives native artifact groups from the manifest, not
-// from the downloaded tree. Unexpected uploaded groups must fail closed.
-func ExpectedReleaseGroups(root string) ([]string, error) {
-	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
-	if err != nil {
-		return nil, err
-	}
-	projects, err := SelectCIProjects(root, manifest, CIFlowOnCommit)
-	if err != nil {
-		return nil, err
-	}
-	groups := []string{}
-	for _, project := range projects {
-		for _, platform := range project.ReleasePlatforms {
-			groups = append(groups, project.Name+"-"+platform)
-		}
-	}
-	return groups, nil
 }
 
 // validateReleaseFiles checks the entire downloaded artifact tree before any

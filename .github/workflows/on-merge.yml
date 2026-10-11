@@ -24,7 +24,7 @@ jobs:
       native: ${{ steps.plan.outputs.native }}
       version: ${{ steps.plan.outputs.release_version }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -53,7 +53,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -68,7 +68,7 @@ jobs:
           channel: stable
           version: ${{ needs.plan.outputs.version }}
           output-dir: ${{ runner.temp }}/premise-files
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@v4
         with:
           name: single
           path: ${{ runner.temp }}/premise-files/
@@ -85,7 +85,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -103,7 +103,7 @@ jobs:
           channel: stable
           version: ${{ needs.plan.outputs.version }}
           output-dir: ${{ runner.temp }}/premise-files
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.project }}-${{ matrix.platform }}
           path: ${{ runner.temp }}/premise-files/
@@ -125,19 +125,19 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      - uses: actions/download-artifact@v4
         if: >-
           needs.plan.outputs.mode == 'single' &&
           needs.plan.outputs.native == 'true'
         with:
           name: single
           path: ${{ runner.temp }}/premise-files
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      - uses: actions/download-artifact@v4
         if: >-
           needs.plan.outputs.mode == 'matrix' &&
           needs.plan.outputs.native == 'true'
@@ -176,7 +176,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
       - name: Publish registry packages

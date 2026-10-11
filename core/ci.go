@@ -21,6 +21,8 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 )
 
+// Public API -----------------------------------------------------------------
+
 // CIFlow names one convention-driven CI lifecycle.
 type CIFlow string
 
@@ -127,28 +129,6 @@ func SelectCIProjects(root string, manifest Config, flow CIFlow) ([]CIPlatformPr
 		seenPaths[project.Path] = struct{}{}
 	}
 	return out, nil
-}
-
-func ciProject(name, path, kind, source string, declaration PlatformDeclaration, host string) CIPlatformProject {
-	checks := append([]string{}, declaration.CheckPlatforms...)
-	if len(checks) == 0 {
-		checks = []string{host}
-	}
-	project := CIPlatformProject{
-		Name: name, Path: path, Kind: kind, Source: source,
-		CheckPlatforms:   checks,
-		ReleasePlatforms: append([]string{}, declaration.ReleasePlatforms...),
-		ExclusionReasons: []string{},
-	}
-	platforms := project.Platforms()
-	switch {
-	case len(platforms) > 1:
-		project.ExclusionReasons = append(project.ExclusionReasons, "multiple platforms: use --project and --platform")
-	case len(platforms) == 1 && platforms[0] != host:
-		project.ExclusionReasons = append(project.ExclusionReasons, "requires "+platforms[0]+" host")
-	}
-	project.Eligible = len(project.ExclusionReasons) == 0
-	return project
 }
 
 // CIMatrixRow describes one complete project/platform flow, not an internal phase.
@@ -335,6 +315,30 @@ func RunCIFlowWithOptions(ctx context.Context, root string, flow CIFlow, environ
 		return err
 	}
 	return nil
+}
+
+// Private helpers ------------------------------------------------------------
+
+func ciProject(name, path, kind, source string, declaration PlatformDeclaration, host string) CIPlatformProject {
+	checks := append([]string{}, declaration.CheckPlatforms...)
+	if len(checks) == 0 {
+		checks = []string{host}
+	}
+	project := CIPlatformProject{
+		Name: name, Path: path, Kind: kind, Source: source,
+		CheckPlatforms:   checks,
+		ReleasePlatforms: append([]string{}, declaration.ReleasePlatforms...),
+		ExclusionReasons: []string{},
+	}
+	platforms := project.Platforms()
+	switch {
+	case len(platforms) > 1:
+		project.ExclusionReasons = append(project.ExclusionReasons, "multiple platforms: use --project and --platform")
+	case len(platforms) == 1 && platforms[0] != host:
+		project.ExclusionReasons = append(project.ExclusionReasons, "requires "+platforms[0]+" host")
+	}
+	project.Eligible = len(project.ExclusionReasons) == 0
+	return project
 }
 
 func validateCIStaging(flow CIFlow, options CIFlowOptions) error {
