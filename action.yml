@@ -24,7 +24,7 @@ inputs:
     default: auto
   mise-version:
     default: "2026.10.8"
-    description: "Mise version to install (defaults to the latest release)"
+    description: "Mise version to install (defaults to the pinned supported release)"
     required: false
   install-premise:
     description: "Premise installation mode: pre-built | build | skip"
