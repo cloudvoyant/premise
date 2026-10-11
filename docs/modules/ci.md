@@ -82,7 +82,7 @@ Tauri keeps its normal Mise tasks and Cargo build directories. Its `release:buil
 
 ### Manual deploy
 
-`on-release` stays independent of commit/merge publication. The root override or optional app deploy and end-to-end tasks receive `stage` or `prod`. Native builds use scoped commit or merge flows; the old `on-platform` flow and platform helper commands have been removed. Before premise-cargo merges, its temporary Premise branch reference must become an immutable released tag. The `v0` alias can move only after that release is verified.
+`on-release` stays independent of commit/merge publication. The root override or optional app deploy and end-to-end tasks receive `stage` or `prod`. Native builds use scoped commit or merge flows; the old `on-platform` flow and platform helper commands have been removed. The tandem premise-cargo PR pins its action calls to the commit verified by the Premise RC release and can land with the Premise PR. The `v0` alias can move only after that release is verified.
 
 ## API
 
