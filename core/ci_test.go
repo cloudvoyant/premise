@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -425,6 +426,88 @@ func TestCIFlowAllowsTemplatesInMonorepoLifecycle(t *testing.T) {
 		if strings.Contains(call.directory, filepath.Join("templates", "app")) {
 			t.Fatalf("monorepo lifecycle unexpectedly ran registry fallback: %#v", call)
 		}
+	}
+}
+
+func TestCIStagingValidation(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		flow    CIFlow
+		options CIFlowOptions
+		want    string
+	}{
+		{name: "channel requires version", flow: CIFlowOnCommit, options: CIFlowOptions{Channel: "rc", OutputDir: t.TempDir()}, want: "provided together"},
+		{name: "version requires channel", flow: CIFlowOnCommit, options: CIFlowOptions{Version: "v1.0.0-rc.1", OutputDir: t.TempDir()}, want: "provided together"},
+		{name: "absolute output", flow: CIFlowOnCommit, options: CIFlowOptions{OutputDir: "relative"}, want: "absolute"},
+		{name: "channel mismatch", flow: CIFlowOnCommit, options: CIFlowOptions{Channel: "stable", Version: "v1.0.0", OutputDir: t.TempDir()}, want: "does not match"},
+		{name: "version mismatch", flow: CIFlowOnCommit, options: CIFlowOptions{Channel: "rc", Version: "nonsense", OutputDir: t.TempDir()}, want: "invalid release version"},
+		{name: "valid rc", flow: CIFlowOnCommit, options: CIFlowOptions{Channel: "rc", Version: "v1.0.0-rc.1", OutputDir: t.TempDir()}},
+		{name: "valid stable", flow: CIFlowOnMerge, options: CIFlowOptions{Channel: "stable", Version: "v1.0.0", OutputDir: t.TempDir()}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateCIStaging(test.flow, test.options)
+			if test.want == "" && err != nil {
+				t.Fatal(err)
+			}
+			if test.want != "" && (err == nil || !strings.Contains(err.Error(), test.want)) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestCIFlowRejectsDirectPublication(t *testing.T) {
+	for _, flow := range []CIFlow{CIFlowOnCommit, CIFlowOnMerge} {
+		err := RunCIFlowWithOptions(t.Context(), t.TempDir(), flow, "", CIReleaseAuto, CIFlowOptions{}, io.Discard, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "cannot publish directly") {
+			t.Fatalf("flow %s: error = %v", flow, err)
+		}
+	}
+}
+
+func TestCIOutputRejectsStaleFiles(t *testing.T) {
+	root := t.TempDir()
+	if err := prepareCIOutput(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "stale.msi"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareCIOutput(root); err == nil || !strings.Contains(err.Error(), "empty") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestPlanCIScheduleUsesOneMatrixForAllProjects(t *testing.T) {
+	projects := []CIPlatformProject{
+		{Name: "lib", CheckPlatforms: []string{"linux"}, ReleasePlatforms: []string{}},
+		{Name: "tauri", CheckPlatforms: []string{"linux", "macos", "windows"}, ReleasePlatforms: []string{"linux", "macos", "windows"}},
+	}
+	plan, err := PlanCISchedule(projects)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Mode != "matrix" || !plan.HasNative || len(plan.Matrix) != 4 {
+		t.Fatalf("schedule = %#v, want four rows in one matrix", plan)
+	}
+	if plan.Matrix[0].Project != "lib" || plan.Matrix[0].Platform != "linux" || plan.Matrix[0].Native {
+		t.Fatalf("single-platform project omitted from matrix: %#v", plan.Matrix[0])
+	}
+	if plan.Matrix[2].Runner != "macos-14" || plan.Matrix[3].Runner != "windows-2022" {
+		t.Fatalf("wrong runner images: %#v", plan.Matrix)
+	}
+}
+
+func TestPlanCIScheduleSingleRunnerAndNoNative(t *testing.T) {
+	plan, err := PlanCISchedule([]CIPlatformProject{{Name: "app", CheckPlatforms: []string{"macos"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Mode != "single" || plan.Runner != "macos-14" || plan.HasNative || len(plan.Matrix) != 0 {
+		t.Fatalf("single schedule = %#v", plan)
+	}
+	if _, err := PlanCISchedule(nil); err == nil {
+		t.Fatal("empty project schedule accepted")
 	}
 }
 

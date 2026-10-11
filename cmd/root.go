@@ -27,5 +27,5 @@ func Execute(miseTemplate string, assets ...core.WorkflowAsset) {
 }
 
 func init() {
-	rootCmd.AddCommand(ciCmd, initCmd, installCmd, updateCmd, generateCmd, runCmd, templateCmd)
+	rootCmd.AddCommand(ciCmd, projectsCmd, initCmd, installCmd, updateCmd, generateCmd, runCmd, templateCmd)
 }

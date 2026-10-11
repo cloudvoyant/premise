@@ -195,7 +195,7 @@ Each map distinguishes modules called directly by the command from modules used 
                     |             resolve each kind's contract task set
                     |
                     `-- uses --> [Mise boundary]
-                                  execute the template contracts
+                                  run contracts; inspect clean without erasing caches
 ```
 
 ### `pm ci flow`

@@ -11,6 +11,9 @@ import (
 
 var releaseDryRun bool
 var releaseBuildOnly bool
+var releaseChannel string
+var releaseExpectedVersion string
+var releaseFilesDir string
 
 var releaseCmd = &cobra.Command{
 	Use:   "release",
@@ -47,8 +50,54 @@ var releaseCmd = &cobra.Command{
 	},
 }
 
+var releasePublishCmd = &cobra.Command{
+	Use:   "publish",
+	Short: "publish one combined GitHub release",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		root, _, err := core.FindManifest(currentDirectory())
+		if err != nil {
+			return err
+		}
+		if err := registerPackageManagerBackends(); err != nil {
+			return err
+		}
+		groups, err := core.ExpectedReleaseGroups(root)
+		if err != nil {
+			return err
+		}
+		_, err = core.PublishRelease(cmd.Context(), root, core.ReleasePublishOptions{Channel: releaseChannel, ExpectedVersion: releaseExpectedVersion, FilesDir: releaseFilesDir, ExpectedGroups: groups}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		return err
+	},
+}
+
+var releasePackagesCmd = &cobra.Command{
+	Use:   "packages",
+	Short: "publish registry packages after release verification",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		root, _, err := core.FindManifest(currentDirectory())
+		if err != nil {
+			return err
+		}
+		if err := registerPackageManagerBackends(); err != nil {
+			return err
+		}
+		_, err = core.PublishReleasePackages(cmd.Context(), root, releaseChannel, releaseExpectedVersion, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		return err
+	},
+}
+
+func currentDirectory() string { cwd, _ := os.Getwd(); return cwd }
+
 func init() {
 	releaseCmd.Flags().BoolVar(&releaseDryRun, "dry-run", false, "plan the release without changing anything")
 	releaseCmd.Flags().BoolVar(&releaseBuildOnly, "build", false, "build release artifacts without publishing")
+	releasePublishCmd.Flags().StringVar(&releaseChannel, "channel", "stable", "release channel (stable or rc)")
+	releasePublishCmd.Flags().StringVar(&releaseExpectedVersion, "expected-version", "", "expected release version")
+	releasePublishCmd.Flags().StringVar(&releaseFilesDir, "files-dir", "", "staged release files directory")
+	releasePackagesCmd.Flags().StringVar(&releaseChannel, "channel", "stable", "release channel (stable or rc)")
+	releasePackagesCmd.Flags().StringVar(&releaseExpectedVersion, "expected-version", "", "expected release version")
+	releaseCmd.AddCommand(releasePublishCmd, releasePackagesCmd)
 	rootCmd.AddCommand(releaseCmd)
 }

@@ -181,9 +181,17 @@ func cargoReleaseBuilds(root string, manifest core.Config) (string, error) {
 		}
 		pkg, found, err := inspectCargoTemplatePackage(root, template)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("inspect Cargo template %q: %w", template.Name, err)
 		}
-		if found {
+		if !found {
+			continue
+		}
+		tauriConfig := filepath.Join(pkg.Directory, "tauri.conf.json")
+		isTauri, err := core.IsRegularFile(tauriConfig)
+		if err != nil {
+			return "", fmt.Errorf("inspect Tauri config for template %q: %w", template.Name, err)
+		}
+		if !isTauri {
 			applications = append(applications, pkg.Name)
 		}
 	}

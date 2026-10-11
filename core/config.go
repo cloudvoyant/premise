@@ -63,21 +63,28 @@ type Providers struct {
 	Versioning string `yaml:"versioning"`
 }
 
+type PlatformDeclaration struct {
+	CheckPlatforms   []string `yaml:"check_platforms,omitempty"`
+	ReleasePlatforms []string `yaml:"release_platforms,omitempty"`
+}
+
 type Project struct {
-	Name     string            `yaml:"name"`
-	Template string            `yaml:"template"`
-	Version  string            `yaml:"version,omitempty"`
-	Path     string            `yaml:"path"`
-	Answers  map[string]string `yaml:"answers,omitempty"`
+	Name     string              `yaml:"name"`
+	Template string              `yaml:"template"`
+	Version  string              `yaml:"version,omitempty"`
+	Path     string              `yaml:"path"`
+	CI       PlatformDeclaration `yaml:"ci,omitempty"`
+	Answers  map[string]string   `yaml:"answers,omitempty"`
 }
 
 type Template struct {
-	Name          string            `yaml:"name"`
-	Kind          string            `yaml:"kind"`
-	Path          string            `yaml:"path"`
-	Version       string            `yaml:"version,omitempty"`
-	Questions     []Question        `yaml:"questions"`
-	Substitutions map[string]string `yaml:"substitutions,omitempty"`
+	Name          string              `yaml:"name"`
+	Kind          string              `yaml:"kind"`
+	Path          string              `yaml:"path"`
+	Version       string              `yaml:"version,omitempty"`
+	CI            PlatformDeclaration `yaml:"ci,omitempty"`
+	Questions     []Question          `yaml:"questions"`
+	Substitutions map[string]string   `yaml:"substitutions,omitempty"`
 }
 
 type Question struct {
@@ -505,6 +512,9 @@ func (manifest Config) Validate() error {
 		if err := validateTemplatePath(template.Path); err != nil {
 			return fmt.Errorf("template_registry.templates[%d].path: %w", index, err)
 		}
+		if err := ValidatePlatformDeclaration(template.CI); err != nil {
+			return fmt.Errorf("template_registry.templates[%d].ci: %w", index, err)
+		}
 		if _, exists := templatePaths[template.Path]; exists {
 			return fmt.Errorf("duplicate template path %q", template.Path)
 		}
@@ -567,8 +577,29 @@ func (manifest Config) Validate() error {
 		if _, exists := projectPaths[project.Path]; exists {
 			return fmt.Errorf("duplicate project path %q", project.Path)
 		}
+		if err := ValidatePlatformDeclaration(project.CI); err != nil {
+			return fmt.Errorf("workspace.projects[%d].ci: %w", index, err)
+		}
 		projectNames[project.Name] = struct{}{}
 		projectPaths[project.Path] = struct{}{}
+	}
+	return nil
+}
+
+var validPlatforms = map[string]struct{}{"linux": {}, "macos": {}, "windows": {}}
+
+func ValidatePlatformDeclaration(declaration PlatformDeclaration) error {
+	seen := map[string]struct{}{}
+	for field, values := range map[string][]string{"check_platforms": declaration.CheckPlatforms, "release_platforms": declaration.ReleasePlatforms} {
+		for _, value := range values {
+			if _, ok := validPlatforms[value]; !ok {
+				return fmt.Errorf("%s contains unknown platform %q", field, value)
+			}
+			if _, ok := seen[field+":"+value]; ok {
+				return fmt.Errorf("%s contains duplicate platform %q", field, value)
+			}
+			seen[field+":"+value] = struct{}{}
+		}
 	}
 	return nil
 }

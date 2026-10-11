@@ -189,6 +189,18 @@ func runTemplateContracts(ctx context.Context, directory, kind, label string, st
 		failures = append(failures, fmt.Errorf("template %s tool install failed: %w", label, err))
 	}
 	for _, task := range tasks {
+		if task == "clean" {
+			// Assert the public contract without erasing dependencies compiled
+			// by earlier templates in this shared workspace.
+			fmt.Fprintf(stdout, "[%s] mise task info clean\n", label)
+			exists, err := mise.taskExists(ctx, directory, task)
+			if err != nil {
+				failures = append(failures, fmt.Errorf("template %s inspect clean task: %w", label, err))
+			} else if !exists {
+				failures = append(failures, fmt.Errorf("template %s has no clean task", label))
+			}
+			continue
+		}
 		fmt.Fprintf(stdout, "[%s] mise run %s\n", label, task)
 		if err := mise.run(ctx, directory, testEnvironment, "run", task); err != nil {
 			failures = append(failures, fmt.Errorf("template %s task %s failed: %w", label, task, err))
