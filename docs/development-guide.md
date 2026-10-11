@@ -69,7 +69,7 @@ go get github.com/cloudvoyant/premise@vX.Y.Z
     flow: on-commit
 ```
 
-The CLI composition root explicitly registers its built-in Go, Cargo, and Bun backends before release flows. Library clients can call `core.RegisterPackageManagerBackend(customBackend)` before running a release; no dynamic loader or `init()` registration is required. `workspace.package_managers` selects backends by ID in release order. File presence never selects a backend. Managers with the same ecosystem conflict, so a workspace cannot enable Bun and pnpm together. GoReleaser builds and archives are combined, and each eligible package publisher receives the same version. Bun and Cargo backends expose `GetPackageMetadata`, `ValidatePackage`, and `WillPublishOk`. Publication collects preflight errors across templates before making changes or publishing. Bun checks `NODE_AUTH_TOKEN` once and reuses one temporary credential file per registry. The action only sets up Mise, installs Premise, and calls `pm ci flow`. Set `install-premise` to `pre-built` to install a release, `build` to build the checked-out action source, or `skip` when `pm` is already on `PATH`.
+The CLI composition root explicitly registers its built-in Go, Cargo, and Bun backends before release flows. Library clients can call `core.RegisterPackageManagerBackend(customBackend)` before running a release; no dynamic loader or `init()` registration is required. `workspace.package_managers` selects backends by ID in release order. File presence never selects a backend. Managers with the same ecosystem conflict, so a workspace cannot enable Bun and pnpm together. GoReleaser builds and archives are combined, and each eligible package publisher receives the same version. Cargo app templates produce GoReleaser archives by default, independently of the `publish` value in `Cargo.toml`. A direct Cargo app with a regular `tauri.conf.json` in its template root is automatically excluded from generic GoReleaser archives because Tauri builds its native installers separately. This does not disable package or template tasks. Bun and Cargo backends expose `GetPackageMetadata`, `ValidatePackage`, and `WillPublishOk`. Publication collects preflight errors across templates before making changes or publishing. Bun checks `NODE_AUTH_TOKEN` once and reuses one temporary credential file per registry. The action only sets up Mise, installs Premise, and calls `pm ci flow`. Set `install-premise` to `pre-built` to install a release, `build` to build the checked-out action source, or `skip` when `pm` is already on `PATH`.
 
 ```yaml
 - uses: cloudvoyant/premise@<revision>
@@ -78,7 +78,11 @@ The CLI composition root explicitly registers its built-in Go, Cargo, and Bun ba
     install-premise: build
 ```
 
-Premise supports `on-commit`, `on-merge`, and `on-release` flows. A root Mise task with the same name overrides the convention-based fallback lifecycle. The flow command still owns guarded RC or stable publication after that lifecycle. Without an override, Premise uses `workspace.kind` to select the monorepo or template-registry lifecycle. A root can contain both generated projects and template declarations; the kind controls lifecycle behavior rather than content.
+Premise supports `on-commit`, `on-merge`, and `on-release` lifecycle flows. A root Mise task with the same name overrides the convention-based fallback lifecycle. The flow command still owns guarded RC or stable publication after that lifecycle. Without an override, Premise uses `workspace.kind` to select the monorepo or template-registry lifecycle. A root can contain both generated projects and template declarations; the kind controls lifecycle behavior rather than content.
+
+A scoped `pm ci flow` builds native files for a declared project and platform. Pass `--project`, `--platform`, `--channel` (`stable` or `rc`), `--version`, and an empty absolute `--output-dir`. The project's `release:build` Mise task receives `RELEASE_VERSION`, `PREMISE_RELEASE_CHANNEL`, and `PREMISE_ARTIFACT_DIR` and must write nonempty files there. The project owns its build commands and version overrides. The flow stages files without publishing packages or creating a tag.
+
+The commit and merge workflows call the composite action with `command: plan`, `flow`, `flow-matrix`, `release`, and `packages`. GitHub selects runners and transfers native files; the action owns each Premise operation. The publishing job validates the complete file set and creates or reuses a tag at the triggering commit before publishing ordinary archives and native installers together. Pin external action calls to a verified release tag or commit. Docker registry publishing is not part of this flow.
 
 ## Adding Dependencies
 
@@ -89,7 +93,7 @@ go mod tidy
 
 ## Publishing
 
-Stable releases are owned by the release phase of `pm ci flow on-merge`, which delegates to the `pm release` implementation after validation. Merges to `main` run `.github/workflows/on-merge.yml`, which invokes that complete flow. Premise uses the svu Go SDK to calculate the version, creates and pushes the missing stable tag, generates temporary GoReleaser configuration, and publishes the release. Release candidates are not applicable to Go (prerelease installs resolve through commit hashes), so `mise run publish:rc` only echoes its skip message.
+Stable releases are owned by the release phase of `pm ci flow on-merge`, which delegates to the `pm release` implementation after validation. Merges to `main` run `.github/workflows/on-merge.yml`, which invokes that complete flow. Premise uses the svu Go SDK to calculate the version. Before it pushes a new stable tag, it builds a GoReleaser snapshot without publication credentials. A failed build leaves no new tag. It then creates and pushes the missing stable tag and publishes the release. A rerun at a tag already at HEAD skips this snapshot and resumes publication. Release candidates are not applicable to Go (prerelease installs resolve through commit hashes), so `mise run publish:rc` only echoes its skip message.
 
 `pm version` exposes the same SDK calculations used by the release pipeline:
 

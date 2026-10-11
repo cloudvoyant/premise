@@ -224,6 +224,36 @@ func TestPreflightFailurePreventsPushingReleaseTag(t *testing.T) {
 	}
 }
 
+func TestArtifactBuildFailurePreventsPushingReleaseTag(t *testing.T) {
+	root := writeTaggedCargoReleaseFixture(t)
+	repository, err := git.PlainOpen(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.DeleteTag("v1.2.3"); err != nil {
+		t.Fatal(err)
+	}
+	useTestPackageManagers(t, testPackageManager{id: "cargo", builds: "builds:\n  - id: app\n"})
+	originalGoReleaser := executeGoReleaser
+	defer func() { executeGoReleaser = originalGoReleaser }()
+	buildErr := errors.New("cross-build failed")
+	executeGoReleaser = func(_ context.Context, _ string, _ []PackageManagerBackend, snapshot bool, _, _ io.Writer) error {
+		if !snapshot {
+			t.Fatal("GoReleaser published after the preflight build failed")
+		}
+		return buildErr
+	}
+	originalPush := pushReleaseTag
+	defer func() { pushReleaseTag = originalPush }()
+	pushReleaseTag = func(context.Context, string, string, transport.AuthMethod) error {
+		t.Fatal("release tag was pushed after the artifact build failed")
+		return nil
+	}
+	if _, err := PublishStableRelease(t.Context(), root, io.Discard, io.Discard); !errors.Is(err, buildErr) {
+		t.Fatalf("PublishStableRelease() error = %v, want %v", err, buildErr)
+	}
+}
+
 func TestCreateAndPushReleaseTagRollsBackLocalTagOnFailure(t *testing.T) {
 	root := t.TempDir()
 	repository, err := git.PlainInit(root, false)
@@ -252,6 +282,138 @@ func TestCreateAndPushReleaseTagRollsBackLocalTagOnFailure(t *testing.T) {
 	}
 	if _, err := repository.Reference("refs/tags/v1.0.0", true); !errors.Is(err, plumbing.ErrReferenceNotFound) {
 		t.Fatalf("local release tag was not rolled back: %v", err)
+	}
+}
+
+func TestCreateAndPushReleaseCandidateTagRollsBackOnFailure(t *testing.T) {
+	root := writeTaggedCargoReleaseFixture(t)
+	repository, err := git.PlainOpen(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GITHUB_TOKEN", "test-token")
+	version := "v1.2.4-rc.123"
+	err = createAndPushReleaseTag(t.Context(), root, version, releaseAuthentication())
+	if err == nil || !strings.Contains(err.Error(), "origin") {
+		t.Fatalf("RC tag push without origin = %v, want missing remote (not a version rejection)", err)
+	}
+	if _, err := repository.Reference(plumbing.ReferenceName("refs/tags/"+version), true); !errors.Is(err, plumbing.ErrReferenceNotFound) {
+		t.Fatalf("local RC tag was not rolled back: %v", err)
+	}
+}
+
+func TestPublishReleaseValidatesChannelVersionBeforeTags(t *testing.T) {
+	for _, tc := range []struct{ channel, version string }{
+		{"stable", "v1.2.3-rc.42"}, {"rc", "v1.2.3"}, {"rc", "v1.2.3-beta.1"},
+	} {
+		_, err := PublishRelease(t.Context(), t.TempDir(), ReleasePublishOptions{
+			Channel: tc.channel, ExpectedVersion: tc.version,
+		}, io.Discard, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "invalid") {
+			t.Errorf("%s %s error = %v, want invalid version", tc.channel, tc.version, err)
+		}
+	}
+}
+
+func TestGoReleaserAcceptsGHToGitHubTokenAlias(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "alias-token")
+	if got := goreleaserToken(); got != "alias-token" {
+		t.Fatalf("GoReleaser alias = %q", got)
+	}
+	t.Setenv("GITHUB_TOKEN", "preferred-token")
+	if got := goreleaserToken(); got != "preferred-token" {
+		t.Fatalf("GoReleaser preferred token = %q", got)
+	}
+}
+
+func TestPublishReleaseRejectsMissingCredentialBeforeTagging(t *testing.T) {
+	root := writeTaggedCargoReleaseFixture(t)
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "")
+	_, err := PublishRelease(t.Context(), root, ReleasePublishOptions{
+		Channel: "rc", ExpectedVersion: "v1.2.4-rc.42",
+	}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "GITHUB_TOKEN or GH_TOKEN") {
+		t.Fatalf("missing credential error = %v", err)
+	}
+	repository, err := git.PlainOpen(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.Reference(plumbing.ReferenceName("refs/tags/v1.2.4-rc.42"), true); !errors.Is(err, plumbing.ErrReferenceNotFound) {
+		t.Fatalf("RC tag created before credential check: %v", err)
+	}
+}
+
+func TestExpectedReleaseGroupsUsesDeclaredNativeTargets(t *testing.T) {
+	root := writeTaggedCargoReleaseFixture(t)
+	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.Workspace.Kind = ProjectKindTemplateRegistry
+	manifest.TemplateRegistry.Templates[0].CI = PlatformDeclaration{
+		CheckPlatforms: []string{"linux", "macos"}, ReleasePlatforms: []string{"linux", "macos"},
+	}
+	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
+		t.Fatal(err)
+	}
+	groups, err := ExpectedReleaseGroups(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(groups, ",") != "premise-rust-app-linux,premise-rust-app-macos" {
+		t.Fatalf("native groups = %#v", groups)
+	}
+}
+
+func TestPublishReleasePackagesRCRequiresMatchingTag(t *testing.T) {
+	root := writeTaggedCargoReleaseFixture(t)
+	repository, err := git.PlainOpen(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := repository.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := 0
+	useTestPackageManagers(t, testPackageManager{id: "cargo", publish: func(_ context.Context, _ string, version, task string, _, _ io.Writer) error {
+		called++
+		if version != "v1.2.4-rc.42" || task != "publish:rc" {
+			t.Fatalf("wrong RC publication %s %s", version, task)
+		}
+		return nil
+	}})
+	if _, err := PublishReleasePackages(t.Context(), root, "rc", "v1.2.4-rc.42", io.Discard, io.Discard); err == nil {
+		t.Fatal("RC packages published without matching tag")
+	}
+	if called != 0 {
+		t.Fatalf("publisher called before tag check: %d", called)
+	}
+	if _, err := repository.CreateTag("v1.2.4-rc.42", head.Hash(), nil); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PublishReleasePackages(t.Context(), root, "rc", "v1.2.4-rc.42", io.Discard, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Version != "v1.2.4-rc.42" || called != 1 {
+		t.Fatalf("RC publication %#v, calls %d", plan, called)
+	}
+}
+
+func TestPublishReleasePackagesRejectsWrongVersionBeforePublishing(t *testing.T) {
+	root := writeTaggedCargoReleaseFixture(t)
+	called := false
+	useTestPackageManagers(t, testPackageManager{id: "cargo", publish: func(context.Context, string, string, string, io.Writer, io.Writer) error {
+		called = true
+		return nil
+	}})
+	_, err := PublishReleasePackages(t.Context(), root, "stable", "v1.2.4", io.Discard, io.Discard)
+	if err == nil || called {
+		t.Fatalf("wrong stable version: err=%v published=%v", err, called)
 	}
 }
 
@@ -363,8 +525,21 @@ printf '%s\n' "$*" >> "$CAPTURE"
 		t.Fatal(err)
 	}
 	text := string(captured)
-	if !strings.Contains(text, "github:github-secret") || !strings.Contains(text, "release --clean") {
-		t.Fatalf("GoReleaser capture = %q", text)
+	if !strings.Contains(text, "github:\nrelease --clean") || !strings.Contains(text, "--snapshot") {
+		t.Fatalf("snapshot GoReleaser capture = %q", text)
+	}
+	if err := os.WriteFile(capture, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runGoReleaser(t.Context(), root, []PackageManagerBackend{goPlugin}, false, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	published, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(published), "github:github-secret") || strings.Contains(string(published), "--snapshot") {
+		t.Fatalf("publishing GoReleaser capture = %q", published)
 	}
 	fields := strings.Fields(text)
 	foundConfig := false
@@ -425,8 +600,215 @@ printf '%s\n' "$*" >> "$CAPTURE"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if text := string(captured); !strings.HasPrefix(text, "install\ngithub:github-secret\n") {
+	if text := string(captured); !strings.HasPrefix(text, "install\ngithub:\n") {
 		t.Fatalf("Cargo GoReleaser capture = %q", text)
 	}
 
+}
+
+func TestValidateReleaseFiles(t *testing.T) {
+	makeGroup := func(t *testing.T, root, group, filename string) string {
+		t.Helper()
+		dir := filepath.Join(root, group)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(dir, filename)
+		if err := os.WriteFile(path, []byte("installer"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	for _, test := range []struct {
+		name      string
+		setup     func(*testing.T, string)
+		groups    []string
+		wantError string
+	}{
+		{name: "ordinary only"},
+		{name: "complete", groups: []string{"app-linux", "app-macos"}, setup: func(t *testing.T, dir string) {
+			makeGroup(t, dir, "app-linux", "app.deb")
+			makeGroup(t, dir, "app-macos", "app.dmg")
+		}},
+		{name: "missing group", groups: []string{"app-linux"}, wantError: "missing"},
+		{name: "unexpected group", setup: func(t *testing.T, dir string) { makeGroup(t, dir, "unknown-linux", "other.deb") }, wantError: "unexpected"},
+		{name: "duplicate basename", groups: []string{"app-linux", "app-macos"}, setup: func(t *testing.T, dir string) {
+			makeGroup(t, dir, "app-linux", "same.zip")
+			makeGroup(t, dir, "app-macos", "same.zip")
+		}, wantError: "duplicate release asset"},
+		{name: "empty file", groups: []string{"app-linux"}, setup: func(t *testing.T, dir string) {
+			path := makeGroup(t, dir, "app-linux", "app.deb")
+			if err := os.WriteFile(path, nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}, wantError: "nonempty regular"},
+		{name: "symlink", groups: []string{"app-linux"}, setup: func(t *testing.T, dir string) {
+			path := makeGroup(t, dir, "app-linux", "app.deb")
+			if err := os.Symlink(path, filepath.Join(dir, "app-linux", "alias.deb")); err != nil {
+				t.Fatal(err)
+			}
+		}, wantError: "nonempty regular"},
+		{name: "nested files", groups: []string{"app-linux"}, setup: func(t *testing.T, dir string) {
+			makeGroup(t, dir, "app-linux", "app.deb")
+			if err := os.Mkdir(filepath.Join(dir, "app-linux", "nested"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}, wantError: "nonempty regular"},
+		{name: "unsafe group", groups: []string{"../app-linux"}, wantError: "invalid release file group"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			if test.setup != nil {
+				test.setup(t, root)
+			}
+			files, err := validateReleaseFiles(root, test.groups)
+			if test.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantError) {
+					t.Fatalf("error = %v, want %q", err, test.wantError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(files) != len(test.groups) {
+				t.Fatalf("files = %v, want %d", files, len(test.groups))
+			}
+		})
+	}
+}
+
+func TestGoReleaserConfigWithFiles(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(".git", "premise-release-files-123", "my installer.dmg")
+	configuration, err := goReleaserConfigWithFiles(root, NewManifest("native-app"), nil, []string{file})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(configuration)
+	if !strings.Contains(text, "skip: true") || !strings.Contains(text, `extra_files:`) || !strings.Contains(text, `glob: ".git/premise-release-files-123/my installer.dmg"`) {
+		t.Fatalf("file-only config = %q", text)
+	}
+	for _, invalid := range []string{filepath.Join(root, "installer.dmg"), "../installer.dmg"} {
+		if _, err := goReleaserConfigWithFiles(root, NewManifest("native-app"), nil, []string{invalid}); err == nil {
+			t.Fatalf("unsafe GoReleaser glob %q accepted", invalid)
+		}
+	}
+}
+
+func TestRunGoReleaserStagesExtraFiles(t *testing.T) {
+	root := t.TempDir()
+	if _, err := git.PlainInit(root, false); err != nil {
+		t.Fatal(err)
+	}
+	manifest := NewManifest("native-app")
+	manifest.Workspace.PackageManagers = []string{"go"}
+	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
+		t.Fatal(err)
+	}
+	plugin := testPackageManager{id: "go"}
+	useTestPackageManagers(t, plugin)
+	source := filepath.Join(t.TempDir(), "installer.dmg")
+	if err := os.WriteFile(source, []byte("native installer"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	mise := "#!/bin/sh\nif [ \"$1\" = exec ]; then /usr/bin/env -0; else exit 1; fi\n"
+	if err := os.WriteFile(filepath.Join(bin, "mise"), []byte(mise), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	capture := filepath.Join(t.TempDir(), "config.yml")
+	goreleaser := "#!/bin/sh\ncp \"$4\" \"$CAPTURE\"\nexit 7\n"
+	if err := os.WriteFile(filepath.Join(bin, "goreleaser"), []byte(goreleaser), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CAPTURE", capture)
+	var output bytes.Buffer
+	runErr := runGoReleaserWithFiles(t.Context(), root, []PackageManagerBackend{plugin}, []string{source}, false, &output, &output)
+	if runErr == nil {
+		t.Fatal("expected GoReleaser shim failure")
+	}
+	config, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatalf("read GoReleaser configuration after %v: %v; output: %s", runErr, err, output.String())
+	}
+	if !strings.Contains(string(config), `glob: ".git/premise-release-files-`) || strings.Contains(string(config), source) {
+		t.Fatalf("GoReleaser config uses a non-local extra file: %s", config)
+	}
+	entries, err := os.ReadDir(filepath.Join(root, ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "premise-release-files-") {
+			t.Fatalf("staged files remain after GoReleaser failure: %s", entry.Name())
+		}
+	}
+}
+
+func TestStageGoReleaserFiles(t *testing.T) {
+	root := t.TempDir()
+	repository, err := git.PlainInit(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(t.TempDir(), "installer.dmg")
+	if err := os.WriteFile(source, []byte("native installer"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	files, cleanup, err := stageGoReleaserFiles(root, []string{source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || !filepath.IsLocal(files[0]) || !strings.HasPrefix(files[0], ".git"+string(filepath.Separator)) {
+		t.Fatalf("staged GoReleaser files = %v", files)
+	}
+	staged := filepath.Join(root, files[0])
+	contents, err := os.ReadFile(staged)
+	if err != nil || string(contents) != "native installer" {
+		t.Fatalf("staged file = %q, %v", contents, err)
+	}
+	worktree, err := repository.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := worktree.Status()
+	if err != nil || !status.IsClean() {
+		t.Fatalf("release checkout became dirty: %v, %v", status, err)
+	}
+	cleanup()
+	if _, err := os.Stat(staged); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("staged file remains after cleanup: %v", err)
+	}
+	if _, _, err := stageGoReleaserFiles(root, []string{source, source}); err == nil {
+		t.Fatal("duplicate staged asset name accepted")
+	}
+	if _, _, err := stageGoReleaserFiles(root, []string{"relative.dmg"}); err == nil {
+		t.Fatal("relative source accepted")
+	}
+}
+
+func TestPublishReleasePackagesSkipsArchiveOnlyBackend(t *testing.T) {
+	root := writeTaggedCargoReleaseFixture(t)
+	repository, err := git.PlainOpen(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := repository.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.CreateTag("v1.2.4-rc.42", head.Hash(), nil); err != nil {
+		t.Fatal(err)
+	}
+	useTestPackageManagers(t, testPackageManager{id: "cargo"})
+	var output bytes.Buffer
+	plan, err := PublishReleasePackages(t.Context(), root, "rc", "v1.2.4-rc.42", &output, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Version != "v1.2.4-rc.42" || !strings.Contains(output.String(), "skip:") {
+		t.Fatalf("archive-only package phase = %#v, %q", plan, output.String())
+	}
 }
