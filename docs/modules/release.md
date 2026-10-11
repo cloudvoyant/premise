@@ -90,11 +90,6 @@ A `[publish-rc]` feature-branch push requests a GitHub prerelease. RCs do not re
 
 ## Go module tags
 
-Go projects use separate modules with one shared repository version.
-Premise creates directory-prefixed tags for public modules in the GitHub release step.
-It pushes those tags atomically with the repository tag, where GitHub write credentials are available.
-Go does not use the later registry package upload step.
+Go projects use separate modules with one shared repository version. Premise creates directory-prefixed tags for public modules in the GitHub release step. It pushes those tags atomically with the repository tag, where GitHub write credentials are available. Go does not use the later registry package upload step.
 
-`pm release modules prepare --version v1.2.3` updates public sibling requirements before the user commits the release candidate.
-Release checks test public modules outside the local Go workspace.
-See [Go projects and library releases](../go-modules.md) for policy files, external consumption, and major-version paths.
+`pm release modules prepare --version v1.2.3` updates public sibling requirements before the user commits the release candidate. Release checks test public modules outside the local Go workspace. See [Go projects and library releases](../go-modules.md) for policy files, external consumption, and major-version paths.

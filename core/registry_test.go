@@ -14,7 +14,7 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// Public API -----------------------------------------------------------------
+// Tests ----------------------------------------------------------------------
 
 func TestRegistryEntrySelector(t *testing.T) {
 	entry := RegistryEntry{Source: "cloudvoyant/premise-cargo", Template: templateFixture("premise-rust-lib", "lib")}

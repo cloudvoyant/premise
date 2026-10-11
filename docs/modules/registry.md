@@ -54,6 +54,4 @@ Registry loading reads only manifest declarations. Physical files under `templat
 
 The registry module identifies and retrieves templates. Generation owns materialization, and the task/template contract boundary owns execution-based validation.
 
-The official Go registry is `cloudvoyant/premise-go`.
-It supplies Cobra, Connect/gRPC, HTMX, Go library, and Pulumi component templates.
-Use an explicit local source during tandem development until the new registry has a published commit.
+The official Go registry is `cloudvoyant/premise-go`. It supplies Cobra, Connect/gRPC, HTMX, Go library, and Pulumi component templates. Use an explicit local source during tandem development until the new registry has a published commit.

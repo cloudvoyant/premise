@@ -14,7 +14,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport/http"
 )
 
-// Public API -----------------------------------------------------------------
+// Tests ----------------------------------------------------------------------
 
 func TestGoWorkspaceResolvesPrivateLibraryWithoutNetwork(t *testing.T) {
 	root, _ := goWorkspaceFixture(t)
@@ -81,6 +81,29 @@ func TestExternal(t *testing.T) { if usemath.Value() != 42 { t.Fatal("bad result
 	data, _ := os.ReadFile(filepath.Join(root, "libs/usemath/go.sum"))
 	if strings.Contains(string(data), "example.com/repo/libs/math v1.2.3") {
 		t.Fatal("speculative local proxy checksum persisted")
+	}
+}
+
+func TestGoModulePreparationKeepsSourceFilesAfterTidyFailure(t *testing.T) {
+	root, _ := goWorkspaceFixture(t)
+	goWrite(t, root, "libs/usemath/go.mod", "module example.com/repo/libs/usemath\n\ngo 1.25.0\nrequire example.com/repo/libs/math v1.0.0\n")
+	goWrite(t, root, "libs/usemath/broken.go", "package usemath\nimport _ \"invalid module path\"\n")
+	before, err := os.ReadFile(filepath.Join(root, "libs/usemath/go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := PrepareGoModuleDependencies(t.Context(), root, "v1.2.3"); err == nil {
+		t.Fatal("invalid source unexpectedly passed dependency preparation")
+	}
+	after, err := os.ReadFile(filepath.Join(root, "libs/usemath/go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("failed preparation changed the source module requirements")
+	}
+	if _, err := os.Stat(filepath.Join(root, "libs/usemath/go.sum")); !os.IsNotExist(err) {
+		t.Fatal("failed preparation published a checksum file")
 	}
 }
 
