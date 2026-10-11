@@ -126,6 +126,9 @@ func Generate(ctx context.Context, cwd, selector string, options GenerateOptions
 		return err
 	}
 	relativeDestination := filepath.Join(projectDirectory, name)
+	if template.Kind == "infra" && name == "environment" {
+		relativeDestination = "infra/environment"
+	}
 	destination := filepath.Join(workspaceRoot, relativeDestination)
 	replacements, err := ResolveSubstitutions(template, answers)
 	if err != nil {
@@ -166,6 +169,9 @@ func Generate(ctx context.Context, cwd, selector string, options GenerateOptions
 		CI:       template.CI,
 		Path:     filepath.ToSlash(relativeDestination),
 		Answers:  answers,
+	}
+	if template.Kind == "infra" {
+		project.Infra = &InfraProjectConfig{Shared: name == "shared"}
 	}
 	if err := workspaceManifest.MergePackageManagers(templateManifest.Workspace.PackageManagers...); err != nil {
 		return errors.Join(err, removeGeneratedDestination(destination), plan.rollbackRoot())

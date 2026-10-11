@@ -42,10 +42,12 @@ Use .:app to select a template from the current workspace.`,
 			return err
 		}
 		return core.Generate(cmd.Context(), cwd, selector, core.GenerateOptions{
-			Questionnaire: core.InteractiveQuestionnaire{},
+			Questionnaire: generateQuestionnaire(cmd),
 		}, cmd.OutOrStdout())
 	},
 }
+
+// Private helpers ------------------------------------------------------------
 
 // resolveSelectorArgument routes a generate argument to the matching selector
 // resolution strategy and returns the fully qualified selector to generate.
@@ -70,4 +72,16 @@ func resolveSelectorArgument(ctx context.Context, args []string, progress io.Wri
 	default:
 		return "", fmt.Errorf("unhandled selector kind %d", classified.Kind)
 	}
+}
+
+func init() {
+	generateCmd.Flags().StringToString("answer", nil, "Supply all questionnaire answers without prompts (name=site)")
+}
+
+func generateQuestionnaire(cmd *cobra.Command) core.Questionnaire {
+	if cmd.Flags().Changed("answer") {
+		answers, _ := cmd.Flags().GetStringToString("answer")
+		return core.AnswerQuestionnaire(answers)
+	}
+	return core.InteractiveQuestionnaire{}
 }

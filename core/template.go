@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -272,10 +273,15 @@ func runGenerationTemplateContractsWithCeiling(ctx context.Context, directory, k
 	return nil
 }
 
+var templateNonSourceDirectories = []string{"node_modules", ".git", ".mise", ".pulumi", ".pulumi-state"}
+
 func copyTree(source, destination string, replacer *strings.Replacer) error {
 	err := filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
+		}
+		if path != source && entry.IsDir() && slices.Contains(templateNonSourceDirectories, entry.Name()) {
+			return filepath.SkipDir
 		}
 		relative, err := filepath.Rel(source, path)
 		if err != nil || escapesRoot(relative) {

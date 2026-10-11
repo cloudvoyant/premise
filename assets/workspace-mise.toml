@@ -6,5 +6,7 @@ monorepo_root = true
 [env]
 _.path = ["{{config_root}}/bin"]
 
+# Infra program/component roots expose build, test, and lint tasks.
+# Pulumi stack operations are invoked directly by pm, outside Mise.
 [monorepo]
-config_roots = ["apps/*", "libs/*"]
+config_roots = ["apps/*", "libs/*", "infra/environment", "infra/projects/*", "infra/components/*"]

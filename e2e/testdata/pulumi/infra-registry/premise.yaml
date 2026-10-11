@@ -1,0 +1,24 @@
+workspace:
+  name: fixture-infra-registry
+  kind: template-registry
+  schema-version: "0.2"
+  providers:
+    ci: github
+    tools: mise
+    tasks: mise
+    infra: pulumi
+    versioning: svu
+  projects: []
+template_registry:
+  workspace_files: []
+  templates:
+    - name: gcs-bucket
+      kind: infra
+      path: templates/gcs-bucket
+      version: 0.1.0
+      questions:
+        - prompt: "Infrastructure project name (shared for shared infrastructure):"
+          type: string
+          populate: name
+      substitutions:
+        premise-bucket: name

@@ -10,6 +10,8 @@ import (
 
 var ErrProjectNotFound = errors.New("project not found")
 
+// Public API -----------------------------------------------------------------
+
 // RunRootTask runs a named Mise task from the workspace root.
 func RunRootTask(ctx context.Context, root, task string, stdin io.Reader, stdout, stderr io.Writer, arguments ...string) error {
 	return runMiseTask(ctx, root, root, task, stdin, stdout, stderr, arguments...)
@@ -33,6 +35,22 @@ func RunProjectTask(ctx context.Context, root, projectName, task string, stdin i
 	}
 	return fmt.Errorf("%w: %s", ErrProjectNotFound, projectName)
 }
+
+func ContractTasks(kind string) ([]string, error) {
+	if _, err := KindDirectory(kind); err != nil {
+		return nil, err
+	}
+	if kind == "infra" {
+		return append([]string{}, infraTasks...), nil
+	}
+	tasks := append([]string{}, commonTasks...)
+	if kind == "app" {
+		tasks = append(tasks, appTasks...)
+	}
+	return tasks, nil
+}
+
+// Private helpers ------------------------------------------------------------
 
 func runMiseTask(ctx context.Context, root, directory, task string, stdin io.Reader, stdout, stderr io.Writer, arguments ...string) error {
 	if task == "" {
@@ -60,20 +78,11 @@ var commonTasks = []string{
 	"publish",
 }
 
+var infraTasks = []string{"install", "build", "test", "lint", "format", "format:check"}
+
 var appTasks = []string{
 	"run",
 	"dev",
 	"deploy",
 	"e2e",
-}
-
-func ContractTasks(kind string) ([]string, error) {
-	if _, err := KindDirectory(kind); err != nil {
-		return nil, err
-	}
-	tasks := append([]string{}, commonTasks...)
-	if kind == "app" {
-		tasks = append(tasks, appTasks...)
-	}
-	return tasks, nil
 }

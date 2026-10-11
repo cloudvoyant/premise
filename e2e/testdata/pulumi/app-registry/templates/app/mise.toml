@@ -1,0 +1,53 @@
+[tasks."install"]
+run = "true"
+
+[tasks."build"]
+run = "mkdir -p dist && cp src/index.html dist/index.html"
+
+[tasks."test"]
+run = "true"
+
+[tasks."lint"]
+run = "true"
+
+[tasks."format"]
+run = "true"
+
+[tasks."format:check"]
+run = "true"
+
+[tasks."dev"]
+run = "true"
+
+[tasks."on-commit"]
+run = "true"
+
+[tasks."on-merge"]
+run = "true"
+
+[tasks."on-release"]
+run = "true"
+
+[tasks."publish:rc"]
+run = "true"
+
+[tasks."deploy"]
+run = "true"
+
+[tasks."clean"]
+run = "true"
+
+[tasks."lint:fix"]
+run = "true"
+
+[tasks."env-pull"]
+run = "true"
+
+[tasks."publish"]
+run = "true"
+
+[tasks."run"]
+run = "true"
+
+[tasks."e2e"]
+run = "true"

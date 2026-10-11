@@ -110,8 +110,10 @@ func SelectCIProjects(root string, manifest Config, flow CIFlow) ([]CIPlatformPr
 				kind = "app"
 			case strings.HasPrefix(project.Path, "libs/"):
 				kind = "lib"
+			case isInfraProjectPath(project.Path) || isInfraComponentPath(project.Path):
+				kind = "infra"
 			default:
-				return nil, fmt.Errorf("project %q must be inside apps/ or libs/", project.Name)
+				return nil, fmt.Errorf("project %q must be inside apps/, libs/, or the infrastructure project directories", project.Name)
 			}
 			out = append(out, ciProject(project.Name, project.Path, kind, "workspace", project.CI, host))
 		}

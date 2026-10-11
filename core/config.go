@@ -75,6 +75,12 @@ type Project struct {
 	Path     string              `yaml:"path"`
 	CI       PlatformDeclaration `yaml:"ci,omitempty"`
 	Answers  map[string]string   `yaml:"answers,omitempty"`
+	Infra    *InfraProjectConfig `yaml:"infra,omitempty"`
+}
+
+// InfraProjectConfig contains settings specific to an infrastructure program.
+type InfraProjectConfig struct {
+	Shared bool `yaml:"shared,omitempty"`
 }
 
 type Template struct {
@@ -565,7 +571,10 @@ func (manifest Config) Validate() error {
 		if err := ValidateProjectName(project.Name); err != nil {
 			return fmt.Errorf("workspace.projects[%d].name: %w", index, err)
 		}
-		if project.Template == "" {
+		if project.Infra != nil && !isInfraProjectPath(project.Path) {
+			return fmt.Errorf("project %q: infra config requires an infrastructure program path", project.Name)
+		}
+		if project.Template == "" && !isInfraComponentPath(project.Path) {
 			return fmt.Errorf("workspace.projects[%d].template is required", index)
 		}
 		if project.Path == "" || filepath.IsAbs(project.Path) || escapesRoot(project.Path) {
@@ -623,6 +632,9 @@ func (manifest Config) PublicationTargets() []Template {
 	default:
 		targets = make([]Template, 0, len(manifest.Workspace.Projects))
 		for _, project := range manifest.Workspace.Projects {
+			if strings.HasPrefix(project.Path, "infra/") {
+				continue
+			}
 			kind := ""
 			if strings.HasPrefix(filepath.ToSlash(project.Path), "apps/") {
 				kind = "app"
@@ -733,6 +745,8 @@ func KindDirectory(kind string) (string, error) {
 		return "apps", nil
 	case "lib":
 		return "libs", nil
+	case "infra":
+		return "infra/projects", nil
 	default:
 		return "", fmt.Errorf("unsupported template kind %q", kind)
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -13,12 +14,38 @@ import (
 
 // Types ----------------------------------------------------------------------
 
+// AnswerQuestionnaire supplies explicit answers for unattended generation.
+type AnswerQuestionnaire map[string]string
+
+var _ Questionnaire = AnswerQuestionnaire{}
+
 // InteractiveQuestionnaire collects generation answers from a terminal.
 type InteractiveQuestionnaire struct{}
 
 var _ Questionnaire = InteractiveQuestionnaire{}
 
 // Public API -----------------------------------------------------------------
+
+// Ask rejects missing, unknown, or invalid answers before staging any files.
+func (answers AnswerQuestionnaire) Ask(questions []Question) (map[string]string, error) {
+	result := make(map[string]string, len(questions))
+	for _, question := range questions {
+		value := strings.TrimSpace(answers[question.Populate])
+		if value == "" {
+			return nil, fmt.Errorf("answer %q is required", question.Populate)
+		}
+		if len(question.Choices) > 0 && !slices.Contains(question.Choices, value) {
+			return nil, fmt.Errorf("invalid answer %q for %q", value, question.Populate)
+		}
+		result[question.Populate] = value
+	}
+	for key := range answers {
+		if _, ok := result[key]; !ok {
+			return nil, fmt.Errorf("unknown answer %q", key)
+		}
+	}
+	return result, nil
+}
 
 func (InteractiveQuestionnaire) Ask(questions []Question) (map[string]string, error) {
 	answers := make(map[string]string, len(questions))
@@ -53,19 +80,12 @@ func (InteractiveQuestionnaire) Ask(questions []Question) (map[string]string, er
 	return answers, nil
 }
 
-func requiredAnswer(value string) error {
-	if strings.TrimSpace(value) == "" {
-		return errors.New("a value is required")
-	}
-	return nil
-}
-
 // AskTemplateKind lets a user choose a supported template kind.
 func AskTemplateKind() (string, error) {
 	var kind string
 	err := huh.NewSelect[string]().
 		Title("Template kind:").
-		Options(huh.NewOptions("app", "lib")...).
+		Options(huh.NewOptions("app", "lib", "infra")...).
 		Value(&kind).
 		Run()
 	if err != nil {
@@ -86,6 +106,38 @@ func AskDefaultTemplate(ctx context.Context, progress io.Writer) (string, error)
 	}
 	fmt.Fprintf(progress, "Selected template registry %s\n", source)
 	return AskRegistryTemplate(ctx, source, progress)
+}
+
+// AskRegistryTemplate lets a user choose a template from one registry source,
+// reports loading progress to progress, and returns the selected selector.
+func AskRegistryTemplate(ctx context.Context, source string, progress io.Writer) (string, error) {
+	if progress == nil {
+		progress = io.Discard
+	}
+	fmt.Fprintf(progress, "Loading template registry %s...\n", source)
+	started := time.Now()
+	entries, err := loadSourceEntries(ctx, source)
+	if err != nil {
+		return "", fmt.Errorf("load template registry %s: %w", source, err)
+	}
+	fmt.Fprintf(progress, "Loaded %s (%d templates, %s)\n", source, len(entries), time.Since(started).Round(time.Millisecond))
+	if len(entries) == 0 {
+		return "", fmt.Errorf("registry %s declares no templates", source)
+	}
+	selector, err := promptPickEntry(entries)
+	if err != nil {
+		return "", fmt.Errorf("choose template from %s: %w", source, err)
+	}
+	return selector, nil
+}
+
+// Private helpers ------------------------------------------------------------
+
+func requiredAnswer(value string) error {
+	if strings.TrimSpace(value) == "" {
+		return errors.New("a value is required")
+	}
+	return nil
 }
 
 var promptPickRegistry = func() (string, error) {
@@ -128,31 +180,6 @@ func registryLabel(source string) string {
 		return source
 	}
 }
-
-// AskRegistryTemplate lets a user choose a template from one registry source,
-// reports loading progress to progress, and returns the selected selector.
-func AskRegistryTemplate(ctx context.Context, source string, progress io.Writer) (string, error) {
-	if progress == nil {
-		progress = io.Discard
-	}
-	fmt.Fprintf(progress, "Loading template registry %s...\n", source)
-	started := time.Now()
-	entries, err := loadSourceEntries(ctx, source)
-	if err != nil {
-		return "", fmt.Errorf("load template registry %s: %w", source, err)
-	}
-	fmt.Fprintf(progress, "Loaded %s (%d templates, %s)\n", source, len(entries), time.Since(started).Round(time.Millisecond))
-	if len(entries) == 0 {
-		return "", fmt.Errorf("registry %s declares no templates", source)
-	}
-	selector, err := promptPickEntry(entries)
-	if err != nil {
-		return "", fmt.Errorf("choose template from %s: %w", source, err)
-	}
-	return selector, nil
-}
-
-// Private helpers ------------------------------------------------------------
 
 // promptPickEntry opens an interactive picker over the given entries and returns
 // the selected entry's selector. It is a package variable so tests can
