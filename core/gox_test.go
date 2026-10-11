@@ -84,6 +84,29 @@ func TestExternal(t *testing.T) { if usemath.Value() != 42 { t.Fatal("bad result
 	}
 }
 
+func TestGoModulePreparationKeepsSourceFilesAfterTidyFailure(t *testing.T) {
+	root, _ := goWorkspaceFixture(t)
+	goWrite(t, root, "libs/usemath/go.mod", "module example.com/repo/libs/usemath\n\ngo 1.25.0\nrequire example.com/repo/libs/math v1.0.0\n")
+	goWrite(t, root, "libs/usemath/broken.go", "package usemath\nimport _ \"invalid module path\"\n")
+	before, err := os.ReadFile(filepath.Join(root, "libs/usemath/go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := PrepareGoModuleDependencies(t.Context(), root, "v1.2.3"); err == nil {
+		t.Fatal("invalid source unexpectedly passed dependency preparation")
+	}
+	after, err := os.ReadFile(filepath.Join(root, "libs/usemath/go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("failed preparation changed the source module requirements")
+	}
+	if _, err := os.Stat(filepath.Join(root, "libs/usemath/go.sum")); !os.IsNotExist(err) {
+		t.Fatal("failed preparation published a checksum file")
+	}
+}
+
 func TestGoReleaseRejectsInvalidPublication(t *testing.T) {
 	for _, tc := range []struct{ name, content, version, want string }{
 		{"private dependency", "module example.com/repo/libs/usemath\nrequire example.com/repo/libs/private v1.2.3\n", "v1.2.3", "unpublished"},

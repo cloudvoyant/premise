@@ -236,114 +236,174 @@ func PrepareGoModuleDependencies(ctx context.Context, root, version string) erro
 	if err != nil {
 		return err
 	}
-	public := map[string]bool{}
-	for _, m := range modules {
-		public[m.Path] = m.Publication == "public"
+	publicPaths := make(map[string]bool, len(modules))
+	for _, projectModule := range modules {
+		publicPaths[projectModule.Path] = projectModule.Publication == "public"
 	}
-	// Prepare everything in isolation; publish files only after every module succeeds.
-	staged, err := os.MkdirTemp("", "premise-go-prepare-*")
+
+	stagingRoot, err := os.MkdirTemp("", "premise-go-prepare-*")
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(staged)
-	copies := make([]GoModule, 0, len(modules))
-	for index, m := range modules {
-		if m.Publication != "public" {
-			continue
-		}
-		for _, req := range m.File.Require {
-			if allowed, local := public[req.Mod.Path]; local {
-				if !allowed {
-					return fmt.Errorf("public module %s depends on unpublished module %s", m.Path, req.Mod.Path)
-				}
-				if err := m.File.AddRequire(req.Mod.Path, version); err != nil {
-					return err
-				}
-			}
-		}
-		dir := filepath.Join(staged, fmt.Sprint(index))
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return err
-		}
-		if err := copyTree(m.Directory, dir, nil); err != nil {
-			return err
-		}
-		data, err := m.File.Format()
-		if err != nil {
-			return err
-		}
-		if err := os.WriteFile(filepath.Join(dir, "go.mod"), data, 0o644); err != nil {
-			return err
-		}
-		m.Directory = dir
-		copies = append(copies, m)
-	}
-	proxy := filepath.Join(staged, "proxy")
-	if err := writeGoModuleProxy(proxy, copies, version); err != nil {
+	defer os.RemoveAll(stagingRoot)
+	staged, err := stagePublicGoModules(modules, publicPaths, version, stagingRoot)
+	if err != nil {
 		return err
 	}
-	for _, m := range copies {
-		command := exec.CommandContext(ctx, "go", "mod", "tidy")
-		command.Dir = m.Directory
-		command.Env = goProxyEnvironment(proxy)
-		data, err := command.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("prepare module %s: %w\n%s", m.Path, err, data)
-		}
+
+	proxyModules := make([]GoModule, 0, len(staged))
+	for _, projectModule := range staged {
+		proxyModules = append(proxyModules, projectModule.prepared)
 	}
-	transaction := &GeneratePlan{workspaceRoot: root}
-	for _, prepared := range copies {
-		for _, original := range modules {
-			if original.Path != prepared.Path {
-				continue
-			}
-			for _, name := range []string{"go.mod", "go.sum"} {
-				data, err := os.ReadFile(filepath.Join(prepared.Directory, name))
-				if os.IsNotExist(err) {
-					continue
-				}
-				if err != nil {
-					return err
-				}
-				if name == "go.sum" {
-					var lines []string
-					for _, line := range strings.Split(string(data), "\n") {
-						fields := strings.Fields(line)
-						if len(fields) >= 2 && public[fields[0]] && strings.TrimSuffix(fields[1], "/go.mod") == version {
-							continue
-						}
-						if line != "" {
-							lines = append(lines, line)
-						}
-					}
-					data = []byte(strings.Join(lines, "\n") + "\n")
-				}
-				path := filepath.Join(original.Directory, name)
-				relative, err := filepath.Rel(root, path)
-				if err != nil {
-					return err
-				}
-				selected := PathValue{Kind: "file", Mode: 0o644}
-				previous, err := os.ReadFile(path)
-				if err == nil {
-					selected.Present = true
-					selected.Data = previous
-					info, e := os.Stat(path)
-					if e != nil {
-						return e
-					}
-					selected.Mode = info.Mode().Perm()
-				} else if !os.IsNotExist(err) {
-					return err
-				}
-				transaction.Entries = append(transaction.Entries, MergeEntry{Path: filepath.ToSlash(relative), Selected: selected, Output: PathValue{Present: true, Kind: "file", Mode: selected.Mode, Data: data}})
-			}
-		}
+	proxy := filepath.Join(stagingRoot, "proxy")
+	if err := writeGoModuleProxy(proxy, proxyModules, version); err != nil {
+		return err
 	}
+	if err := tidyStagedGoModules(ctx, staged, proxy); err != nil {
+		return err
+	}
+	entries, err := stagedGoModuleEntries(root, staged, publicPaths, version)
+	if err != nil {
+		return err
+	}
+
+	// Source files change only here, after every staged module succeeds.
+	transaction := &GeneratePlan{workspaceRoot: root, Entries: entries}
 	return transaction.publishRoot()
 }
 
 // Private helpers ------------------------------------------------------------
+
+// stagedGoModule keeps the source location separate from its editable copy.
+type stagedGoModule struct {
+	original GoModule
+	prepared GoModule
+}
+
+// stagePublicGoModules edits sibling requirements only in temporary copies.
+func stagePublicGoModules(modules []GoModule, publicPaths map[string]bool, version, stagingRoot string) ([]stagedGoModule, error) {
+	var staged []stagedGoModule
+	for index, original := range modules {
+		if original.Publication != "public" {
+			continue
+		}
+		directory := filepath.Join(stagingRoot, fmt.Sprint(index))
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			return nil, err
+		}
+		if err := copyTree(original.Directory, directory, nil); err != nil {
+			return nil, err
+		}
+		prepared, found, err := ReadGoModule(directory)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nil, fmt.Errorf("staged module %s has no go.mod", original.Path)
+		}
+		for _, requirement := range prepared.File.Require {
+			publishable, local := publicPaths[requirement.Mod.Path]
+			if !local {
+				continue
+			}
+			if !publishable {
+				return nil, fmt.Errorf("public module %s depends on unpublished module %s", prepared.Path, requirement.Mod.Path)
+			}
+			if err := prepared.File.AddRequire(requirement.Mod.Path, version); err != nil {
+				return nil, err
+			}
+		}
+		data, err := prepared.File.Format()
+		if err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(filepath.Join(prepared.Directory, "go.mod"), data, 0o644); err != nil {
+			return nil, err
+		}
+		staged = append(staged, stagedGoModule{original: original, prepared: prepared})
+	}
+	return staged, nil
+}
+
+func tidyStagedGoModules(ctx context.Context, staged []stagedGoModule, proxy string) error {
+	for _, projectModule := range staged {
+		command := exec.CommandContext(ctx, "go", "mod", "tidy")
+		command.Dir = projectModule.prepared.Directory
+		command.Env = goProxyEnvironment(proxy)
+		data, err := command.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("prepare module %s: %w\n%s", projectModule.prepared.Path, err, data)
+		}
+	}
+	return nil
+}
+
+// stagedGoModuleEntries collects all outputs without changing source files.
+func stagedGoModuleEntries(root string, staged []stagedGoModule, publicPaths map[string]bool, version string) ([]MergeEntry, error) {
+	var entries []MergeEntry
+	for _, projectModule := range staged {
+		for _, name := range []string{"go.mod", "go.sum"} {
+			data, err := os.ReadFile(filepath.Join(projectModule.prepared.Directory, name))
+			if os.IsNotExist(err) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			if name == "go.sum" {
+				data = removeCandidateGoChecksums(data, publicPaths, version)
+			}
+			entry, err := preparedGoModuleEntry(root, projectModule.original.Directory, name, data)
+			if err != nil {
+				return nil, err
+			}
+			entries = append(entries, entry)
+		}
+	}
+	return entries, nil
+}
+
+// Candidate archives change during preparation, so their checksums cannot be
+// committed as checksums of the final published modules. Keep external sums.
+func removeCandidateGoChecksums(data []byte, publicPaths map[string]bool, version string) []byte {
+	var lines []string
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && publicPaths[fields[0]] && strings.TrimSuffix(fields[1], "/go.mod") == version {
+			continue
+		}
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return []byte(strings.Join(lines, "\n") + "\n")
+}
+
+func preparedGoModuleEntry(root, directory, name string, data []byte) (MergeEntry, error) {
+	path := filepath.Join(directory, name)
+	relative, err := filepath.Rel(root, path)
+	if err != nil {
+		return MergeEntry{}, err
+	}
+	selected := PathValue{Kind: "file", Mode: 0o644}
+	previous, err := os.ReadFile(path)
+	if err == nil {
+		selected.Present = true
+		selected.Data = previous
+		info, err := os.Stat(path)
+		if err != nil {
+			return MergeEntry{}, err
+		}
+		selected.Mode = info.Mode().Perm()
+	} else if !os.IsNotExist(err) {
+		return MergeEntry{}, err
+	}
+	return MergeEntry{
+		Path:     filepath.ToSlash(relative),
+		Selected: selected,
+		Output:   PathValue{Present: true, Kind: "file", Mode: selected.Mode, Data: data},
+	}, nil
+}
 
 func goProxyEnvironment(proxy string) []string {
 	env := withoutEnvironment(os.Environ(), "GOWORK", "GOPROXY", "GONOSUMDB", "GONOPROXY", "GOMODCACHE", "GOFLAGS")

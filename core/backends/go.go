@@ -134,11 +134,27 @@ func goProjectBuild(name, directory, main, binary string) map[string]any {
 	if binary == "" {
 		binary = strings.TrimPrefix(name, "go-")
 	}
-	return map[string]any{"id": name, "dir": directory, "main": main, "binary": binary, "goos": []string{"linux", "darwin"}, "goarch": []string{"amd64", "arm64"}, "env": []string{"CGO_ENABLED=0"}, "flags": []string{"-trimpath"}, "ldflags": []string{"-s -w -X main.version={{ .Version }}"}, "mod_timestamp": "{{ .CommitTimestamp }}"}
+	return map[string]any{
+		"id":            name,
+		"dir":           directory,
+		"main":          main,
+		"binary":        binary,
+		"goos":          []string{"linux", "darwin"},
+		"goarch":        []string{"amd64", "arm64"},
+		"env":           []string{"CGO_ENABLED=0"},
+		"flags":         []string{"-trimpath"},
+		"ldflags":       []string{"-s -w -X main.version={{ .Version }}"},
+		"mod_timestamp": "{{ .CommitTimestamp }}",
+	}
 }
 
 func goProjectArchive(name string) map[string]any {
-	return map[string]any{"id": name, "ids": []string{name}, "formats": []string{"tar.gz"}, "name_template": strings.TrimPrefix(name, "go-") + `-{{ .Tag }}-{{ if eq .Arch "amd64" }}x86_64{{ else }}aarch64{{ end }}-{{ if eq .Os "darwin" }}macos{{ else }}{{ .Os }}{{ end }}`}
+	return map[string]any{
+		"id":            name,
+		"ids":           []string{name},
+		"formats":       []string{"tar.gz"},
+		"name_template": strings.TrimPrefix(name, "go-") + `-{{ .Tag }}-{{ if eq .Arch "amd64" }}x86_64{{ else }}aarch64{{ end }}-{{ if eq .Os "darwin" }}macos{{ else }}{{ .Os }}{{ end }}`,
+	}
 }
 
 // goReleaseBuilds preserves the original root Go CLI archive matrix.
