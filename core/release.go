@@ -383,7 +383,7 @@ func PublishReleasePackages(ctx context.Context, root, channel, expectedVersion 
 		}
 	}
 	if !published {
-		return ReleasePlan{}, errors.New("workspace package managers do not publish language packages")
+		fmt.Fprintln(stdout, "skip: workspace package managers do not publish language packages")
 	}
 	return plan, nil
 }
@@ -521,6 +521,8 @@ changelog:
       - "^chore"
 
 release:
+  prerelease: auto
+  make_latest: "{{ if .Prerelease }}false{{ else }}true{{ end }}"
   mode: keep-existing
   replace_existing_artifacts: true
 `)

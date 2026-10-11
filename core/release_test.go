@@ -788,3 +788,27 @@ func TestStageGoReleaserFiles(t *testing.T) {
 		t.Fatal("relative source accepted")
 	}
 }
+
+func TestPublishReleasePackagesSkipsArchiveOnlyBackend(t *testing.T) {
+	root := writeTaggedCargoReleaseFixture(t)
+	repository, err := git.PlainOpen(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := repository.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.CreateTag("v1.2.4-rc.42", head.Hash(), nil); err != nil {
+		t.Fatal(err)
+	}
+	useTestPackageManagers(t, testPackageManager{id: "cargo"})
+	var output bytes.Buffer
+	plan, err := PublishReleasePackages(t.Context(), root, "rc", "v1.2.4-rc.42", &output, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Version != "v1.2.4-rc.42" || !strings.Contains(output.String(), "skip:") {
+		t.Fatalf("archive-only package phase = %#v, %q", plan, output.String())
+	}
+}

@@ -6,6 +6,10 @@ branding:
   color: purple
 
 inputs:
+  command:
+    description: "Operation: plan | flow | flow-matrix | release | packages"
+    required: false
+    default: flow
   flow:
     description: "CI flow: on-commit | on-merge | on-release"
     required: false
@@ -30,19 +34,19 @@ inputs:
     required: false
     default: ""
   project:
-    description: "Declared template name for an on-platform build"
+    description: "Declared project name for a scoped flow"
     required: false
     default: ""
   channel:
-    description: "Release channel for an on-platform build: stable or rc"
+    description: "Release channel: stable or rc"
     required: false
     default: ""
   version:
-    description: "Version to build in an on-platform flow, without a leading v"
+    description: "Planned release version (release and packages require a leading v)"
     required: false
     default: ""
   output-dir:
-    description: "Absolute artifact output directory for an on-platform build"
+    description: "Absolute artifact output directory for a flow"
     required: false
     default: ""
   platform:
@@ -54,7 +58,39 @@ inputs:
     required: false
     default: "false"
 
+  root-only:
+    description: "Run only the root hook"
+    required: false
+    default: "false"
+  skip-root:
+    description: "Skip the root hook in matrix rows"
+    required: false
+    default: "false"
+  files-dir:
+    description: "Downloaded native artifact directory for combined publication"
+    required: false
+    default: ""
+
 outputs:
+  mode:
+    description: "Runner schedule: single or matrix"
+    value: ${{ steps.schedule.outputs.mode }}
+  runner:
+    description: "Runner image for the single job"
+    value: ${{ steps.schedule.outputs.runner }}
+  matrix:
+    description: "GitHub strategy matrix with an include array"
+    value: ${{ steps.schedule.outputs.matrix }}
+  native:
+    description: "Whether the schedule includes native release files"
+    value: ${{ steps.schedule.outputs.native }}
+  release_version:
+    description: "Planned stable or RC tag; empty when no publication is requested"
+    value: >-
+      ${{ steps.rc-plan.outputs.should_publish_rc == 'true' &&
+          format('v{0}', steps.rc-plan.outputs.rc_version) ||
+          steps.release-plan.outputs.should_publish == 'true' &&
+          format('v{0}', steps.release-plan.outputs.version) || '' }}
   version:
     description: >-
       Stable version without leading v; empty when no release is planned
@@ -178,7 +214,7 @@ runs:
         RELEASE_MODE: ${{ inputs.release }}
       run: |
         set -euo pipefail
-        if [[ "$FLOW" == "on-merge" && "$RELEASE_MODE" != "none" ]]; then
+        if [[ "$FLOW" == "on-merge" && ( "$RELEASE_MODE" == "auto" || "$RELEASE_MODE" == "github" ) ]]; then
           pm release --dry-run >> "$GITHUB_OUTPUT"
         else
           printf 'version=\nshould_publish=false\n' >> "$GITHUB_OUTPUT"
@@ -205,26 +241,60 @@ runs:
           printf 'rc_version=\nshould_publish_rc=false\n' >> "$GITHUB_OUTPUT"
         fi
 
-    - name: Launch CI flow
-      if: inputs.setup-only != 'true'
+    - name: Plan runner schedule
+      id: schedule
+      if: inputs.command == 'plan'
       shell: bash
       env:
+        FLOW: ${{ inputs.flow }}
+      run: pm ci plan --flow "$FLOW" --github-output >> "$GITHUB_OUTPUT"
+
+    - name: Run Premise operation
+      if: inputs.setup-only != 'true' && inputs.command != 'plan'
+      shell: bash
+      env:
+        COMMAND: ${{ inputs.command }}
         FLOW: ${{ inputs.flow }}
         DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
         RELEASE_MODE: ${{ inputs.release }}
         PROJECT: ${{ inputs.project }}
+        PLATFORM: ${{ inputs.platform }}
         CHANNEL: ${{ inputs.channel }}
         VERSION: ${{ inputs.version }}
         OUTPUT_DIR: ${{ inputs.output-dir }}
+        FILES_DIR: ${{ inputs.files-dir }}
+        ROOT_ONLY: ${{ inputs.root-only }}
+        SKIP_ROOT: ${{ inputs.skip-root }}
       run: |
         set -euo pipefail
-        if [[ "$FLOW" == "on-platform" ]]; then
-          echo "::error::on-platform is not supported by this action"
-          exit 1
-        else
-          args=(ci flow "$FLOW" --release "$RELEASE_MODE")
-          if [[ -n "$DEPLOY_ENVIRONMENT" ]]; then
-            args+=(--environment "$DEPLOY_ENVIRONMENT")
-          fi
-          pm "${args[@]}"
-        fi
+        case "$COMMAND" in
+          flow|flow-matrix)
+            args=(ci flow "$FLOW" --release none)
+            if [[ "$COMMAND" == flow-matrix ]]; then
+              : "${PROJECT:?flow-matrix requires project}"
+              : "${PLATFORM:?flow-matrix requires platform}"
+            fi
+            if [[ -n "$PROJECT" ]]; then args+=(--project "$PROJECT"); fi
+            if [[ -n "$PLATFORM" ]]; then args+=(--platform "$PLATFORM"); fi
+            if [[ -n "$DEPLOY_ENVIRONMENT" ]]; then args+=(--environment "$DEPLOY_ENVIRONMENT"); fi
+            if [[ -n "$OUTPUT_DIR" ]]; then args+=(--output-dir "$OUTPUT_DIR"); fi
+            if [[ -n "$VERSION" ]]; then
+              args+=(--channel "$CHANNEL" --version "$VERSION")
+            fi
+            if [[ "$ROOT_ONLY" == true ]]; then args+=(--root-only); fi
+            if [[ "$SKIP_ROOT" == true ]]; then args+=(--skip-root); fi
+            ;;
+          release|packages)
+            phase=publish
+            if [[ "$COMMAND" == packages ]]; then phase=packages; fi
+            args=(release "$phase" --channel "$CHANNEL" --expected-version "$VERSION")
+            if [[ "$COMMAND" == release && -n "$FILES_DIR" ]]; then
+              args+=(--files-dir "$FILES_DIR")
+            fi
+            ;;
+          *)
+            echo "::error::invalid command '$COMMAND' (plan | flow | flow-matrix | release | packages)"
+            exit 1
+            ;;
+        esac
+        pm "${args[@]}"

@@ -25,10 +25,9 @@ import (
 type CIFlow string
 
 const (
-	CIFlowOnCommit   CIFlow = "on-commit"
-	CIFlowOnMerge    CIFlow = "on-merge"
-	CIFlowOnRelease  CIFlow = "on-release"
-	CIFlowOnPlatform CIFlow = "on-platform"
+	CIFlowOnCommit  CIFlow = "on-commit"
+	CIFlowOnMerge   CIFlow = "on-merge"
+	CIFlowOnRelease CIFlow = "on-release"
 )
 
 // CIPlatformProject is the shared, build-system-neutral project selection.
@@ -85,9 +84,6 @@ func (project CIPlatformProject) Platforms() []string {
 func SelectCIProjects(root string, manifest Config, flow CIFlow) ([]CIPlatformProject, error) {
 	if err := manifest.Validate(); err != nil {
 		return nil, err
-	}
-	if flow == CIFlowOnPlatform {
-		return nil, errors.New("on-platform is not a project selection flow")
 	}
 	host, err := HostCIPlatform()
 	if err != nil {
@@ -225,10 +221,10 @@ const (
 func ParseCIFlow(value string) (CIFlow, error) {
 	flow := CIFlow(value)
 	switch flow {
-	case CIFlowOnCommit, CIFlowOnMerge, CIFlowOnRelease, CIFlowOnPlatform:
+	case CIFlowOnCommit, CIFlowOnMerge, CIFlowOnRelease:
 		return flow, nil
 	default:
-		return "", fmt.Errorf("invalid CI flow %q: expected on-commit, on-merge, on-release, or on-platform", value)
+		return "", fmt.Errorf("invalid CI flow %q: expected on-commit, on-merge, or on-release", value)
 	}
 }
 
@@ -265,9 +261,6 @@ func RunCIFlowWithOptions(ctx context.Context, root string, flow CIFlow, environ
 	}
 	if options.SkipRoot && options.RootOnly {
 		return errors.New("--root-only and --skip-root cannot be used together")
-	}
-	if flow == CIFlowOnPlatform {
-		return fmt.Errorf("%s is no longer a public flow; use --project and --platform", flow)
 	}
 	if (flow == CIFlowOnCommit || flow == CIFlowOnMerge) && releaseMode != CIReleaseNone {
 		return errors.New("CI flows cannot publish directly; run with --release none and publish after all selected flows pass")

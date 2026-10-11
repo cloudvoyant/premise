@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 
 	core "github.com/cloudvoyant/premise/core"
@@ -59,10 +60,13 @@ var ciPlanCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if ciPlanJSON || ciGitHubOutput {
+		if ciGitHubOutput {
+			return writeCIGitHubOutput(cmd.OutOrStdout(), plan)
+		}
+		if ciPlanJSON {
 			return json.NewEncoder(cmd.OutOrStdout()).Encode(plan)
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "mode: %s\\n", plan.Mode)
+		fmt.Fprintf(cmd.OutOrStdout(), "mode: %s\n", plan.Mode)
 		return nil
 	},
 }
@@ -113,7 +117,7 @@ var projectsListCmd = &cobra.Command{
 			return json.NewEncoder(cmd.OutOrStdout()).Encode(projects)
 		}
 		for _, p := range projects {
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\\t%s\\t%s\\t%s\\t%s\\n", p.Name, p.Path, p.Kind, p.Source, strings.Join(p.Platforms(), ","))
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\t%s\n", p.Name, p.Path, p.Kind, p.Source, strings.Join(p.Platforms(), ","))
 		}
 		return nil
 	},
@@ -162,7 +166,7 @@ func init() {
 	ciFlowCmd.Flags().StringVar(&ciReleaseMode, "release", "none", "release mode: none (publish with pm release after all flows pass)")
 	ciPlanCmd.Flags().StringVar(&ciPlanFlow, "flow", "on-commit", "CI flow")
 	ciPlanCmd.Flags().BoolVar(&ciPlanJSON, "json", false, "emit JSON")
-	ciPlanCmd.Flags().BoolVar(&ciGitHubOutput, "github-output", false, "emit GitHub schedule JSON")
+	ciPlanCmd.Flags().BoolVar(&ciGitHubOutput, "github-output", false, "emit GitHub Actions output values")
 	ciCmd.AddCommand(ciFlowCmd, ciPlanCmd)
 	projectsListCmd.Flags().StringVar(&projectType, "type", "", "filter by app or lib")
 	projectsListCmd.Flags().StringVar(&projectFlow, "flow", "on-commit", "CI flow")
@@ -170,4 +174,16 @@ func init() {
 	projectsListCmd.Flags().StringVar(&projectEligibility, "eligibility", "", "filter by eligible, excluded, or all")
 	projectsListCmd.Flags().BoolVar(&projectJSON, "json", false, "emit JSON")
 	projectsCmd.AddCommand(projectsListCmd)
+}
+
+// writeCIGitHubOutput writes values directly to a GitHub Actions step output file.
+func writeCIGitHubOutput(output io.Writer, plan core.CISchedule) error {
+	matrix, err := json.Marshal(struct {
+		Include []core.CIMatrixRow `json:"include"`
+	}{plan.Matrix})
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(output, "mode=%s\nrunner=%s\nnative=%t\nmatrix=%s\n", plan.Mode, plan.Runner, plan.HasNative, matrix)
+	return err
 }

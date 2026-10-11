@@ -13,9 +13,181 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  flow:
-    uses: ./.github/workflows/release-platform.yml
-    with:
-      flow: on-merge
-      release: auto
-      package-environment: production
+  plan:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    outputs:
+      mode: ${{ steps.plan.outputs.mode }}
+      runner: ${{ steps.plan.outputs.runner }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      native: ${{ steps.plan.outputs.native }}
+      version: ${{ steps.plan.outputs.release_version }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - uses: ./
+        id: plan
+        with:
+          command: plan
+          flow: on-merge
+          release: auto
+          install-premise: build
+      - name: Run the root hook once before matrix rows
+        if: steps.plan.outputs.mode == 'matrix'
+        uses: ./
+        with:
+          command: flow
+          flow: on-merge
+          release: none
+          root-only: true
+          install-premise: skip
+
+  single:
+    needs: plan
+    if: needs.plan.outputs.mode == 'single'
+    runs-on: ${{ needs.plan.outputs.runner }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Run complete flow
+        uses: ./
+        with:
+          command: flow
+          flow: on-merge
+          release: none
+          install-premise: build
+          channel: stable
+          version: ${{ needs.plan.outputs.version }}
+          output-dir: ${{ runner.temp }}/premise-files
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: single
+          path: ${{ runner.temp }}/premise-files/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  matrix:
+    needs: plan
+    if: needs.plan.outputs.mode != 'single'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.runner || needs.plan.outputs.runner }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Run scoped complete flow
+        uses: ./
+        with:
+          command: flow-matrix
+          flow: on-merge
+          release: none
+          install-premise: build
+          project: ${{ matrix.project }}
+          platform: ${{ matrix.platform }}
+          skip-root: true
+          channel: stable
+          version: ${{ needs.plan.outputs.version }}
+          output-dir: ${{ runner.temp }}/premise-files
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ matrix.project }}-${{ matrix.platform }}
+          path: ${{ runner.temp }}/premise-files/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  publish-release:
+    needs: [plan, single, matrix]
+    outputs:
+      version: ${{ needs.plan.outputs.version }}
+    if: >-
+      always() && needs.plan.outputs.version != '' &&
+      needs.plan.result == 'success' &&
+      ((needs.plan.outputs.mode == 'single' &&
+        needs.single.result == 'success') ||
+       (needs.plan.outputs.mode != 'single' &&
+        needs.matrix.result == 'success'))
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        if: >-
+          needs.plan.outputs.mode == 'single' &&
+          needs.plan.outputs.native == 'true'
+        with:
+          name: single
+          path: ${{ runner.temp }}/premise-files
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        if: >-
+          needs.plan.outputs.mode == 'matrix' &&
+          needs.plan.outputs.native == 'true'
+        with:
+          pattern: "*-*"
+          path: ${{ runner.temp }}/premise-files
+          merge-multiple: false
+      - name: Keep the release checkout clean
+        run: |
+          if [[ -n "$(git status --porcelain --untracked-files=all)" ]]; then
+            git status --short
+            echo '::error::Release checkout is dirty before tagging'
+            exit 1
+          fi
+      - name: Publish combined release
+        uses: ./
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          command: release
+          flow: on-merge
+          release: none
+          install-premise: build
+          channel: stable
+          version: ${{ needs.plan.outputs.version }}
+          files-dir: ${{ needs.plan.outputs.native == 'true' && format('{0}/premise-files', runner.temp) || '' }}
+
+  publish-packages:
+    needs: publish-release
+    if: >-
+      always() && needs.publish-release.result == 'success' &&
+      needs.publish-release.outputs.version != ''
+    runs-on: ubuntu-22.04
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Publish registry packages
+        uses: ./
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
+        with:
+          command: packages
+          flow: on-merge
+          release: none
+          install-premise: build
+          channel: stable
+          version: ${{ needs.publish-release.outputs.version }}

@@ -46,7 +46,7 @@ func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 	for _, name := range []string{"on-commit.yml", "on-merge.yml", "on-deploy.yml"} {
 		path := filepath.Join(workspace, ".github", "workflows", name)
 		if name == "on-commit.yml" {
-			assertFileContains(t, path, "cloudvoyant/premise/.github/workflows/release-platform.yml@v0")
+			assertFileContains(t, path, "cloudvoyant/premise@v0")
 			workflow, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
@@ -57,8 +57,13 @@ func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 			}
 			for _, expected := range []string{
 				"permissions:\n  contents: write\n  id-token: write",
-				"uses: cloudvoyant/premise/.github/workflows/release-platform.yml@v0",
+				"uses: cloudvoyant/premise@v0",
 				"flow: on-commit",
+				"command: plan",
+				"command: flow",
+				"command: flow-matrix",
+				"command: release",
+				"command: packages",
 				"release: auto",
 			} {
 				if !strings.Contains(contents, expected) {
@@ -69,7 +74,7 @@ func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 		if name == "on-merge.yml" {
 			for _, expected := range []string{
 				"permissions:\n  contents: write\n  id-token: write",
-				"uses: cloudvoyant/premise/.github/workflows/release-platform.yml@v0",
+				"uses: cloudvoyant/premise@v0",
 				"flow: on-merge",
 				"release: auto",
 			} {
@@ -80,7 +85,7 @@ func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 			if name == "on-deploy.yml" {
 				assertFileContains(t, path, "install-premise: build")
 			} else {
-				assertFileContains(t, path, "cloudvoyant/premise/.github/workflows/release-platform.yml@v0")
+				assertFileContains(t, path, "cloudvoyant/premise@v0")
 			}
 		}
 	}
