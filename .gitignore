@@ -120,3 +120,8 @@ test-results/
 
 # Codevoyant style guide learning data (personal observations)
 .codevoyant/
+
+# Pulumi local state and deployment recovery records
+.pulumi/
+.pulumi-state/
+.premise-releases/

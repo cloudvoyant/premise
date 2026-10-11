@@ -41,8 +41,13 @@ Use .:app to select a template from the current workspace.`,
 		if err != nil {
 			return err
 		}
+		answers, _ := cmd.Flags().GetStringToString("answer")
+		var questionnaire core.Questionnaire = core.InteractiveQuestionnaire{}
+		if cmd.Flags().Changed("answer") {
+			questionnaire = core.AnswerQuestionnaire{Answers: answers}
+		}
 		return core.Generate(cmd.Context(), cwd, selector, core.GenerateOptions{
-			Questionnaire: core.InteractiveQuestionnaire{},
+			Questionnaire: questionnaire,
 		}, cmd.OutOrStdout())
 	},
 }
@@ -70,4 +75,10 @@ func resolveSelectorArgument(ctx context.Context, args []string, progress io.Wri
 	default:
 		return "", fmt.Errorf("unhandled selector kind %d", classified.Kind)
 	}
+}
+
+// Private helpers ------------------------------------------------------------
+
+func init() {
+	generateCmd.Flags().StringToString("answer", nil, "Explicit question key=value; repeat to generate without a terminal")
 }

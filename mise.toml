@@ -14,6 +14,8 @@ node = "lts"
 shellcheck = "latest"
 shfmt = "latest"
 watchexec = "latest"
+fnox = "1.39.0"
+actionlint = "1.7.12"
 
 [tasks.install]
 description = "Install the premise CLI"

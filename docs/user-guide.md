@@ -308,3 +308,9 @@ Release-candidate publication is opt-in for Go: a feature-branch push whose HEAD
 - Premise refuses to merge into or replace an existing destination.
 - Smart root merging is limited to `.gitignore`, `.gitattributes`, and `mise.toml`. Other root collisions use a complete-file choice.
 - Generation is create-only. It does not update existing projects or provide crash recovery across the destination and workspace manifest.
+
+## Pulumi environments and application secrets
+
+Use the environment stack commands for infrastructure and the ordered deployment executor for provisioning, migration, full updates and recovery. Application secrets use fnox through Mise. Deployment administration credentials use provider-supported OAuth or CI secrets.
+
+See [infrastructure deployment](modules/infrastructure.md) and [secret management](secret-management.md) for configuration, commands and recovery.

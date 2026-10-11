@@ -47,12 +47,14 @@ type TemplateRegistry struct {
 }
 
 type Workspace struct {
-	Name            string      `yaml:"name"`
-	Kind            ProjectKind `yaml:"kind,omitempty"`
-	SchemaVersion   string      `yaml:"schema-version"`
-	PackageManagers []string    `yaml:"package_managers,omitempty"`
-	Providers       Providers   `yaml:"providers"`
-	Projects        []Project   `yaml:"projects"`
+	Name            string          `yaml:"name"`
+	Kind            ProjectKind     `yaml:"kind,omitempty"`
+	SchemaVersion   string          `yaml:"schema-version"`
+	PackageManagers []string        `yaml:"package_managers,omitempty"`
+	Providers       Providers       `yaml:"providers"`
+	Projects        []Project       `yaml:"projects"`
+	Infra           *Infrastructure `yaml:"infra,omitempty"`
+	Deployment      *Deployment     `yaml:"deployment,omitempty"`
 }
 
 type Providers struct {
@@ -75,6 +77,8 @@ type Project struct {
 	Path     string              `yaml:"path"`
 	CI       PlatformDeclaration `yaml:"ci,omitempty"`
 	Answers  map[string]string   `yaml:"answers,omitempty"`
+	Infra    *InfraDeclaration   `yaml:"infra,omitempty"`
+	Secrets  *ProjectSecrets     `yaml:"secrets,omitempty"`
 }
 
 type Template struct {
@@ -85,6 +89,7 @@ type Template struct {
 	CI            PlatformDeclaration `yaml:"ci,omitempty"`
 	Questions     []Question          `yaml:"questions"`
 	Substitutions map[string]string   `yaml:"substitutions,omitempty"`
+	Infra         *InfraDeclaration   `yaml:"infra,omitempty"`
 }
 
 type Question struct {
@@ -565,7 +570,7 @@ func (manifest Config) Validate() error {
 		if err := ValidateProjectName(project.Name); err != nil {
 			return fmt.Errorf("workspace.projects[%d].name: %w", index, err)
 		}
-		if project.Template == "" {
+		if project.Template == "" && (project.Infra == nil || project.Infra.Role != "component") {
 			return fmt.Errorf("workspace.projects[%d].template is required", index)
 		}
 		if project.Path == "" || filepath.IsAbs(project.Path) || escapesRoot(project.Path) {
@@ -580,10 +585,13 @@ func (manifest Config) Validate() error {
 		if err := ValidatePlatformDeclaration(project.CI); err != nil {
 			return fmt.Errorf("workspace.projects[%d].ci: %w", index, err)
 		}
+		if err := validateProjectSecrets(project); err != nil {
+			return err
+		}
 		projectNames[project.Name] = struct{}{}
 		projectPaths[project.Path] = struct{}{}
 	}
-	return nil
+	return validateInfrastructure(manifest)
 }
 
 var validPlatforms = map[string]struct{}{"linux": {}, "macos": {}, "windows": {}}
@@ -619,10 +627,18 @@ func (manifest Config) PublicationTargets() []Template {
 	var targets []Template
 	switch manifest.Workspace.Kind {
 	case ProjectKindTemplateRegistry:
-		targets = append(targets, manifest.DeclaredTemplates()...)
+		for _, template := range manifest.DeclaredTemplates() {
+			if template.Kind == "infra" || template.Kind == "infra-component" {
+				continue
+			}
+			targets = append(targets, template)
+		}
 	default:
 		targets = make([]Template, 0, len(manifest.Workspace.Projects))
 		for _, project := range manifest.Workspace.Projects {
+			if project.Infra != nil {
+				continue
+			}
 			kind := ""
 			if strings.HasPrefix(filepath.ToSlash(project.Path), "apps/") {
 				kind = "app"
@@ -733,6 +749,10 @@ func KindDirectory(kind string) (string, error) {
 		return "apps", nil
 	case "lib":
 		return "libs", nil
+	case "infra":
+		return "infra", nil
+	case "infra-component":
+		return "infra/components", nil
 	default:
 		return "", fmt.Errorf("unsupported template kind %q", kind)
 	}

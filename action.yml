@@ -7,7 +7,7 @@ branding:
 
 inputs:
   command:
-    description: "Operation: plan | flow | flow-matrix | release | packages"
+    description: "Operation: plan | flow | flow-matrix | release | packages | infra-plan | infra-destroy | deploy-plan | deploy"
     required: false
     default: flow
   flow:
@@ -15,7 +15,7 @@ inputs:
     required: false
     default: on-commit
   environment:
-    description: "Release environment for on-release: stage | prod"
+    description: "Environment for deployment: dev | stage | prod | preview"
     required: false
     default: ""
   release:
@@ -23,6 +23,7 @@ inputs:
     required: false
     default: auto
   mise-version:
+    default: "2026.10.8"
     description: "Mise version to install (defaults to the latest release)"
     required: false
   install-premise:
@@ -70,6 +71,26 @@ inputs:
     description: "Downloaded native artifact directory for combined publication"
     required: false
     default: ""
+  backend:
+    description: "Configured infrastructure backend name"
+    required: false
+    default: ""
+  branch:
+    description: "Feature branch identity for preview environments"
+    required: false
+    default: ""
+  deployment-revision:
+    description: "Immutable application release identity (defaults to triggering SHA)"
+    required: false
+    default: ""
+  artifact:
+    description: "Pinned project artifact identities, as project=identity pairs"
+    required: false
+    default: ""
+  records-url:
+    description: "GCS prefix for durable deployment recovery records (defaults to GCS state backend prefix)"
+    required: false
+    default: ""
 
 outputs:
   mode:
@@ -109,7 +130,7 @@ runs:
   using: composite
   steps:
     - name: Setup mise
-      uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+      uses: jdx/mise-action@v4
       env:
         GITHUB_TOKEN: ""
         GH_TOKEN: ""
@@ -122,7 +143,7 @@ runs:
         version: ${{ inputs.mise-version }}
 
     - name: Restore shared build caches
-      uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+      uses: actions/cache@v4
       with:
         # A unique writer per job, but a common restore prefix across workflows.
         # Scope locks to the caller; the checked-out action is not a dependency.
@@ -249,6 +270,39 @@ runs:
         FLOW: ${{ inputs.flow }}
       run: pm ci plan --flow "$FLOW" --github-output >> "$GITHUB_OUTPUT"
 
+    - name: Restore deployment recovery records
+      if: inputs.command == 'deploy' && inputs.setup-only != 'true'
+      shell: bash
+      env:
+        DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+        INFRA_BACKEND: ${{ inputs.backend }}
+        PREVIEW_BRANCH: ${{ inputs.branch }}
+        RECORDS_URL: ${{ inputs.records-url }}
+      run: |
+        set -euo pipefail
+        args=(deploy plan --json --env "$DEPLOY_ENVIRONMENT")
+        if [[ -n "$INFRA_BACKEND" ]]; then args+=(--backend "$INFRA_BACKEND"); fi
+        if [[ -n "$PREVIEW_BRANCH" ]]; then args+=(--branch "$PREVIEW_BRANCH"); fi
+        plan_file="$RUNNER_TEMP/premise-deploy-plan.json"
+        pm "${args[@]}" > "$plan_file"
+        python3 - "$plan_file" <<'PY'
+        import json, os, pathlib, sys
+        plan = json.load(open(sys.argv[1]))
+        base = os.environ.get('RECORDS_URL') or plan['backend_url'].rstrip('/') + '/.premise-releases'
+        if not base.startswith('gs://'):
+            raise SystemExit('Deployment requires a GCS records-url or caller-managed durable recovery storage')
+        directory = plan['records_directory']
+        if any(c in directory + base + plan['stack'] for c in '\r\n'):
+            raise SystemExit('Deployment record paths must not contain line breaks')
+        pathlib.Path(directory).mkdir(parents=True, exist_ok=True)
+        with open(os.environ['GITHUB_ENV'], 'a') as output:
+            output.write('PM_RECORDS_DIRECTORY=' + directory + '\n')
+            output.write('PM_RECORDS_URL=' + base.rstrip('/') + '/' + plan['stack'] + '\n')
+        PY
+        record_directory="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["records_directory"])' "$plan_file")"
+        record_url="$(python3 -c 'import json,os,sys; p=json.load(open(sys.argv[1])); print((os.environ.get("RECORDS_URL") or p["backend_url"].rstrip("/")+"/.premise-releases").rstrip("/")+"/"+p["stack"])' "$plan_file")"
+        gcloud storage rsync "$record_url" "$record_directory" --recursive
+
     - name: Run Premise operation
       if: inputs.setup-only != 'true' && inputs.command != 'plan'
       shell: bash
@@ -265,6 +319,10 @@ runs:
         FILES_DIR: ${{ inputs.files-dir }}
         ROOT_ONLY: ${{ inputs.root-only }}
         SKIP_ROOT: ${{ inputs.skip-root }}
+        INFRA_BACKEND: ${{ inputs.backend }}
+        PREVIEW_BRANCH: ${{ inputs.branch }}
+        DEPLOY_REVISION: ${{ inputs.deployment-revision || github.sha }}
+        DEPLOY_ARTIFACT: ${{ inputs.artifact }}
       run: |
         set -euo pipefail
         case "$COMMAND" in
@@ -292,9 +350,35 @@ runs:
               args+=(--files-dir "$FILES_DIR")
             fi
             ;;
+          infra-plan|infra-destroy|deploy-plan|deploy)
+            : "${DEPLOY_ENVIRONMENT:?environment is required}"
+            case "$COMMAND" in
+              infra-plan) args=(infra plan);;
+              infra-destroy) args=(infra destroy);;
+              deploy-plan) args=(deploy plan);;
+              deploy) args=(deploy run --release "$DEPLOY_REVISION");;
+            esac
+            args+=(--env "$DEPLOY_ENVIRONMENT")
+            if [[ -n "$INFRA_BACKEND" ]]; then args+=(--backend "$INFRA_BACKEND"); fi
+            if [[ -n "$PREVIEW_BRANCH" ]]; then args+=(--branch "$PREVIEW_BRANCH"); fi
+            if [[ "$COMMAND" == deploy ]]; then
+              if [[ -n "$DEPLOY_ARTIFACT" ]]; then args+=(--artifact "$DEPLOY_ARTIFACT"); fi
+            elif [[ -n "$PROJECT" && "$COMMAND" == infra-* ]]; then
+              args+=("$PROJECT")
+            fi
+            ;;
           *)
             echo "::error::invalid command '$COMMAND' (plan | flow | flow-matrix | release | packages)"
             exit 1
             ;;
         esac
         pm "${args[@]}"
+
+    - name: Persist deployment recovery records
+      if: always() && inputs.command == 'deploy' && inputs.setup-only != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ -n "${PM_RECORDS_DIRECTORY:-}" && -n "${PM_RECORDS_URL:-}" ]]; then
+          gcloud storage rsync "$PM_RECORDS_DIRECTORY" "$PM_RECORDS_URL" --recursive
+        fi

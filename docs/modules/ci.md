@@ -130,3 +130,9 @@ Commit and merge pipelines call the Premise action for each operation. GitHub st
 The plan operation exports `mode`, `runner`, `matrix`, `native`, and `release_version`. The CLI writes the schedule directly to `GITHUB_OUTPUT`, without shell parsing. A marked feature-branch push (`[publish-rc]`) plans an RC; pull request checks do not publish. RC releases are GitHub prereleases and do not replace the latest stable release. The package job runs after successful publication even when the other runner shape was skipped.
 
 The flow engine owns selection, task order, host validation, safe release planning, and file staging. The release publisher owns file validation, tag safety, one combined GitHub Release, and later package publication. GitHub Actions owns runner and matrix selection, job dependencies, artifact transfer, and credential boundaries. A green check or dry run does not prove publication: inspect the hosted tag, release, archives, native assets, and registry packages before claiming it succeeded.
+
+## Pulumi environments and application secrets
+
+Use the environment stack commands for infrastructure and the ordered deployment executor for provisioning, migration, full updates and recovery. Application secrets use fnox through Mise. Deployment administration credentials use provider-supported OAuth or CI secrets.
+
+See [infrastructure deployment](infrastructure.md) and [secret management](../secret-management.md) for configuration, commands and recovery.
