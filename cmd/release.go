@@ -9,11 +9,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Private helpers ------------------------------------------------------------
+
 var releaseDryRun bool
 var releaseBuildOnly bool
 var releaseChannel string
 var releaseExpectedVersion string
 var releaseFilesDir string
+var modulePrepareVersion string
 
 var releaseCmd = &cobra.Command{
 	Use:   "release",
@@ -88,6 +91,18 @@ var releasePackagesCmd = &cobra.Command{
 	},
 }
 
+var releaseModulesCmd = &cobra.Command{Use: "modules", Short: "Manage coordinated Go module releases"}
+var releaseModulesPrepareCmd = &cobra.Command{
+	Use: "prepare", Short: "Prepare Go sibling dependencies before committing a release", Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		root, _, err := core.FindManifest(currentDirectory())
+		if err != nil {
+			return err
+		}
+		return core.PrepareGoModuleDependencies(cmd.Context(), root, modulePrepareVersion)
+	},
+}
+
 func currentDirectory() string { cwd, _ := os.Getwd(); return cwd }
 
 func init() {
@@ -98,6 +113,9 @@ func init() {
 	releasePublishCmd.Flags().StringVar(&releaseFilesDir, "files-dir", "", "staged release files directory")
 	releasePackagesCmd.Flags().StringVar(&releaseChannel, "channel", "stable", "release channel (stable or rc)")
 	releasePackagesCmd.Flags().StringVar(&releaseExpectedVersion, "expected-version", "", "expected release version")
-	releaseCmd.AddCommand(releasePublishCmd, releasePackagesCmd)
+	releaseModulesPrepareCmd.Flags().StringVar(&modulePrepareVersion, "version", "", "shared release version (vMAJOR.MINOR.PATCH or RC)")
+	releaseModulesPrepareCmd.MarkFlagRequired("version")
+	releaseModulesCmd.AddCommand(releaseModulesPrepareCmd)
+	releaseCmd.AddCommand(releasePublishCmd, releasePackagesCmd, releaseModulesCmd)
 	rootCmd.AddCommand(releaseCmd)
 }

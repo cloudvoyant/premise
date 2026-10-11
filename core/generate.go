@@ -39,16 +39,6 @@ type GenerateParameters struct {
 	ResolveConflict        MergeConflictResolver
 }
 
-type generationSources struct {
-	registryRoot string
-	templateRoot string
-}
-
-type generationStages struct {
-	stage         string
-	selectedStage string
-}
-
 // GeneratePlan is the complete, prepared generation. Its staging paths are
 // private so callers can only publish a plan through ApplyGeneratePlan.
 type GeneratePlan struct {
@@ -68,9 +58,7 @@ type GeneratePlan struct {
 	rootBackups   []MergeEntry
 }
 
-// -----------------------------------------------------------------------------
-// API
-// -----------------------------------------------------------------------------
+// Public API -----------------------------------------------------------------
 
 func Generate(ctx context.Context, cwd, selector string, options GenerateOptions, output io.Writer) error {
 	if output == nil {
@@ -218,6 +206,9 @@ func BuildGeneratePlan(request GenerateParameters) (*GeneratePlan, error) {
 	if err := buildGenerationEntries(plan, sources, request); err != nil {
 		return nil, err
 	}
+	if err := mergeGoWork(plan); err != nil {
+		return nil, fmt.Errorf("merge Go workspace: %w", err)
+	}
 	keepStages = true
 	return plan, nil
 }
@@ -271,9 +262,17 @@ func ApplyGeneratePlan(ctx context.Context, plan *GeneratePlan, output io.Writer
 	return nil
 }
 
-// -----------------------------------------------------------------------------
-// Utils
-// -----------------------------------------------------------------------------
+// Private helpers ------------------------------------------------------------
+
+type generationSources struct {
+	registryRoot string
+	templateRoot string
+}
+
+type generationStages struct {
+	stage         string
+	selectedStage string
+}
 
 func validateGenerationTarget(request GenerateParameters) (string, string, error) {
 	if request.ClientRepoRoot == "" {
@@ -532,6 +531,9 @@ func prepareWorkspaceCandidate(plan *GeneratePlan, candidate string, mergedRoot 
 		return err
 	}
 	if err := materializeRootEntries(plan.Entries, candidate, !mergedRoot); err != nil {
+		return err
+	}
+	if err := copyGoWorkModules(plan.workspaceRoot, candidate); err != nil {
 		return err
 	}
 	project := filepath.Join(candidate, plan.projectPath)
