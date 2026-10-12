@@ -83,7 +83,9 @@ func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 		}
 		if name == "on-merge.yml" || name == "on-deploy.yml" {
 			if name == "on-deploy.yml" {
-				assertFileContains(t, path, "install-premise: build")
+				assertFileContains(t, path, "install-premise: pre-built")
+				assertFileContains(t, path, "command: deploy")
+				assertFileContains(t, path, "cancel-in-progress: false")
 			} else {
 				assertFileContains(t, path, "cloudvoyant/premise@v0")
 			}

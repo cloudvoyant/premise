@@ -14,6 +14,8 @@ node = "lts"
 shellcheck = "latest"
 shfmt = "latest"
 watchexec = "latest"
+fnox = "1.39.0"
+actionlint = "1.7.12"
 
 [tasks.install]
 description = "Install the premise CLI"
@@ -41,6 +43,9 @@ echo "Build successful -> bin/$PROJECT (pm)"
 [tasks.test]
 description = "Run all Go tests"
 run = "go test ./..."
+
+[tasks.test.env]
+PREMISE_TEST_FNOX = "1"
 
 [tasks.e2e]
 description = "Run end-to-end tests"

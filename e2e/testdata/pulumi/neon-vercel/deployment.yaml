@@ -1,0 +1,20 @@
+records: .premise/releases
+prerequisites:
+  - "urn:pulumi:{stack}::*::*::db-*"
+migrations:
+  - project: web
+    task: migrate
+applications:
+  - project: web
+    health: health
+    rollback: rollback
+    outputs: { APP_URL: appURL }
+recovery:
+  first_deploy: { project: web, task: cleanup }
+record_outputs:
+  - deploymentId
+  - appURL
+  - aliasName
+  - databaseBranchId
+  - adminDeploymentId
+  - adminAliasName

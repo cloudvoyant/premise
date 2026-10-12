@@ -8,14 +8,14 @@ The project module defines the persisted identity and provenance of a generated 
 
 ### API
 
-| API                                             | Use                                                                                 |
-| ----------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `Project`                                       | Represent one entry in `workspace.projects`.                                        |
-| `ValidateProjectName(name)`                     | Validate a project identifier.                                                      |
-| `Config.AddProject(project)`                    | Register a project while enforcing unique names and paths.                          |
-| `KindDirectory(kind)`                           | Map `app` or `lib` to its conventional workspace directory.                         |
-| `RunProjectTask(ctx, root, project, task, ...)` | Resolve a registered project and execute one of its Mise tasks.                     |
-| `HasProjectMiseConfigs(root)`                   | Report whether conventional project roots contain project-level Mise configuration. |
+| API                                             | Use                                                                                      |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `Project`                                       | Represent one entry in `workspace.projects`.                                             |
+| `ValidateProjectName(name)`                     | Validate a project identifier.                                                           |
+| `Config.AddProject(project)`                    | Register a project while enforcing unique names and paths.                               |
+| `KindDirectory(kind)`                           | Map `app`, `lib`, `infra`, or `infra-component` to its conventional workspace directory. |
+| `RunProjectTask(ctx, root, project, task, ...)` | Resolve a registered project and execute one of its Mise tasks.                          |
+| `HasProjectMiseConfigs(root)`                   | Report whether conventional project roots contain project-level Mise configuration.      |
 
 ### Usage
 
@@ -40,8 +40,20 @@ err := core.RunProjectTask(ctx, root, "billing", "test", stdin, stdout, stderr)
 
 ## Implementation Details
 
-`Project` is part of the validated configuration model. `Config.Validate` requires a valid name, a template selector, and a normalized relative path inside the workspace. Project names and paths must be unique.
+`Project` is part of the validated configuration model. `Config.Validate` requires a valid name, a template selector for generated projects, and a normalized relative path inside the workspace. Project names and paths must be unique.
 
 `Config.AddProject` checks collisions, appends the record, sorts projects by path for deterministic YAML, and revalidates the complete manifest.
 
 The project module records template provenance but does not resolve registries, materialize files, merge root configuration, or validate generated candidates. Those operations belong to the [Generate Module](generate.md). It also does not store a duplicate task list: tasks remain defined by the project’s Mise configuration and are resolved by the [Task Module](task.md).
+
+### CI project selection
+
+A project or registry template can declare `ci.check_platforms` and `ci.release_platforms`. Checks default to Linux; release platforms default to none. These are operating-system targets, not build tools. `pm projects ls --flow on-merge --platform-mode multi --json` explains the eligible project/platform pairs and exclusions. `--type`, `--project`, `--platform`, and flow filters select from the same project declarations used by the CI planner.
+
+```yaml
+ci:
+  check_platforms: [linux, macos, windows]
+  release_platforms: [linux, macos, windows]
+```
+
+Project tasks remain in the project's `mise.toml`. Infrastructure components authored by the client can omit template provenance; their optional `infra` declaration provides test selection and resource targets.

@@ -308,7 +308,7 @@ func TestRegistryCIFlowRunsEachTemplateAndSkipsAppTasksForLibraries(t *testing.T
 	runner.tasks[appDirectory+"|deploy"] = true
 	runner.tasks[appDirectory+"|e2e"] = true
 
-	if err := runCIFlow(context.Background(), root, CIFlowOnCommit, "preview", CIReleaseNone, runner); err != nil {
+	if err := runCIFlow(context.Background(), root, CIFlowOnRelease, "stage", CIReleaseNone, runner); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.calls) == 0 || runner.calls[0].directory != filepath.Join(root, "templates", library.Name) {
@@ -321,7 +321,7 @@ func TestRegistryCIFlowRunsEachTemplateAndSkipsAppTasksForLibraries(t *testing.T
 		if call.directory == filepath.Join(root, "templates", library.Name) && (strings.Contains(joined, "deploy") || strings.Contains(joined, "e2e")) {
 			libraryAppTask = true
 		}
-		if call.directory == appDirectory && joined == "run --jobs 1 deploy -- preview" {
+		if call.directory == appDirectory && joined == "run --jobs 1 deploy -- stage" {
 			appDeploy = true
 		}
 	}
@@ -329,7 +329,7 @@ func TestRegistryCIFlowRunsEachTemplateAndSkipsAppTasksForLibraries(t *testing.T
 		t.Fatal("library template ran an app-only task")
 	}
 	if !appDeploy {
-		t.Fatal("app template did not run deploy preview")
+		t.Fatal("app template did not run deploy stage")
 	}
 	firstAppCall := -1
 	for index, call := range runner.calls {
@@ -340,6 +340,29 @@ func TestRegistryCIFlowRunsEachTemplateAndSkipsAppTasksForLibraries(t *testing.T
 	}
 	if firstAppCall < 0 || runner.calls[firstAppCall].name != "mise" || !reflect.DeepEqual(runner.calls[firstAppCall].arguments, []string{"install"}) {
 		t.Fatalf("first app command = %#v, want mise install", runner.calls[firstAppCall])
+	}
+}
+
+func TestValidationFlowsDoNotRunApplicationDeployTasks(t *testing.T) {
+	for _, flow := range []CIFlow{CIFlowOnCommit, CIFlowOnMerge} {
+		for _, task := range ciTasks(flow, "preview") {
+			if task.name == "deploy" || task.name == "e2e" {
+				t.Fatalf("%s includes deployment task %s", flow, task.name)
+			}
+		}
+		root := t.TempDir()
+		runner := newFakeCIRunner()
+		runner.tasks[root+"|deploy"] = true
+		runner.tasks[root+"|e2e"] = true
+		project := CIPlatformProject{Name: "web", Path: ".", Kind: "app"}
+		if err := runSelectedProject(context.Background(), root, project, "linux", flow, "preview", "", "", "", runner); err != nil {
+			t.Fatal(err)
+		}
+		for _, call := range runner.calls {
+			if strings.Contains(strings.Join(call.arguments, " "), "deploy") || strings.Contains(strings.Join(call.arguments, " "), "e2e") {
+				t.Fatalf("%s ran deployment during validation", flow)
+			}
+		}
 	}
 }
 

@@ -106,6 +106,11 @@ func SelectCIProjects(root string, manifest Config, flow CIFlow) ([]CIPlatformPr
 			}
 			kind := ""
 			switch {
+			case project.Infra != nil:
+				kind = "infra"
+				if project.Infra.Role == "component" {
+					kind = "infra-component"
+				}
 			case strings.HasPrefix(project.Path, "apps/"):
 				kind = "app"
 			case strings.HasPrefix(project.Path, "libs/"):
@@ -448,7 +453,7 @@ func runScopedCIFlow(ctx context.Context, root string, flow CIFlow, environment 
 	return nil
 }
 
-func runSelectedProject(ctx context.Context, root string, project CIPlatformProject, platform string, _ CIFlow, target, output, channel, version string, runner ciRunner) error {
+func runSelectedProject(ctx context.Context, root string, project CIPlatformProject, platform string, flow CIFlow, target, output, channel, version string, runner ciRunner) error {
 	directory := filepath.Join(root, project.Path)
 	if project.Source == "registry" {
 		if d, err := TemplateDirectory(root, project.Path); err == nil {
@@ -462,7 +467,7 @@ func runSelectedProject(ctx context.Context, root string, project CIPlatformProj
 			return fmt.Errorf("project %s platform %s: %w", project.Name, platform, err)
 		}
 	}
-	if project.Kind == "app" {
+	if project.Kind == "app" && flow == CIFlowOnRelease {
 		for _, task := range []string{"deploy", "e2e"} {
 			exists, err := runner.TaskExists(ctx, directory, task)
 			if err != nil {
@@ -775,8 +780,6 @@ func ciTasks(flow CIFlow, target string) []ciTask {
 			{name: "format"},
 			{name: "format:check"},
 			{name: "lint"},
-			{name: "deploy", optional: true, appOnly: true, target: target},
-			{name: "e2e", optional: true, appOnly: true, target: target},
 		}
 	case CIFlowOnMerge:
 		return []ciTask{
@@ -785,8 +788,6 @@ func ciTasks(flow CIFlow, target string) []ciTask {
 			{name: "format"},
 			{name: "format:check"},
 			{name: "lint"},
-			{name: "deploy", optional: true, appOnly: true, target: target},
-			{name: "e2e", optional: true, appOnly: true, target: target},
 		}
 	case CIFlowOnRelease:
 		return []ciTask{

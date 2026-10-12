@@ -232,6 +232,11 @@ func (runner miseRunner) toolEnvironment(ctx context.Context, directory string, 
 func (runner miseRunner) environment(additions []string) []string {
 	removed := append([]string(nil), publicationCredentialEnvironment...)
 	removed = append(removed, runner.RemoveEnvironment...)
+	if slices.Contains(additions, "PREMISE_TEMPLATE_TEST=1") {
+		for key := range deploymentSecretKeys {
+			removed = append(removed, key)
+		}
+	}
 	if runner.Ceiling != "" {
 		removed = append(removed, "MISE_CEILING_PATHS")
 	}

@@ -74,3 +74,9 @@ pm update v0.2.1
 - [Conventional Commits](https://www.conventionalcommits.org/)
 - [GitHub Actions](https://docs.github.com/en/actions)
 - [GCP Artifact Registry](https://cloud.google.com/artifact-registry/docs)
+
+## Pulumi environments and application secrets
+
+Use the environment stack commands for infrastructure and the ordered deployment executor for provisioning, migration, full updates and recovery. Application secrets use fnox through Mise. Deployment administration credentials use provider-supported OAuth or CI secrets.
+
+See [infrastructure deployment](docs/modules/infrastructure.md) and [secret management](docs/secret-management.md) for configuration, commands and recovery.
