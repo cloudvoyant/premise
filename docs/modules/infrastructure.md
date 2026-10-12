@@ -126,7 +126,7 @@ The deployment holds a local lock through both updates, migrations and recovery.
 
 The same program creates previews from feature-branch pushes. The configuration supplies branch identity and environment parameters. A new PR or branch-specific program is not required.
 
-The generated workflow pins action and binary version `v0.5.0-rc.203` because it supplies the deployment interface introduced here. Move both pins together after a compatible stable release.
+The generated workflow pins action and binary version `v0.5.0-rc.207` because it supplies the deployment interface introduced here. Move both pins together after a compatible stable release.
 
 Set `PREMISE_DEPLOY_ENABLED=true` to enable the generated feature-branch deployment workflow. Configure GCP workload identity, backend selection and CI administration secrets. The preview stack name includes a stable branch hash. Further pushes update the same stack.
 
