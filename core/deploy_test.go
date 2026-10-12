@@ -92,7 +92,7 @@ if [ "$2" = "health" ] && [ "$PM_RELEASE" = "B" ]; then exit 1; fi
 }
 
 func TestDeploymentFailureGatesAndRecovery(t *testing.T) {
-	for _, phase := range []string{"provision", "migration", "apply", "deploy", "health"} {
+	for _, phase := range []string{"init", "provision", "migration", "apply", "deploy", "health", "record"} {
 		t.Run(phase, func(t *testing.T) {
 			root, log, options := deploymentFailureFixture(t)
 			var output bytes.Buffer
@@ -122,6 +122,7 @@ func TestDeploymentFailureGatesAndRecovery(t *testing.T) {
 			}
 			b := string(events)[strings.Index(string(events), "release=B"):]
 			forbidden := map[string][]string{
+				"init":      {"task migrate", "task deploy", "task health", "task rollback"},
 				"provision": {"task migrate", "task deploy", "task health", "task rollback"},
 				"migration": {"task deploy", "task health", "task rollback"},
 				"apply":     {"task deploy", "task health"},
@@ -132,7 +133,7 @@ func TestDeploymentFailureGatesAndRecovery(t *testing.T) {
 					t.Fatalf("dependent stage ran after %s: %s", phase, b)
 				}
 			}
-			if phase == "apply" || phase == "deploy" || phase == "health" {
+			if phase == "apply" || phase == "deploy" || phase == "health" || phase == "record" {
 				if !strings.Contains(b, "task rollback release=B previous=A") {
 					t.Fatal("previous release not restored", b)
 				}
@@ -199,6 +200,55 @@ func TestDeploymentRecoveryFailureAndFirstReleaseCleanup(t *testing.T) {
 	}
 }
 
+func TestDeploymentWithoutMigrationsDoesNotDeployInfraManagedAppTwice(t *testing.T) {
+	root, log, options := deploymentFailureFixture(t)
+	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.Workspace.Deployment.Migrations = nil
+	manifest.Workspace.Deployment.Prerequisites = nil
+	manifest.Workspace.Deployment.Applications[0].ManagedBy = "infra"
+	manifest.Workspace.Deployment.Applications[0].Deploy = ""
+	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := RunDeployment(t.Context(), root, options, nil, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	events, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, unwanted := range []string{"task migrate", "task deploy", "--target"} {
+		if strings.Contains(string(events), unwanted) {
+			t.Fatalf("unexpected %s: %s", unwanted, events)
+		}
+	}
+	if strings.Count(string(events), "task health") != 1 {
+		t.Fatal("health must run exactly once", string(events))
+	}
+}
+
+func TestDeploymentLockStopsConcurrentMutation(t *testing.T) {
+	root, log, options := deploymentFailureFixture(t)
+	records := filepath.Join(root, ".premise/releases/dev")
+	if err := os.MkdirAll(records, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(records, "lock"), []byte("another deployment"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := RunDeployment(t.Context(), root, options, nil, &output, &output); err == nil {
+		t.Fatal("concurrent deployment accepted")
+	}
+	if _, err := os.Stat(log); !os.IsNotExist(err) {
+		t.Fatal("concurrent run mutated infrastructure or tasks")
+	}
+}
+
 // Private helpers ------------------------------------------------------------
 
 func deploymentFailureFixture(t *testing.T) (string, string, DeployOptions) {
@@ -211,7 +261,7 @@ func deploymentFailureFixture(t *testing.T) (string, string, DeployOptions) {
 	}
 	manifest := infraTestManifest()
 	manifest.Workspace.Projects = append(manifest.Workspace.Projects, Project{Name: "web", Template: "registry/app", Path: "apps/web"})
-	manifest.Workspace.Deployment = &Deployment{Records: ".premise/releases", Prerequisites: []string{"urn:db"}, Migrations: []TaskReference{{Project: "web", Task: "migrate"}}, Applications: []DeploymentApplication{{Project: "web", ManagedBy: "task", Deploy: "deploy", Health: "health", Rollback: "rollback"}}, Recovery: DeploymentRecovery{FirstDeploy: &TaskReference{Project: "web", Task: "cleanup"}}}
+	manifest.Workspace.Deployment = &Deployment{Records: ".premise/releases", RecordOutputs: []string{"deploymentId"}, Prerequisites: []string{"urn:db"}, Migrations: []TaskReference{{Project: "web", Task: "migrate"}}, Applications: []DeploymentApplication{{Project: "web", ManagedBy: "task", Deploy: "deploy", Health: "health", Rollback: "rollback"}}, Recovery: DeploymentRecovery{FirstDeploy: &TaskReference{Project: "web", Task: "cleanup"}}}
 	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
 		t.Fatal(err)
 	}
@@ -222,6 +272,13 @@ for argument in "$@"; do
  if [ "$previous" = "--save-plan" ]; then printf '%s' '{"resourcePlans":{"urn:db":{"goal":{"custom":true,"type":"test:db"}}}}' > "$argument"; fi
  previous="$argument"
 done
+if [ "$1" = "stack" ] && [ "$2" = "select" ]; then
+ [ "$TEST_FAILURE_PHASE" != "init" ] || exit 1
+fi
+if [ "$1" = "stack" ] && [ "$2" = "output" ]; then
+ [ "$TEST_FAILURE_PHASE" != "record" ] || exit 1
+ printf '{"deploymentId":"deployment-%s"}' "$PM_RELEASE"
+fi
 if [ "$1" = "up" ]; then
  case "$*" in
   *--target*) [ "$TEST_FAILURE_PHASE" != "provision" ] || exit 1;;
