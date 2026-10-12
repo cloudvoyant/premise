@@ -293,15 +293,15 @@ runs:
         if not base.startswith('gs://'):
             raise SystemExit('Deployment requires a GCS records-url or caller-managed durable recovery storage')
         directory = plan['records_directory']
-        if any(c in directory + base + plan['stack'] for c in '\r\n'):
+        if any(c in directory + base + plan['program'] + plan['stack'] for c in '\r\n'):
             raise SystemExit('Deployment record paths must not contain line breaks')
         pathlib.Path(directory).mkdir(parents=True, exist_ok=True)
         with open(os.environ['GITHUB_ENV'], 'a') as output:
             output.write('PM_RECORDS_DIRECTORY=' + directory + '\n')
-            output.write('PM_RECORDS_URL=' + base.rstrip('/') + '/' + plan['stack'] + '\n')
+            output.write('PM_RECORDS_URL=' + base.rstrip('/') + '/' + plan['program'] + '/' + plan['stack'] + '\n')
         PY
         record_directory="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["records_directory"])' "$plan_file")"
-        record_url="$(python3 -c 'import json,os,sys; p=json.load(open(sys.argv[1])); print((os.environ.get("RECORDS_URL") or p["backend_url"].rstrip("/")+"/.premise-releases").rstrip("/")+"/"+p["stack"])' "$plan_file")"
+        record_url="$(python3 -c 'import json,os,sys; p=json.load(open(sys.argv[1])); print((os.environ.get("RECORDS_URL") or p["backend_url"].rstrip("/")+"/.premise-releases").rstrip("/")+"/"+p["program"]+"/"+p["stack"])' "$plan_file")"
         listing_error="$RUNNER_TEMP/premise-record-listing.err"
         if ! gcloud storage ls "$record_url/**" >/dev/null 2>"$listing_error"; then
           diagnostic="$(<"$listing_error")"

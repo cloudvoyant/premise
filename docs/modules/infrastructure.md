@@ -118,7 +118,7 @@ After a rollout or health failure, Premise runs the declared rollback tasks. The
 
 A first deployment has no previous successful release. Declare a `first_deploy` recovery task. Optional `provision`, `migration` and `database` recovery tasks handle their respective failures. A failed recovery reports both errors and keeps recovery inputs available.
 
-The record directory contains `last-success.json` and `last-run.json` for each stack. It contains no secret output values. Store the directory durably across CI runners. The composite action restores and saves records in a GCS prefix. `records-url` can select a prefix separate from the state backend.
+The record directory contains `last-success.json` and `last-run.json` under `PROGRAM/STACK`. This keeps different programs separate when they share a backend. It contains no secret output values. Store the directory durably across CI runners. The composite action restores and saves records in a GCS prefix. `records-url` can select a prefix separate from the state backend. The action appends the program and stack names to that prefix.
 
 The deployment holds a local lock through both updates, migrations and recovery. CI concurrency must serialize that whole sequence with cancellation disabled. Pulumi's backend lock covers each update separately. It does not lock the migration task.
 

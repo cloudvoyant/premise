@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -26,6 +27,7 @@ type DeployOptions struct {
 type ReleaseRecord struct {
 	Release   string            `json:"release"`
 	Artifacts map[string]string `json:"artifacts"`
+	Program   string            `json:"program"`
 	Stack     string            `json:"stack"`
 	Backend   string            `json:"backend"`
 	Config    map[string]string `json:"config"`
@@ -44,6 +46,7 @@ type DeploymentResult struct {
 
 // DeploymentPlan exposes state and recovery destinations for CI orchestration.
 type DeploymentPlan struct {
+	Program          string   `json:"program"`
 	Stack            string   `json:"stack"`
 	Backend          string   `json:"backend"`
 	BackendURL       string   `json:"backend_url"`
@@ -67,7 +70,7 @@ func PlanDeployment(root string, options InfraOptions) ([]string, error) {
 	if d == nil {
 		return nil, fmt.Errorf("workspace.deployment is not configured")
 	}
-	steps := []string{"stack " + destination.Stack + " backend " + destination.BackendName}
+	steps := []string{"program " + destination.Program.Name + " stack " + destination.Stack + " backend " + destination.BackendName}
 	if len(d.Prerequisites) > 0 {
 		steps = append(steps, "preview and apply database prerequisites")
 	}
@@ -101,18 +104,11 @@ func ResolveDeploymentPlan(root string, options InfraOptions) (DeploymentPlan, e
 	if err != nil {
 		return DeploymentPlan{}, err
 	}
-	directory := manifest.Workspace.Deployment.Records
-	if !filepath.IsAbs(directory) {
-		directory = filepath.Join(root, directory)
-	}
-	directory, err = filepath.Abs(filepath.Join(directory, destination.Stack))
+	directory, err := deploymentRecordDirectory(root, manifest, destination)
 	if err != nil {
 		return DeploymentPlan{}, err
 	}
-	if err := validateDeploymentRecordDirectory(root, directory, manifest); err != nil {
-		return DeploymentPlan{}, err
-	}
-	return DeploymentPlan{Stack: destination.Stack, Backend: destination.BackendName, BackendURL: destination.BackendURL, RecordsDirectory: directory, Steps: steps}, nil
+	return DeploymentPlan{Program: destination.Program.Name, Stack: destination.Stack, Backend: destination.BackendName, BackendURL: destination.BackendURL, RecordsDirectory: directory, Steps: steps}, nil
 }
 
 // RunDeployment serializes both applies, migrations and recovery under one lock.
@@ -138,12 +134,8 @@ func RunDeployment(ctx context.Context, root string, options DeployOptions, stdi
 	if err != nil {
 		return err
 	}
-	records := declaration.Records
-	if !filepath.IsAbs(records) {
-		records = filepath.Join(root, records)
-	}
-	records = filepath.Join(records, destination.Stack)
-	if err := validateDeploymentRecordDirectory(root, records, manifest); err != nil {
+	records, err := deploymentRecordDirectory(root, manifest, destination)
+	if err != nil {
 		return err
 	}
 	for _, app := range declaration.Applications {
@@ -167,8 +159,8 @@ func RunDeployment(ctx context.Context, root string, options DeployOptions, stdi
 		if err := json.Unmarshal(data, previous); err != nil {
 			return fmt.Errorf("decode previous release: %w", err)
 		}
-		if previous.Stack != destination.Stack || previous.Backend != destination.BackendURL {
-			return fmt.Errorf("previous release backend/stack mismatch; state migration is not automatic")
+		if previous.Program != destination.Program.Name || previous.Stack != destination.Stack || previous.Backend != destination.BackendURL {
+			return fmt.Errorf("previous release program/backend/stack mismatch; state migration is not automatic")
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -268,7 +260,7 @@ func RunDeployment(ctx context.Context, root string, options DeployOptions, stdi
 		return errors.Join(fmt.Errorf("deployment failed during %s: %w", result.Phase, original), recoveryErr, recordErr)
 	}
 	result.Succeeded = true
-	record := ReleaseRecord{Release: options.Release, Artifacts: options.Artifacts, Stack: destination.Stack, Backend: destination.BackendURL, Config: destination.Config, Completed: time.Now().UTC(), Outputs: releaseOutputs}
+	record := ReleaseRecord{Program: destination.Program.Name, Release: options.Release, Artifacts: options.Artifacts, Stack: destination.Stack, Backend: destination.BackendURL, Config: destination.Config, Completed: time.Now().UTC(), Outputs: releaseOutputs}
 	if err := writeDeploymentJSON(filepath.Join(records, "last-success.json"), record); err != nil {
 		result.Succeeded = false
 		result.Phase = "record"
@@ -282,6 +274,8 @@ func RunDeployment(ctx context.Context, root string, options DeployOptions, stdi
 }
 
 // Private helpers ------------------------------------------------------------
+
+var recordNamespacePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
 func runDeploymentTask(ctx context.Context, root string, manifest Config, ref TaskReference, base map[string]string, runner infraCommandRunner, options DeployOptions) error {
 	var project Project
@@ -436,6 +430,25 @@ func writeDeploymentJSON(path string, value any) error {
 		return err
 	}
 	return os.Rename(temp.Name(), path)
+}
+
+func deploymentRecordDirectory(root string, manifest Config, destination InfraResolution) (string, error) {
+	name := destination.Program.Name
+	if name == "." || name == ".." || !recordNamespacePattern.MatchString(name) {
+		return "", fmt.Errorf("infrastructure program name must be a safe record namespace")
+	}
+	directory := manifest.Workspace.Deployment.Records
+	if !filepath.IsAbs(directory) {
+		directory = filepath.Join(root, directory)
+	}
+	directory, err := filepath.Abs(filepath.Join(directory, name, destination.Stack))
+	if err != nil {
+		return "", err
+	}
+	if err := validateDeploymentRecordDirectory(root, directory, manifest); err != nil {
+		return "", err
+	}
+	return directory, nil
 }
 
 func validateDeploymentRecordDirectory(root, path string, manifest Config) error {

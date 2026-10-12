@@ -55,7 +55,7 @@ if [ "$2" = "health" ] && [ "$PM_RELEASE" = "B" ]; then exit 1; fi
 	if err := RunDeployment(context.Background(), root, options, nil, &output, &output); err == nil {
 		t.Fatal("failed health reported success")
 	}
-	data, err := os.ReadFile(filepath.Join(root, ".premise/releases/dev/last-success.json"))
+	data, err := os.ReadFile(filepath.Join(root, ".premise/releases/environment/dev/last-success.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ if [ "$2" = "health" ] && [ "$PM_RELEASE" = "B" ]; then exit 1; fi
 	if last.Release != "A" {
 		t.Fatal(last)
 	}
-	data, err = os.ReadFile(filepath.Join(root, ".premise/releases/dev/last-run.json"))
+	data, err = os.ReadFile(filepath.Join(root, ".premise/releases/environment/dev/last-run.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestDeploymentFailureGatesAndRecovery(t *testing.T) {
 			if err := RunDeployment(t.Context(), root, options, nil, &output, &output); err == nil {
 				t.Fatal("failure reported success")
 			}
-			data, err := os.ReadFile(filepath.Join(root, ".premise/releases/dev/last-run.json"))
+			data, err := os.ReadFile(filepath.Join(root, ".premise/releases/environment/dev/last-run.json"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -138,7 +138,7 @@ func TestDeploymentFailureGatesAndRecovery(t *testing.T) {
 					t.Fatal("previous release not restored", b)
 				}
 			}
-			success, err := os.ReadFile(filepath.Join(root, ".premise/releases/dev/last-success.json"))
+			success, err := os.ReadFile(filepath.Join(root, ".premise/releases/environment/dev/last-success.json"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -169,7 +169,7 @@ func TestDeploymentRecoveryFailureAndFirstReleaseCleanup(t *testing.T) {
 			if err := RunDeployment(t.Context(), root, options, nil, &output, &output); err == nil {
 				t.Fatal("recovery failure reported success")
 			}
-			data, err := os.ReadFile(filepath.Join(root, ".premise/releases/dev/last-run.json"))
+			data, err := os.ReadFile(filepath.Join(root, ".premise/releases/environment/dev/last-run.json"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -192,7 +192,7 @@ func TestDeploymentRecoveryFailureAndFirstReleaseCleanup(t *testing.T) {
 				t.Fatal("wrong recovery task", string(events))
 			}
 			if first {
-				if _, err := os.Stat(filepath.Join(root, ".premise/releases/dev/last-success.json")); !os.IsNotExist(err) {
+				if _, err := os.Stat(filepath.Join(root, ".premise/releases/environment/dev/last-success.json")); !os.IsNotExist(err) {
 					t.Fatal("first failed release recorded success")
 				}
 			}
@@ -233,7 +233,7 @@ func TestDeploymentWithoutMigrationsDoesNotDeployInfraManagedAppTwice(t *testing
 
 func TestDeploymentLockStopsConcurrentMutation(t *testing.T) {
 	root, log, options := deploymentFailureFixture(t)
-	records := filepath.Join(root, ".premise/releases/dev")
+	records := filepath.Join(root, ".premise/releases/environment/dev")
 	if err := os.MkdirAll(records, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -246,6 +246,38 @@ func TestDeploymentLockStopsConcurrentMutation(t *testing.T) {
 	}
 	if _, err := os.Stat(log); !os.IsNotExist(err) {
 		t.Fatal("concurrent run mutated infrastructure or tasks")
+	}
+}
+
+func TestRecoveryRecordsAreNamespacedByProgram(t *testing.T) {
+	root, _, _ := deploymentFailureFixture(t)
+	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := deploymentRecordDirectory(root, manifest, InfraResolution{Program: Project{Name: "one"}, Stack: "dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := deploymentRecordDirectory(root, manifest, InfraResolution{Program: Project{Name: "two"}, Stack: "dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a == b {
+		t.Fatal("different programs share release records")
+	}
+	for _, name := range []string{"..", "../other", "env*", "env?"} {
+		if _, err := deploymentRecordDirectory(root, manifest, InfraResolution{Program: Project{Name: name}, Stack: "dev"}); err == nil {
+			t.Fatalf("unsafe program namespace accepted: %s", name)
+		}
+	}
+
+	plan, err := ResolveDeploymentPlan(root, InfraOptions{Environment: "dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Program != "environment" || !strings.HasSuffix(plan.RecordsDirectory, filepath.Join("environment", "dev")) {
+		t.Fatal(plan)
 	}
 }
 
