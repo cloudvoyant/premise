@@ -271,6 +271,7 @@ runs:
       run: pm ci plan --flow "$FLOW" --github-output >> "$GITHUB_OUTPUT"
 
     - name: Restore deployment recovery records
+      id: restore-records
       if: inputs.command == 'deploy' && inputs.setup-only != 'true'
       shell: bash
       env:
@@ -301,6 +302,16 @@ runs:
         PY
         record_directory="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["records_directory"])' "$plan_file")"
         record_url="$(python3 -c 'import json,os,sys; p=json.load(open(sys.argv[1])); print((os.environ.get("RECORDS_URL") or p["backend_url"].rstrip("/")+"/.premise-releases").rstrip("/")+"/"+p["stack"])' "$plan_file")"
+        listing_error="$RUNNER_TEMP/premise-record-listing.err"
+        if ! gcloud storage ls "$record_url/**" >/dev/null 2>"$listing_error"; then
+          diagnostic="$(<"$listing_error")"
+          if [[ "$diagnostic" == *"matched no objects"* || "$diagnostic" == *"No URLs matched"* ]]; then
+            echo "No previous deployment records for this stack"
+            exit 0
+          fi
+          cat "$listing_error" >&2
+          exit 1
+        fi
         gcloud storage rsync "$record_url" "$record_directory" --recursive
 
     - name: Run Premise operation
@@ -375,7 +386,7 @@ runs:
         pm "${args[@]}"
 
     - name: Persist deployment recovery records
-      if: always() && inputs.command == 'deploy' && inputs.setup-only != 'true'
+      if: always() && steps.restore-records.outcome == 'success' && inputs.command == 'deploy' && inputs.setup-only != 'true'
       shell: bash
       run: |
         set -euo pipefail
