@@ -40,3 +40,9 @@ GoReleaser configuration is written to a temporary file. Release calls the Mise 
 Backends that contribute artifacts must agree on one release workspace. Their serial requirements are combined; Cargo requests serial GoReleaser execution after preparing its toolchain.
 
 Language-package credentials are excluded from general Mise and GoReleaser environments. Backends receive only the credentials needed for their publication subprocesses. Missing or invalid credentials fail before publication; correct them and rerun, reusing the existing tag. Context cancellation propagates to Git operations, Mise, registry checks, and GoReleaser.
+
+### CI staging and publication
+
+Project `release:build` tasks copy native output into the directory selected by the CI flow. They do not tag or publish. The hosted release job downloads every required native file and validates the complete set before creating or reusing a tag at the triggering commit. `pm release publish --channel rc --expected-version VERSION --files-dir DIRECTORY` publishes one combined GitHub release. `pm release packages` runs afterward with registry credentials isolated to that job.
+
+A `[publish-rc]` feature-branch push requests a GitHub prerelease. RCs do not replace the latest stable release. A dry release plan validates inputs without tags or publication. Native files are transferred as artifacts rather than caches. For Tauri, the project-owned Cargo/Mise task stages NSIS output for Windows RCs and can stage MSI output for stable releases.

@@ -79,7 +79,7 @@ func PlanDeployment(root string, options InfraOptions) ([]string, error) {
 	}
 	steps = append(steps, "preview and apply full environment stack")
 	for _, app := range d.Applications {
-		if app.ManagedBy == "task" {
+		if app.Deploy != "" {
 			steps = append(steps, "deploy "+app.Project+":"+app.Deploy)
 		}
 	}
@@ -165,7 +165,11 @@ func RunDeployment(ctx context.Context, root string, options DeployOptions, stdi
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	runner := infraCommandRunner{stdin: stdin, stdout: stdout, stderr: stderr}
+	secrets, err := infrastructureSecrets(ctx, root, destination, options.InfraOptions)
+	if err != nil {
+		return err
+	}
+	runner := infraCommandRunner{stdin: stdin, stdout: stdout, stderr: stderr, secrets: secrets}
 	result := DeploymentResult{Release: options.Release}
 	env := map[string]string{"PM_ENV": options.Environment, "PM_BRANCH": options.Branch, "PM_STACK": destination.Stack, "PM_RELEASE": options.Release, "PULUMI_BACKEND_URL": destination.BackendURL}
 	artifactJSON, _ := json.Marshal(options.Artifacts)
@@ -180,16 +184,14 @@ func RunDeployment(ctx context.Context, root string, options DeployOptions, stdi
 	runTask := func(ref TaskReference) error {
 		return runDeploymentTask(ctx, root, manifest, ref, env, runner, options)
 	}
+	infraEnv := map[string]string{}
+	for key, value := range env {
+		infraEnv[key] = value
+	}
+	for key, value := range secrets {
+		infraEnv[key] = value
+	}
 	runInfra := func(phase string, targets []string) error {
-		secrets, err := infrastructureAppSecrets(ctx, root, destination, options.InfraOptions)
-		if err != nil {
-			return err
-		}
-		infraEnv := map[string]string{}
-		for k, v := range env {
-			infraEnv[k] = v
-		}
-		infraEnv["PM_APP_SECRETS"] = secrets
 		d := destination
 		d.Targets = targets
 		result.Phase = phase
@@ -206,7 +208,7 @@ func RunDeployment(ctx context.Context, root string, options DeployOptions, stdi
 		}
 		if len(declaration.Prerequisites) > 0 {
 			result.Phase = "provision"
-			targets, err := resolvePrerequisiteTargets(ctx, runner, destination, declaration.Prerequisites, env)
+			targets, err := resolvePrerequisiteTargets(ctx, runner, destination, declaration.Prerequisites, infraEnv)
 			if err != nil {
 				return err
 			}
@@ -225,7 +227,7 @@ func RunDeployment(ctx context.Context, root string, options DeployOptions, stdi
 		}
 		result.Phase = "deploy"
 		for _, app := range declaration.Applications {
-			if app.ManagedBy == "task" {
+			if app.Deploy != "" {
 				if err := runTask(TaskReference{Project: app.Project, Task: app.Deploy, administration: true, Outputs: app.Outputs}); err != nil {
 					return err
 				}

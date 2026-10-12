@@ -3,6 +3,7 @@ package core
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -134,12 +135,12 @@ var deploymentSecretKeys = map[string]bool{
 }
 
 type secretReader interface {
-	Read(context.Context, string, string, string, string) (string, error)
+	Read(context.Context, string, string, string, []string) (map[string]string, error)
 }
 type commandSecretReader struct{}
 
-func (commandSecretReader) Read(ctx context.Context, directory, config, profile, key string) (string, error) {
-	command := exec.CommandContext(ctx, "mise", "exec", "fnox@1.39.0", "--", "fnox", "--config", config, "--profile", profile, "--no-defaults", "--no-daemon", "--non-interactive", "--if-missing", "error", "get", key)
+func (commandSecretReader) Read(ctx context.Context, directory, config, profile string, keys []string) (map[string]string, error) {
+	command := exec.CommandContext(ctx, "mise", "exec", "fnox@1.39.0", "--", "fnox", "--config", config, "--profile", profile, "--no-defaults", "--no-daemon", "--non-interactive", "--if-missing", "error", "env", "--json", "--keys", strings.Join(keys, ","))
 	command.Dir = directory
 	// Avoid accidental profile/config overrides and verbose provider logs.
 	for _, entry := range appSecretEnvironment(os.Environ(), nil) {
@@ -151,9 +152,30 @@ func (commandSecretReader) Read(ctx context.Context, directory, config, profile,
 	command.Stdout = &output
 	// Provider diagnostics can contain credentials; report the key, never their text.
 	if err := command.Run(); err != nil {
-		return "", fmt.Errorf("resolve application secret %s: provider failed", key)
+		return nil, errors.New("resolve application secrets: fnox failed")
 	}
-	return strings.TrimSuffix(output.String(), "\n"), nil
+	var result struct {
+		Schema  int               `json:"schema"`
+		Set     map[string]string `json:"set"`
+		Files   map[string]string `json:"files"`
+		Remove  []string          `json:"remove"`
+		Missing []string          `json:"missing"`
+		Leases  []string          `json:"leases"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil || result.Schema != 1 {
+		return nil, errors.New("invalid fnox environment response")
+	}
+	if len(result.Files) > 0 || len(result.Leases) > 0 || len(result.Missing) > 0 {
+		return nil, errors.New("pm secrets requires resolved scalar secrets; use fnox exec for files or leases")
+	}
+	// This adapter returns scalar values, not a complete process environment. Refuse
+	// inherited variables that fnox would remove rather than silently forwarding them.
+	for _, key := range result.Remove {
+		if os.Getenv(key) != "" && !deploymentSecretKeys[key] && !strings.HasPrefix(key, "FNOX_") && key != "RUST_LOG" {
+			return nil, fmt.Errorf("fnox requires removing inherited %s; unset it or use fnox exec", key)
+		}
+	}
+	return result.Set, nil
 }
 
 func validateProjectSecrets(project Project) error {
@@ -172,7 +194,7 @@ func validateProjectSecrets(project Project) error {
 	}
 	seen := map[string]bool{}
 	for _, key := range settings.Keys {
-		if !secretKeyPattern.MatchString(key) || deploymentSecretKeys[key] || seen[key] {
+		if !secretKeyPattern.MatchString(key) || deploymentSecretKeys[key] || strings.HasPrefix(key, "PM_") || strings.HasPrefix(key, "PULUMI_") || seen[key] {
 			return fmt.Errorf("invalid, duplicate or deployment-only application secret key %q", key)
 		}
 		seen[key] = true
@@ -236,15 +258,18 @@ func loadProjectSecrets(ctx context.Context, root, name, environment, branch str
 		if !exists {
 			return nil, fmt.Errorf("explicit fnox profile %q does not exist", profile)
 		}
-		values := map[string]string{}
 		for _, key := range project.Secrets.Keys {
 			if _, exists := selected.Secrets[key]; !exists {
 				return nil, fmt.Errorf("secret %s is missing from profile %s", key, profile)
 			}
-			value, err := reader.Read(ctx, directory, config, profile, key)
-			if err != nil {
-				return nil, err
-			}
+		}
+		resolved, err := reader.Read(ctx, directory, config, profile, project.Secrets.Keys)
+		if err != nil {
+			return nil, err
+		}
+		values := map[string]string{}
+		for _, key := range project.Secrets.Keys {
+			value := resolved[key]
 			if value == "" || strings.ContainsRune(value, 0) || !utf8.ValidString(value) {
 				return nil, fmt.Errorf("secret %s must be nonempty UTF-8 without NUL", key)
 			}
@@ -292,7 +317,7 @@ func appSecretEnvironment(environment []string, values map[string]string) []stri
 	var result []string
 	for _, entry := range environment {
 		key, _, _ := strings.Cut(entry, "=")
-		if !deploymentSecretKeys[key] && values[key] == "" {
+		if !deploymentSecretKeys[key] && !strings.HasPrefix(key, "FNOX_") && key != "ENPASS_PASSWORD" && values[key] == "" {
 			result = append(result, entry)
 		}
 	}

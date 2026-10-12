@@ -53,9 +53,3 @@ The list is ordered. Conflicts between managers in the same ecosystem are checke
 `SaveManifest` writes to a temporary file in the destination directory, syncs and closes it, then uses a same-directory rename. A failed write does not partially replace the existing manifest.
 
 The configuration module does not inspect native package files, execute tasks, calculate versions, or publish releases. Those responsibilities belong to package-manager, task, version, and release modules. It also does not create tags or credentials; release preflight and publication own those boundaries.
-
-## Pulumi environments and application secrets
-
-Use the environment stack commands for infrastructure and the ordered deployment executor for provisioning, migration, full updates and recovery. Application secrets use fnox through Mise. Deployment administration credentials use provider-supported OAuth or CI secrets.
-
-See [infrastructure deployment](infrastructure.md) and [secret management](../secret-management.md) for configuration, commands and recovery.

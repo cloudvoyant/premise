@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,8 +10,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/gobwas/glob"
 )
 
 // InfraOptions selects an environment and a saved backend; project filtering stays in its stack.
@@ -41,16 +45,13 @@ func ResolveInfrastructure(root string, options InfraOptions) (InfraResolution, 
 	}
 	infra := manifest.Workspace.Infra
 	if infra == nil {
-		return InfraResolution{}, fmt.Errorf("workspace.infra is not configured")
+		infra = &Infrastructure{}
 	}
 	env := options.Environment
 	if options.Shared {
 		env = "shared"
 	}
-	settings, ok := infra.Environments[env]
-	if !ok {
-		return InfraResolution{}, fmt.Errorf("environment %q is not configured", env)
-	}
+	settings := infra.Environments[env]
 	name := options.Backend
 	if name == "" {
 		name = settings.Backend
@@ -59,8 +60,17 @@ func ResolveInfrastructure(root string, options InfraOptions) (InfraResolution, 
 		name = infra.Backend
 	}
 	backend, ok := infra.Backends[name]
-	if !ok {
+	if name == "" {
+		name = "environment"
+		backend.URL = os.Getenv("PULUMI_BACKEND_URL")
+		if backend.URL == "" {
+			return InfraResolution{}, fmt.Errorf("set PULUMI_BACKEND_URL or declare a named infrastructure backend")
+		}
+	} else if !ok {
 		return InfraResolution{}, fmt.Errorf("backend %q is not declared", name)
+	}
+	if err := validateBackend(backend); err != nil {
+		return InfraResolution{}, err
 	}
 	scope := "environment"
 	if options.Shared {
@@ -111,14 +121,15 @@ func RunInfra(ctx context.Context, root, operation string, options InfraOptions,
 		fmt.Fprintf(stderr, "Infrastructure %s: %s stack=%s backend=%s (%s)\n", operation, resolution.Program.Name, resolution.Stack, resolution.BackendName, resolution.BackendURL)
 	}
 	runner := infraCommandRunner{stdin: stdin, stdout: stdout, stderr: stderr}
-	secrets := "{}"
+	secrets := map[string]string{}
 	if operation == "preview" || operation == "plan" || operation == "apply" {
-		secrets, err = infrastructureAppSecrets(ctx, root, resolution, options)
+		secrets, err = infrastructureSecrets(ctx, root, resolution, options)
 	}
 	if err != nil {
 		return err
 	}
-	return executeInfra(ctx, runner, resolution, operation, options.Yes, map[string]string{"PM_APP_SECRETS": secrets})
+	runner.secrets = secrets
+	return executeInfra(ctx, runner, resolution, operation, options.Yes, secrets)
 }
 
 // TestInfrastructure runs declared program and component tests without a stack.
@@ -181,7 +192,42 @@ func BindInfra(root, app, program, artifact string) error {
 	return SaveManifest(filepath.Join(root, ManifestFilename), manifest)
 }
 
+// InfraStack resolves a standard environment to an explicit Pulumi stack.
+// Preview branches receive stable, collision-resistant names across processes.
+func InfraStack(options InfraOptions) (string, error) {
+	if options.Shared {
+		if options.Branch != "" || (options.Environment != "" && options.Environment != "shared") {
+			return "", fmt.Errorf("--shared cannot be combined with a branch or non-shared environment")
+		}
+		return "shared", nil
+	}
+	switch options.Environment {
+	case "dev", "stage", "prod":
+		if options.Branch != "" {
+			return "", fmt.Errorf("--branch is only valid for preview environments")
+		}
+		return options.Environment, nil
+	case "preview":
+		if strings.TrimSpace(options.Branch) == "" {
+			return "", fmt.Errorf("preview requires --branch")
+		}
+		slug := strings.Trim(previewBranchCharacters.ReplaceAllString(strings.ToLower(options.Branch), "-"), "-")
+		if slug == "" {
+			slug = "branch"
+		}
+		if len(slug) > 40 {
+			slug = slug[:40]
+		}
+		digest := sha256.Sum256([]byte(options.Branch))
+		return fmt.Sprintf("preview-%s-%x", slug, digest[:5]), nil
+	default:
+		return "", fmt.Errorf("--env must be dev, stage, prod, or preview; select shared with --shared")
+	}
+}
+
 // Private helpers ------------------------------------------------------------
+
+var previewBranchCharacters = regexp.MustCompile(`[^a-z0-9-]+`)
 
 type infraRunner interface {
 	run(context.Context, string, map[string]string, string, ...string) error
@@ -190,6 +236,7 @@ type infraCommandRunner struct {
 	stdin          io.Reader
 	stdout, stderr io.Writer
 	private        bool
+	secrets        map[string]string
 }
 
 func (r infraCommandRunner) run(ctx context.Context, dir string, env map[string]string, name string, args ...string) error {
@@ -219,18 +266,10 @@ func (r infraCommandRunner) run(ctx context.Context, dir string, env map[string]
 			if ok && value != "" && deploymentSecretKeys[key] {
 				values[key] = value
 			}
-			if key == "PM_APP_SECRETS" {
-				var apps map[string]map[string]string
-				if json.Unmarshal([]byte(value), &apps) == nil {
-					for app, secrets := range apps {
-						for name, value := range secrets {
-							if value != "" {
-								values[app+":"+name] = value
-							}
-						}
-					}
-				}
-			}
+
+		}
+		for key, value := range r.secrets {
+			values[key] = value
 		}
 		if len(values) > 0 {
 			out := command.Stdout
@@ -367,26 +406,151 @@ func environmentProgramConfig(manifest Config, declared map[string]string, optio
 	return result
 }
 
-func infrastructureAppSecrets(ctx context.Context, root string, d InfraResolution, options InfraOptions) (string, error) {
-	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
-	if err != nil {
-		return "", err
+// infrastructureSecrets uses the program's own fnox profile. The program decides
+// which environment variables belong to each component; app bindings carry paths only.
+func infrastructureSecrets(ctx context.Context, root string, d InfraResolution, options InfraOptions) (map[string]string, error) {
+	if d.Program.Secrets == nil {
+		return map[string]string{}, nil
 	}
-	values := map[string]map[string]string{}
-	for app, binding := range manifest.Workspace.Infra.Bindings {
-		if binding.Program != d.Program.Name {
-			continue
+	return LoadProjectSecrets(ctx, root, d.Program.Name, options.Environment, options.Branch)
+}
+
+// The wire format is deliberately small: core depends on Pulumi's CLI plan,
+// not its provider SDK or automation engine.
+type infraPlanGoal struct {
+	Type                 string              `json:"type"`
+	Custom               bool                `json:"custom"`
+	Parent               string              `json:"parent"`
+	Dependencies         []string            `json:"dependencies"`
+	PropertyDependencies map[string][]string `json:"propertyDependencies"`
+	Provider             string              `json:"provider"`
+}
+type infraResourcePlan struct {
+	Goal  *infraPlanGoal `json:"goal"`
+	Steps []string       `json:"steps"`
+}
+
+func resolvePrerequisiteTargets(ctx context.Context, r infraRunner, d InfraResolution, patterns []string, env map[string]string) ([]string, error) {
+	scopedEnv := map[string]string{}
+	for k, v := range env {
+		scopedEnv[k] = v
+	}
+	scopedEnv["PULUMI_BACKEND_URL"] = d.BackendURL
+	env = scopedEnv
+	directory, err := os.MkdirTemp("", "premise-preview-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(directory)
+	path := filepath.Join(directory, "plan.json")
+	if err := r.run(ctx, d.Directory, env, "pulumi", "preview", "--stack", d.Stack, "--non-interactive", "--save-plan", path); err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read prerequisite preview: %w", err)
+	}
+	var versioned struct {
+		Version int `json:"version"`
+		Plan    struct {
+			Resources map[string]infraResourcePlan `json:"resourcePlans"`
+		} `json:"plan"`
+	}
+	if err := json.Unmarshal(data, &versioned); err != nil {
+		return nil, fmt.Errorf("decode prerequisite preview: %w", err)
+	}
+	if versioned.Version == 0 {
+		var direct struct {
+			Resources map[string]infraResourcePlan `json:"resourcePlans"`
 		}
-		for _, project := range manifest.Workspace.Projects {
-			if project.Name == app && project.Secrets != nil {
-				secrets, err := LoadProjectSecrets(ctx, root, app, options.Environment, options.Branch)
-				if err != nil {
-					return "", err
+		if err := json.Unmarshal(data, &direct); err != nil {
+			return nil, err
+		}
+		if direct.Resources != nil {
+			return validatePrerequisiteCoverage(direct.Resources, patterns, d.Stack, d.Program.Name)
+		}
+	}
+	if versioned.Version != 1 {
+		return nil, fmt.Errorf("unsupported Pulumi plan version %d", versioned.Version)
+	}
+	return validatePrerequisiteCoverage(versioned.Plan.Resources, patterns, d.Stack, d.Program.Name)
+}
+func validatePrerequisiteCoverage(resources map[string]infraResourcePlan, patterns []string, stack, project string) ([]string, error) {
+	selected := map[string]bool{}
+	for _, pattern := range patterns {
+		pattern = strings.ReplaceAll(strings.ReplaceAll(pattern, "{stack}", stack), "{project}", project)
+		matcher, err := glob.Compile(pattern)
+		if err != nil {
+			return nil, fmt.Errorf("invalid prerequisite pattern %q", pattern)
+		}
+		matched := false
+		for urn, resource := range resources {
+			if matcher.Match(urn) {
+				if resource.Goal == nil {
+					return nil, fmt.Errorf("prerequisite %s is being deleted", urn)
 				}
-				values[app] = secrets
+				selected[urn] = true
+				matched = true
+			}
+		}
+		if !matched {
+			return nil, fmt.Errorf("prerequisite pattern %q matches no resource", pattern)
+		}
+	}
+	// Include component parents and providers needed to register the selected resources.
+	changed := true
+	for changed {
+		changed = false
+		for urn := range selected {
+			goal := resources[urn].Goal
+			if goal == nil {
+				continue
+			}
+			for _, dependency := range []string{goal.Parent, providerURN(goal.Provider)} {
+				if dependency == "" || selected[dependency] {
+					continue
+				}
+				resource, ok := resources[dependency]
+				if !ok || resource.Goal == nil {
+					return nil, fmt.Errorf("prerequisite %s has unresolved parent/provider %s", urn, dependency)
+				}
+				if resource.Goal.Custom && !strings.HasPrefix(resource.Goal.Type, "pulumi:providers:") {
+					return nil, fmt.Errorf("prerequisite %s requires explicit parent target %s", urn, dependency)
+				}
+				selected[dependency] = true
+				changed = true
 			}
 		}
 	}
-	data, err := json.Marshal(values)
-	return string(data), err
+	for urn := range selected {
+		goal := resources[urn].Goal
+		if goal == nil {
+			continue
+		}
+		dependencies := append([]string{}, goal.Dependencies...)
+		for _, values := range goal.PropertyDependencies {
+			dependencies = append(dependencies, values...)
+		}
+		for _, dependency := range dependencies {
+			if !selected[dependency] {
+				return nil, fmt.Errorf("prerequisite %s depends on untargeted %s; declare it explicitly", urn, dependency)
+			}
+		}
+	}
+	result := make([]string, 0, len(selected))
+	for urn := range selected {
+		result = append(result, urn)
+	}
+	sort.Strings(result)
+	return result, nil
+}
+func providerURN(reference string) string {
+	if reference == "" {
+		return ""
+	}
+	index := strings.LastIndex(reference, "::")
+	if index < 0 {
+		return reference
+	}
+	return reference[:index]
 }

@@ -85,9 +85,15 @@ Use child-process injection when a task does not need a file:
 pm secrets exec --env dev --project web -- mise run migrate
 ```
 
-Premise removes common administration tokens from the child environment. It retrieves only the project's declared application keys. It masks these values in captured child output. Do not print transformed secrets or enable shell tracing.
+Premise removes common administration tokens from the child environment. It calls `fnox env --json --keys ...` once for the project's declared keys. Fnox owns provider access, interpolation, and profile resolution. It masks these values in captured child output. Do not print transformed secrets or enable shell tracing.
 
 Premise does not execute env-file text as shell code. It quotes values and rejects empty values, invalid UTF-8 and NUL characters. Generated env files must remain outside deployment bundles, caches and reports.
+
+## Infra program secrets
+
+The infrastructure program declares its own `secrets` profile using the same configuration as an app. Its keys arrive as ordinary process environment variables. The Go program reads those variables and assigns them to the intended component, wrapping provider secret inputs with `pulumi.ToSecret`. For several apps, declare distinct names such as `WEB_SECRET` and `ADMIN_SECRET`. Bindings carry source paths only.
+
+Premise uses fnox's versioned environment API because it starts Pulumi and task subprocesses itself. The scalar adapter keeps the explicit environment selection, ignored atomic `0600` files, administration-token filtering, and output masking. It rejects file secrets and credential leases; use native `fnox exec` for those contracts. It also refuses inherited values that fnox requires removing. See [fnox environment API](https://fnox.jdx.dev/reference/env-json.html).
 
 ## CI use
 

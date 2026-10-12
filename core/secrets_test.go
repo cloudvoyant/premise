@@ -107,7 +107,7 @@ func TestFnoxResolverDoesNotReceiveAdministrationCredentials(t *testing.T) {
 	script := `#!/bin/sh
 [ -z "$NEON_API_KEY" ] && [ -z "$VERCEL_TOKEN" ] && [ -z "$PULUMI_CONFIG_PASSPHRASE" ] || exit 1
 [ -z "$FNOX_PROFILE" ] && [ -z "$RUST_LOG" ] || exit 1
-printf 'application-value\n'
+printf '{"schema":1,"set":{"APP_SECRET":"application-value"}}\n'
 `
 	if err := os.WriteFile(filepath.Join(root, "mise"), []byte(script), 0700); err != nil {
 		t.Fatal(err)
@@ -116,11 +116,11 @@ printf 'application-value\n'
 	for _, key := range []string{"NEON_API_KEY", "VERCEL_TOKEN", "PULUMI_CONFIG_PASSPHRASE", "FNOX_PROFILE", "RUST_LOG"} {
 		t.Setenv(key, "administration-only")
 	}
-	value, err := (commandSecretReader{}).Read(t.Context(), root, "fnox.toml", "dev", "APP_SECRET")
+	value, err := (commandSecretReader{}).Read(t.Context(), root, "fnox.toml", "dev", []string{"APP_SECRET"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if value != "application-value" {
+	if value["APP_SECRET"] != "application-value" {
 		t.Fatal("application value was not resolved")
 	}
 }
@@ -133,7 +133,11 @@ type fixtureSecretReader struct {
 	err   error
 }
 
-func (reader *fixtureSecretReader) Read(_ context.Context, _, _, _, key string) (string, error) {
-	reader.keys = append(reader.keys, key)
-	return reader.value, reader.err
+func (reader *fixtureSecretReader) Read(_ context.Context, _, _, _ string, keys []string) (map[string]string, error) {
+	reader.keys = append(reader.keys, keys...)
+	values := map[string]string{}
+	for _, key := range keys {
+		values[key] = reader.value
+	}
+	return values, reader.err
 }

@@ -15,5 +15,6 @@ Each document describes one major Premise module. Its **Design** section defines
 - [Version](version.md)
 - [Release](release.md)
 - [CI](ci.md)
+- [Infrastructure](infrastructure.md)
 
 The repository-wide dependency direction is shown in [Architecture](../architecture.md).
