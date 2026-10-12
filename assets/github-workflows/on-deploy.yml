@@ -32,11 +32,11 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - uses: cloudvoyant/premise@v0.5.0-rc.219
+      - uses: cloudvoyant/premise@v0.5.0-rc.223
         with:
           flow: on-release
           environment: ${{ inputs.environment }}
-          premise-version: v0.5.0-rc.219
+          premise-version: v0.5.0-rc.223
           install-premise: pre-built
 
   deploy:
@@ -55,15 +55,15 @@ jobs:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v3
-      - uses: cloudvoyant/premise@v0.5.0-rc.219
+      - uses: cloudvoyant/premise@v0.5.0-rc.223
         with:
           setup-only: true
-          premise-version: v0.5.0-rc.219
+          premise-version: v0.5.0-rc.223
           install-premise: pre-built
       - name: Build application inputs
         run: mise run '//apps/*:build'
       - name: Provision, migrate, update, and recover on failure
-        uses: cloudvoyant/premise@v0.5.0-rc.219
+        uses: cloudvoyant/premise@v0.5.0-rc.223
         env:
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           VERCEL_API_TOKEN: ${{ secrets.VERCEL_TOKEN }}
@@ -94,7 +94,7 @@ jobs:
           service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v3
       - name: Destroy only the deleted branch preview
-        uses: cloudvoyant/premise@v0.5.0-rc.219
+        uses: cloudvoyant/premise@v0.5.0-rc.223
         env:
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           VERCEL_API_TOKEN: ${{ secrets.VERCEL_TOKEN }}
@@ -105,5 +105,5 @@ jobs:
           environment: preview
           branch: ${{ github.event.ref }}
           backend: ${{ vars.PREMISE_INFRA_BACKEND }}
-          premise-version: v0.5.0-rc.219
+          premise-version: v0.5.0-rc.223
           install-premise: pre-built

@@ -110,7 +110,7 @@ The client must keep migrations compatible with the running application. Premise
 
 After a rollout or health failure, Premise runs the declared rollback tasks. They receive the previous successful release and artifact identities. `PM_PREVIOUS_OUTPUTS` supplies declared non-secret deployment identities, such as the previous Vercel deployment ID. A task that changes Pulumi resources must preview its targeted recovery first. It must not reapply old database definitions or rerun old migrations.
 
-A first deployment has no previous successful release. Declare a `first_deploy` recovery task. Optional `provision`, `migration` and `database` recovery tasks handle their respective failures. A failed recovery reports both errors and keeps recovery inputs available.
+A first deployment has no previous successful release. Declare a `first_deploy` recovery task. Optional `provision`, `migration` and `database` recovery tasks handle their respective failures. Recovery hooks do not automatically fetch app secrets: provisioning may have failed before those secrets existed. A hook that needs an app value resolves it explicitly through fnox. A failed recovery reports both errors and keeps recovery inputs available.
 
 The record directory contains `last-success.json` and `last-run.json` under `PROGRAM/STACK`. This keeps different programs separate when they share a backend. It contains no secret output values. Store the directory durably across CI runners. The composite action restores and saves records in a GCS prefix. `records-url` can select a prefix separate from the state backend. The action appends the program and stack names to that prefix.
 
@@ -193,7 +193,7 @@ Initialization selects or creates that stack and supplies `premise:environment`,
 
 The same program creates previews from feature-branch pushes. The configuration supplies branch identity and environment parameters. A new PR or branch-specific program is not required.
 
-The generated workflow pins action and binary version `v0.5.0-rc.219` because it supplies the deployment interface introduced here. Move both pins together after a compatible stable release.
+The generated workflow pins action and binary version `v0.5.0-rc.223` because it supplies the deployment interface introduced here. Move both pins together after a compatible stable release.
 
 Set `PREMISE_DEPLOY_ENABLED=true` to enable the generated feature-branch deployment workflow. Configure GCP workload identity, backend selection and CI administration secrets. The preview stack name includes a stable branch hash. Further pushes update the same stack.
 

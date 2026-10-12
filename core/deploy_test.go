@@ -281,6 +281,28 @@ func TestRecoveryRecordsAreNamespacedByProgram(t *testing.T) {
 	}
 }
 
+func TestRecoveryDoesNotRequireUnprovisionedApplicationSecrets(t *testing.T) {
+	root, log, options := deploymentFailureFixture(t)
+	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := range manifest.Workspace.Projects {
+		if manifest.Workspace.Projects[index].Name == "web" {
+			manifest.Workspace.Projects[index].Secrets = &ProjectSecrets{Config: "not-created-yet.toml", Profiles: map[string]string{"dev": "dev"}, Keys: []string{"DATABASE_URL"}}
+		}
+	}
+	var output bytes.Buffer
+	err = runDeploymentTask(t.Context(), root, manifest, TaskReference{Project: "web", Task: "cleanup", administration: true}, map[string]string{"PM_FAILED_PHASE": "provision", "PM_RELEASE": "A"}, infraCommandRunner{stdout: &output, stderr: &output}, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := os.ReadFile(log)
+	if err != nil || !strings.Contains(string(events), "task cleanup") {
+		t.Fatalf("cleanup did not run: %v", err)
+	}
+}
+
 // Private helpers ------------------------------------------------------------
 
 func deploymentFailureFixture(t *testing.T) (string, string, DeployOptions) {

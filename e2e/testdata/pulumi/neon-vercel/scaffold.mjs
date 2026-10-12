@@ -162,33 +162,9 @@ value = "premise-e2e-app-marker"
       ["dev", "stage", "prod", "preview"].map((env) => [env, { config }]),
     ),
   };
-  manifest.workspace.deployment = {
-    records: ".premise/releases",
-    prerequisites: ["urn:pulumi:{stack}::*::*::db-*"],
-    migrations: [
-      {
-        project: "web",
-        task: "migrate",
-      },
-    ],
-    applications: [
-      {
-        project: "web",
-        health: "health",
-        rollback: "rollback",
-        outputs: { APP_URL: "appURL" },
-      },
-    ],
-    recovery: { first_deploy: { project: "web", task: "cleanup" } },
-    record_outputs: [
-      "deploymentId",
-      "appURL",
-      "aliasName",
-      "databaseBranchId",
-      "adminDeploymentId",
-      "adminAliasName",
-    ],
-  };
+  manifest.workspace.deployment = YAML.parse(
+    fs.readFileSync(path.join(here, "deployment.yaml"), "utf8"),
+  );
   fs.writeFileSync(manifestFile, YAML.stringify(manifest));
   fs.appendFileSync(path.join(workspace, ".gitignore"), "\n.premise/\n.env*\n!.env.example\n");
   command(pm, ["infra", "bind", "web", "environment", "--artifact", "."], workspace);

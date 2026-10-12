@@ -294,7 +294,8 @@ func runDeploymentTask(ctx context.Context, root string, manifest Config, ref Ta
 	for k, v := range base {
 		env[k] = v
 	}
-	if project.Secrets != nil {
+	// Recovery must work even when provisioning never created the application secrets.
+	if project.Secrets != nil && base["PM_FAILED_PHASE"] == "" {
 		values, err := LoadProjectSecrets(ctx, root, ref.Project, options.Environment, options.Branch)
 		if err != nil {
 			return err
