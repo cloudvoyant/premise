@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/gobwas/glob"
 )
 
 // Private helpers ------------------------------------------------------------
@@ -76,13 +78,13 @@ func validatePrerequisiteCoverage(resources map[string]infraResourcePlan, patter
 	selected := map[string]bool{}
 	for _, pattern := range patterns {
 		pattern = strings.ReplaceAll(strings.ReplaceAll(pattern, "{stack}", stack), "{project}", project)
+		matcher, err := glob.Compile(pattern)
+		if err != nil {
+			return nil, fmt.Errorf("invalid prerequisite pattern %q", pattern)
+		}
 		matched := false
 		for urn, resource := range resources {
-			ok, err := filepath.Match(pattern, urn)
-			if err != nil {
-				return nil, fmt.Errorf("invalid prerequisite pattern %q", pattern)
-			}
-			if ok {
+			if matcher.Match(urn) {
 				if resource.Goal == nil {
 					return nil, fmt.Errorf("prerequisite %s is being deleted", urn)
 				}

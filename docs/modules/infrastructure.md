@@ -39,6 +39,18 @@ pm infra output --env dev
 pm infra test
 ```
 
+A client-owned component needs a project declaration only when Premise should run its task contracts or select its resource targets. It does not need a registry template identifier.
+
+```yaml
+workspace:
+  projects:
+    - name: client-resources
+      path: infra/components/client
+      infra: {role: component}
+```
+
+Import the component from the environment program through the language's normal module imports. The Neon/Vercel example demonstrates this composition.
+
 The project argument is optional. Omitting it selects the complete program for the environment. Selecting a component uses its declared resource targets in the same stack. A component does not receive its own stack.
 
 ```sh
@@ -58,7 +70,7 @@ workspace:
     records: .premise-releases
     record_outputs: [deploymentId, appURL]
     prerequisites:
-      - "urn:pulumi:{stack}::{project}::neon:index/branch:Branch::db-branch"
+      - "urn:pulumi:{stack}::{project}::*::db-*"
     migrations:
       - project: web
         task: migrate
@@ -81,6 +93,20 @@ pm deploy run --env stage --release COMMIT_SHA --artifact web=IMMUTABLE_ARTIFACT
 ```
 
 The executor initializes the stack, applies database prerequisites and runs migration tasks. It then previews and applies the full stack, including databases. It runs remaining task-managed deployments and application health tasks. An infrastructure-managed app does not receive a separate deployment task.
+
+Omit `migrations` when the project has no migration task. A task-managed app declares its remaining deploy task explicitly:
+
+```yaml
+applications:
+  - project: web
+    managed_by: task
+    deploy: deploy
+    health: health
+    rollback: rollback
+    outputs: {APP_URL: appURL}
+```
+
+Keep this declaration inside `workspace.deployment`, with the recovery and record settings above. The infrastructure program must not deploy the same app. Use `--backend NAME` to select another declared backend for an operation.
 
 Migration tasks receive selected secret stack outputs in their child environment. Tasks also receive `PM_ENV`, `PM_BRANCH`, `PM_STACK`, `PM_RELEASE` and `PM_ARTIFACTS`. Application secrets can come from the project's fnox profile. The migration tool owns schema history and locking.
 

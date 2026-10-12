@@ -99,6 +99,27 @@ func TestPrerequisiteCoverageIncludesProvider(t *testing.T) {
 	}
 }
 
+func TestPrerequisitePatternsMatchPulumiTypesWithSlashes(t *testing.T) {
+	branch := "urn:pulumi:preview-feature::environment::neon:index/branch:Branch::db-branch"
+	database := "urn:pulumi:preview-feature::environment::neon:index/database:Database::db-database"
+	app := "urn:pulumi:preview-feature::environment::vercel:index/deployment:Deployment::app-deployment"
+	resources := map[string]infraResourcePlan{
+		branch:   {Goal: &infraPlanGoal{Custom: true}},
+		database: {Goal: &infraPlanGoal{Custom: true, Dependencies: []string{branch}}},
+		app:      {Goal: &infraPlanGoal{Custom: true, Dependencies: []string{database}}},
+	}
+	targets, err := validatePrerequisiteCoverage(resources, []string{"urn:pulumi:{stack}::{project}::*::db-*"}, "preview-feature", "environment")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(targets, []string{branch, database}) {
+		t.Fatalf("targets = %q", targets)
+	}
+	if _, err := validatePrerequisiteCoverage(resources, []string{"["}, "preview-feature", "environment"); err == nil {
+		t.Fatal("invalid wildcard accepted")
+	}
+}
+
 // Private helpers ------------------------------------------------------------
 
 func infraTestManifest() Config {
