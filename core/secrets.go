@@ -15,8 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
-
-	"github.com/pelletier/go-toml/v2"
 )
 
 // ProjectSecrets declares application keys and fnox profiles, never secret values.
@@ -241,27 +239,6 @@ func loadProjectSecrets(ctx context.Context, root, name, environment, branch str
 		config := filepath.Join(directory, project.Secrets.Config)
 		if err := rejectSymlinkComponents(directory, config); err != nil {
 			return nil, err
-		}
-		data, err := os.ReadFile(config)
-		if err != nil {
-			return nil, fmt.Errorf("read fnox configuration: %w", err)
-		}
-		var settings struct {
-			Profiles map[string]struct {
-				Secrets map[string]any `toml:"secrets"`
-			} `toml:"profiles"`
-		}
-		if err := toml.Unmarshal(data, &settings); err != nil {
-			return nil, errors.New("invalid fnox configuration")
-		}
-		selected, exists := settings.Profiles[profile]
-		if !exists {
-			return nil, fmt.Errorf("explicit fnox profile %q does not exist", profile)
-		}
-		for _, key := range project.Secrets.Keys {
-			if _, exists := selected.Secrets[key]; !exists {
-				return nil, fmt.Errorf("secret %s is missing from profile %s", key, profile)
-			}
 		}
 		resolved, err := reader.Read(ctx, directory, config, profile, project.Secrets.Keys)
 		if err != nil {

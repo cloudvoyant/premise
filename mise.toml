@@ -44,6 +44,9 @@ echo "Build successful -> bin/$PROJECT (pm)"
 description = "Run all Go tests"
 run = "go test ./..."
 
+[tasks.test.env]
+PREMISE_TEST_FNOX = "1"
+
 [tasks.e2e]
 description = "Run end-to-end tests"
 run = "go test ./e2e"

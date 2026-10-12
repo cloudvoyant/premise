@@ -125,6 +125,38 @@ printf '{"schema":1,"set":{"APP_SECRET":"application-value"}}\n'
 	}
 }
 
+// TestFnoxNativeProfiles verifies real fnox imports and rejection of missing
+// profiles instead of duplicating fnox's configuration rules in Premise.
+func TestFnoxNativeProfiles(t *testing.T) {
+	if os.Getenv("PREMISE_TEST_FNOX") != "1" {
+		t.Skip("set PREMISE_TEST_FNOX=1 to test real fnox profile resolution")
+	}
+	root := t.TempDir()
+	config := filepath.Join(root, "fnox.toml")
+	if err := os.WriteFile(config, []byte("import = ['profiles.toml']\n[secrets]\nAPP_SECRET = { default = 'top-level-test-only' }\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "profiles.toml"), []byte("[profiles.dev.secrets]\nAPP_SECRET = { default = 'development-test-only' }\nOTHER_SECRET = { default = 'unrequested-test-only' }\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	reader := commandSecretReader{}
+	values, err := reader.Read(t.Context(), root, config, "dev", []string{"APP_SECRET"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(values) != 1 || values["APP_SECRET"] != "development-test-only" {
+		t.Fatal("fnox imported profile or selected keys incorrectly")
+	}
+	for _, profile := range []string{"missing", "prod"} {
+		if _, err := reader.Read(t.Context(), root, config, profile, []string{"APP_SECRET"}); err == nil {
+			t.Fatal("missing profile used defaults")
+		}
+	}
+	if _, err := reader.Read(t.Context(), root, config, "dev", []string{"MISSING_KEY"}); err == nil {
+		t.Fatal("missing key was accepted")
+	}
+}
+
 // Private helpers ------------------------------------------------------------
 
 type fixtureSecretReader struct {
