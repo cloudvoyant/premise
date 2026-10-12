@@ -277,6 +277,32 @@ func TestInfrastructureSecretsBelongToProgram(t *testing.T) {
 	}
 }
 
+func TestBindInfrastructureWithoutBackendOrEnvironmentDeclarations(t *testing.T) {
+	root := t.TempDir()
+	manifest := infraTestManifest()
+	manifest.Workspace.Infra = nil
+	manifest.Workspace.Projects = append(manifest.Workspace.Projects, Project{Name: "web", Template: "registry:web", Path: "apps/web"})
+	for _, path := range []string{"infra/environment", "apps/web"} {
+		if err := os.MkdirAll(filepath.Join(root, path), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
+		t.Fatal(err)
+	}
+	if err := BindInfra(root, "web", "environment", "."); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PULUMI_BACKEND_URL", "s3://client-owned-state")
+	destination, err := ResolveInfrastructure(root, InfraOptions{Environment: "dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if destination.BackendURL != "s3://client-owned-state" || !strings.Contains(destination.Config["artifacts"], "apps/web") {
+		t.Fatal("binding lost app path or ambient backend")
+	}
+}
+
 // Private helpers ------------------------------------------------------------
 
 func infraTestManifest() Config {

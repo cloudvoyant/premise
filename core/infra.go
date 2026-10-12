@@ -179,7 +179,7 @@ func BindInfra(root, app, program, artifact string) error {
 		return fmt.Errorf("binding owner %q must be a program", program)
 	}
 	if manifest.Workspace.Infra == nil {
-		return fmt.Errorf("workspace.infra is not configured")
+		manifest.Workspace.Infra = &Infrastructure{}
 	}
 	if manifest.Workspace.Infra.Bindings == nil {
 		manifest.Workspace.Infra.Bindings = map[string]InfraBinding{}
