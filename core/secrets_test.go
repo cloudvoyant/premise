@@ -37,6 +37,14 @@ func TestSecretProfilesDoNotFallbackOrFetchOtherKeys(t *testing.T) {
 	if _, err := loadProjectSecrets(context.Background(), root, "web", "stage", "", reader); err == nil {
 		t.Fatal("undeclared environment used fallback")
 	}
+	reader.value = "rotated-application-value"
+	refreshed, err := loadProjectSecrets(t.Context(), root, "web", "dev", "", reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refreshed["DATABASE_URL"] != "rotated-application-value" {
+		t.Fatal("refresh reused the previous value")
+	}
 	reader.err = errors.New("provider denied access")
 	if _, err := loadProjectSecrets(context.Background(), root, "web", "dev", "", reader); err == nil {
 		t.Fatal("provider error ignored")
@@ -91,6 +99,29 @@ func TestSecretRedactionAcrossOutputWrites(t *testing.T) {
 	}
 	if output.String() != "result: [REDACTED]\n" {
 		t.Fatal("split output exposed a secret")
+	}
+}
+
+func TestFnoxResolverDoesNotReceiveAdministrationCredentials(t *testing.T) {
+	root := t.TempDir()
+	script := `#!/bin/sh
+[ -z "$NEON_API_KEY" ] && [ -z "$VERCEL_TOKEN" ] && [ -z "$PULUMI_CONFIG_PASSPHRASE" ] || exit 1
+[ -z "$FNOX_PROFILE" ] && [ -z "$RUST_LOG" ] || exit 1
+printf 'application-value\n'
+`
+	if err := os.WriteFile(filepath.Join(root, "mise"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for _, key := range []string{"NEON_API_KEY", "VERCEL_TOKEN", "PULUMI_CONFIG_PASSPHRASE", "FNOX_PROFILE", "RUST_LOG"} {
+		t.Setenv(key, "administration-only")
+	}
+	value, err := (commandSecretReader{}).Read(t.Context(), root, "fnox.toml", "dev", "APP_SECRET")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value != "application-value" {
+		t.Fatal("application value was not resolved")
 	}
 }
 

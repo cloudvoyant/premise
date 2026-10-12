@@ -142,7 +142,7 @@ func (commandSecretReader) Read(ctx context.Context, directory, config, profile,
 	command := exec.CommandContext(ctx, "mise", "exec", "fnox@1.39.0", "--", "fnox", "--config", config, "--profile", profile, "--no-defaults", "--no-daemon", "--non-interactive", "--if-missing", "error", "get", key)
 	command.Dir = directory
 	// Avoid accidental profile/config overrides and verbose provider logs.
-	for _, entry := range os.Environ() {
+	for _, entry := range appSecretEnvironment(os.Environ(), nil) {
 		if !strings.HasPrefix(entry, "FNOX_") && !strings.HasPrefix(entry, "RUST_LOG=") {
 			command.Env = append(command.Env, entry)
 		}
