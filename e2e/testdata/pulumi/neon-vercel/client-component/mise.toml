@@ -1,4 +1,0 @@
-[tasks.install]
-run = "go mod download"
-[tasks.test]
-run = "go test ./..."

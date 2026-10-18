@@ -159,7 +159,7 @@ pm infra plan --env preview
 pm infra apply --env preview --yes
 ```
 
-The client owns `main.go` and its Go module imports. Component templates can provide the initial composition in a client template; Premise does not discover resource types or generate provider-specific wiring during apply. `pm infra test` runs the declared component/program test tasks. The embedded E2E client fixture demonstrates this structure against the tandem templates.
+The client owns `main.go` and its Go module imports. Component templates can provide the initial composition in a client template; Premise does not discover resource types or generate provider-specific wiring during apply. `pm infra test` runs the declared component/program test tasks. The tandem template tests check component composition. The [local GCS fixture](../../e2e/testdata/pulumi/README.md) checks the real infrastructure CLI lifecycle against a private bucket.
 
 ### Public API
 

@@ -1,0 +1,18 @@
+[tools]
+go = "1.25"
+pulumi = "3.200.0"
+
+[tasks.install]
+run = "go mod download"
+[tasks.build]
+run = "go build -o /dev/null ."
+[tasks.test]
+run = "go test ./..."
+[tasks.lint]
+run = "go vet ./..."
+[tasks.format]
+run = "gofmt -w *.go"
+[tasks."format:check"]
+run = 'test -z "$(gofmt -l *.go)"'
+[tasks."lint:fix"]
+run = "gofmt -w *.go && go vet ./..."

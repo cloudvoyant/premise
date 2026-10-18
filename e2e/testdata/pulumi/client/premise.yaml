@@ -1,0 +1,8 @@
+workspace:
+  name: dummy-client
+  schema-version: "0.2"
+  providers: { ci: github, tools: mise, tasks: mise, infra: pulumi, versioning: svu }
+  projects:
+    - name: dummy
+      template: fixture:dummy
+      path: apps/dummy
