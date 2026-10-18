@@ -195,9 +195,9 @@ The same program creates previews from feature-branch pushes. The configuration 
 
 The generated workflow pins action and binary version `v0.5.0-rc.227` because it supplies the deployment interface introduced here. Move both pins together after a compatible stable release.
 
-Set `PREMISE_DEPLOY_ENABLED=true` to enable the generated feature-branch deployment workflow. Configure GCP workload identity, backend selection and CI administration secrets. The preview stack name includes a stable branch hash. Further pushes update the same stack.
+Set `PREMISE_DEPLOY_ENABLED=true` to enable the generated feature-branch deployment workflow. Configure backend selection and provider credentials as described in [Provider setup](../providers/README.md). Mise installs the project-selected tools; an optional workspace `ci:auth` task prepares credential files. The preview stack name includes a stable branch hash. Further pushes update the same stack. Set `PREMISE_SECRETS_PROVIDER` to select a native encryption provider for new stacks; existing stacks retain their provider. See [state encryption](../providers/pulumi.md).
 
-Branch deletion invokes cleanup with the deleted branch identity. It removes only that preview stack. Shared resources, project containers and the state backend remain. Cleanup uses the default branch's program, so retain compatible resource definitions there.
+A same-repository PR merge invokes cleanup with its head branch identity. Branch deletion also invokes cleanup, including branches without a merged PR. Cleanup is safe to repeat when the preview stack has already been removed. It removes only that preview stack. Shared resources, project containers and the state backend remain. Cleanup uses the default branch's program, so retain compatible resource definitions there.
 
 ### Interrupted deployments
 

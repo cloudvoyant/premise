@@ -14,13 +14,16 @@ name: On Deploy
   push:
     branches-ignore: [main]
   delete:
+  pull_request:
+    branches: [main]
+    types: [closed]
 
 permissions:
   contents: read
   id-token: write
 
 concurrency:
-  group: deploy-${{ inputs.environment || 'preview' }}-${{ (inputs.environment == 'preview' || github.event_name != 'workflow_dispatch') && (inputs.branch || github.event.ref || github.ref_name) || 'persistent' }}
+  group: deploy-${{ inputs.environment || 'preview' }}-${{ (inputs.environment == 'preview' || github.event_name != 'workflow_dispatch') && (inputs.branch || github.event.pull_request.head.ref || (github.event_name == 'delete' && github.event.ref) || github.ref_name) || 'persistent' }}
   cancel-in-progress: false
 
 jobs:
@@ -49,36 +52,37 @@ jobs:
         with:
           ref: ${{ inputs.branch || github.sha }}
           persist-credentials: false
-      - uses: google-github-actions/auth@v3
-        with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v3
       - uses: ./
         with:
           setup-only: true
           install-premise: build
+      - name: Configure provider credentials through the workspace
+        run: |
+          if mise task info ci:auth >/dev/null 2>&1; then
+            mise run ci:auth
+          fi
       - name: Build application inputs
         run: mise run '//apps/*:build'
       - name: Provision, migrate, update, and recover on failure
         uses: ./
-        env:
-          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
-          VERCEL_API_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
         with:
           command: deploy
           release: none
           environment: ${{ inputs.environment || 'preview' }}
           branch: ${{ (inputs.environment == 'preview' || github.event_name == 'push') && (inputs.branch || github.ref_name) || '' }}
           backend: ${{ vars.PREMISE_INFRA_BACKEND }}
+          secrets-provider: ${{ vars.PREMISE_SECRETS_PROVIDER }}
           records-url: ${{ vars.PREMISE_RECORDS_URL }}
           deployment-revision: ${{ github.sha }}
           artifact: ${{ vars.PREMISE_ARTIFACT_IDENTITIES }}
           install-premise: skip
 
   cleanup-preview:
-    if: vars.PREMISE_DEPLOY_ENABLED == 'true' && github.event_name == 'delete' && github.event.ref_type == 'branch' && github.event.ref != 'main'
+    if: >-
+      vars.PREMISE_DEPLOY_ENABLED == 'true' &&
+      ((github.event_name == 'pull_request' && github.event.pull_request.merged == true &&
+        github.event.pull_request.head.repo.full_name == github.repository) ||
+       (github.event_name == 'delete' && github.event.ref_type == 'branch' && github.event.ref != 'main'))
     runs-on: ubuntu-latest
     environment: preview
     steps:
@@ -86,21 +90,22 @@ jobs:
         with:
           ref: main
           persist-credentials: false
-      - uses: google-github-actions/auth@v3
+      - uses: ./
         with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v3
-      - name: Destroy only the deleted branch preview
+          setup-only: true
+          install-premise: build
+      - name: Configure provider credentials through the workspace
+        run: |
+          if mise task info ci:auth >/dev/null 2>&1; then
+            mise run ci:auth
+          fi
+      - name: Destroy the merged or deleted branch preview
         uses: ./
-        env:
-          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
-          VERCEL_API_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
         with:
           command: infra-destroy
           release: none
           environment: preview
-          branch: ${{ github.event.ref }}
+          branch: ${{ github.event.pull_request.head.ref || github.event.ref }}
           backend: ${{ vars.PREMISE_INFRA_BACKEND }}
-          install-premise: build
+          secrets-provider: ${{ vars.PREMISE_SECRETS_PROVIDER }}
+          install-premise: skip

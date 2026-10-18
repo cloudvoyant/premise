@@ -12,7 +12,8 @@ client/apps/dummy/artifact/  The file that pm infra bind supplies to the program
 program from the local registry, and runs real `pm infra` commands. It checks
 binding, preview, apply, output, uploaded contents, repeated apply, remote state
 from a fresh directory, and destruction. Cleanup runs even when an assertion fails
-and confirms that the test bucket returns HTTP 404. The existing state bucket is
+and confirms that the test bucket returns HTTP 404. It repeats destruction to
+check that merge cleanup followed by branch deletion is safe. The existing state bucket is
 preserved.
 
 The template uses the published GCP provider. It needs no Neon/Vercel accounts,

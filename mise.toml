@@ -53,7 +53,7 @@ run = "go test ./e2e"
 
 [tasks."e2e:infra"]
 description = "Create, verify, and destroy the local GCS infrastructure fixture"
-run = "mise exec pulumi@3.268.0 -- go test ./e2e -run '^TestInfraGCS$' -count=1 -timeout 20m -v"
+run = "mise exec gcloud@559.0.0 pulumi@3.268.0 -- go test ./e2e -run '^TestInfraGCS$' -count=1 -timeout 20m -v"
 
 [tasks."e2e:infra".env]
 PREMISE_TEST_GCS = "1"

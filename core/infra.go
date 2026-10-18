@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -20,6 +21,7 @@ import (
 // InfraOptions selects an environment and a saved backend; project filtering stays in its stack.
 type InfraOptions struct {
 	Project, Environment, Backend, Branch string
+	SecretsProvider                       string
 	All, Yes, Shared                      bool
 }
 
@@ -27,6 +29,7 @@ type InfraOptions struct {
 type InfraResolution struct {
 	Program                                   Project
 	Stack, BackendName, BackendURL, Directory string
+	SecretsProvider                           string
 	Config                                    map[string]string
 	Targets                                   []string
 }
@@ -108,7 +111,7 @@ func ResolveInfrastructure(root string, options InfraOptions) (InfraResolution, 
 	if err != nil {
 		return InfraResolution{}, err
 	}
-	return InfraResolution{Program: program, Stack: stack, BackendName: name, BackendURL: backend.URL, Directory: directory, Config: environmentProgramConfig(manifest, settings.Config, options, stack, program), Targets: targets}, nil
+	return InfraResolution{Program: program, Stack: stack, BackendName: name, BackendURL: backend.URL, Directory: directory, SecretsProvider: options.SecretsProvider, Config: environmentProgramConfig(manifest, settings.Config, options, stack, program), Targets: targets}, nil
 }
 
 // RunInfra executes a provider-neutral operation with explicit backend and stack.
@@ -121,6 +124,15 @@ func RunInfra(ctx context.Context, root, operation string, options InfraOptions,
 		fmt.Fprintf(stderr, "Infrastructure %s: %s stack=%s backend=%s (%s)\n", operation, resolution.Program.Name, resolution.Stack, resolution.BackendName, resolution.BackendURL)
 	}
 	runner := infraCommandRunner{stdin: stdin, stdout: stdout, stderr: stderr}
+	if operation == "destroy" && strings.HasPrefix(resolution.Stack, "preview-") {
+		exists, err := previewStackExists(ctx, runner, resolution)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return nil
+		}
+	}
 	secrets := map[string]string{}
 	if operation == "preview" || operation == "plan" || operation == "apply" {
 		secrets, err = infrastructureSecrets(ctx, root, resolution, options)
@@ -324,7 +336,11 @@ func executeInfra(ctx context.Context, r infraRunner, d InfraResolution, operati
 		return err
 	}
 	if operation == "init" {
-		if err := r.run(ctx, d.Directory, env, "pulumi", "stack", "select", d.Stack, "--create", "--non-interactive"); err != nil {
+		args := []string{"stack", "select", d.Stack, "--create", "--non-interactive"}
+		if d.SecretsProvider != "" {
+			args = append(args, "--secrets-provider", d.SecretsProvider)
+		}
+		if err := r.run(ctx, d.Directory, env, "pulumi", args...); err != nil {
 			return err
 		}
 		keys := make([]string, 0, len(d.Config))
@@ -369,6 +385,27 @@ func executeInfra(ctx context.Context, r infraRunner, d InfraResolution, operati
 		}
 	}
 	return r.run(ctx, d.Directory, env, "pulumi", args...)
+}
+
+// previewStackExists makes merge and branch-deletion cleanup safe to repeat.
+func previewStackExists(ctx context.Context, runner infraCommandRunner, d InfraResolution) (bool, error) {
+	var output bytes.Buffer
+	runner.stdout = &output
+	if err := runner.run(ctx, d.Directory, map[string]string{"PULUMI_BACKEND_URL": d.BackendURL}, "pulumi", "stack", "ls", "--json"); err != nil {
+		return false, fmt.Errorf("list preview stacks before cleanup: %w", err)
+	}
+	var stacks []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &stacks); err != nil {
+		return false, fmt.Errorf("decode preview stack list: %w", err)
+	}
+	for _, stack := range stacks {
+		if stack.Name == d.Stack || strings.HasSuffix(stack.Name, "/"+d.Stack) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func environmentProgramConfig(manifest Config, declared map[string]string, options InfraOptions, stack string, program Project) map[string]string {

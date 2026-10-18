@@ -10,7 +10,7 @@ An application secret is a value that the application needs. A deployment creden
 | Database connection for a preview          | Secret output from its Pulumi stack                           | Migration task and server-side application             |
 | Neon and Vercel administration credentials | Provider-supported OAuth or CI secrets                        | Declared deployment and recovery tasks                 |
 | GCP authentication                         | Local Application Default Credentials or CI workload identity | fnox, Pulumi and durable record storage                |
-| Pulumi encryption credential               | Operator recovery storage and CI secret                       | Pulumi state access                                    |
+| Pulumi state encryption                    | Managed KMS identity, or a protected passphrase when selected | Pulumi secret configuration and state                  |
 | Project IDs and environment labels         | Committed non-secret configuration                            | Environment resolver                                   |
 
 Vercel receives application values during deployment. It does not own the source values for `pm secrets pull`. Do not put deployment credentials in an application fnox profile. Do not put database credentials in a browser bundle.
@@ -97,7 +97,9 @@ Premise uses fnox's versioned environment API because it starts Pulumi and task 
 
 ## CI use
 
-Configure GCP workload identity before the application secret task runs. Workload identity exchanges the CI identity for short-lived GCP credentials. It avoids a service-account key in CI secrets.
+Configure provider credentials before deployment. See [Provider setup](providers/README.md) for the standard credential contract, Mise tools, and optional `ci:auth` task. A Pulumi passphrase is needed only when selecting passphrase encryption; [managed encryption providers](providers/pulumi.md) use their own identities.
+
+For GCP-backed application secrets, configure workload identity before the application secret task runs. Workload identity exchanges the CI identity for short-lived GCP credentials. It avoids a service-account key in CI secrets.
 
 Run the same `pm secrets exec` command in CI. Configure fnox references in the repository rather than copying each application value into CI secrets. Give the CI identity access only to the required application secrets.
 

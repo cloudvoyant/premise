@@ -107,6 +107,79 @@ func TestResolveSameEnvironmentStack(t *testing.T) {
 		}
 	}
 }
+
+func TestInfrastructureSelectsEncryptionOnlyAtStackCreation(t *testing.T) {
+	r := &recordingInfraRunner{}
+	d := InfraResolution{Directory: "infra", Stack: "dev", BackendURL: "gs://state", SecretsProvider: "gcpkms://projects/security/locations/global/keyRings/state/cryptoKeys/pulumi"}
+	if err := executeInfra(t.Context(), r, d, "init", false, nil); err != nil {
+		t.Fatal(err)
+	}
+	selection := strings.Join(r.commands[1], " ")
+	if !strings.Contains(selection, "stack select dev --create --non-interactive --secrets-provider "+d.SecretsProvider) {
+		t.Fatal(selection)
+	}
+	if err := executeInfra(t.Context(), r, d, "apply", true, nil); err != nil {
+		t.Fatal(err)
+	}
+	if last := strings.Join(r.commands[len(r.commands)-1], " "); strings.Contains(last, "secrets-provider") {
+		t.Fatalf("an update must not rotate an existing stack's encryption: %s", last)
+	}
+}
+
+func TestPreviewCleanupHandlesMissingStacksWithoutHidingBackendFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name, listing, status string
+		wantDestroy, wantErr  bool
+	}{
+		{"already removed", `[]`, "0", false, false},
+		{"another environment", `[{"name":"prod"}]`, "0", false, false},
+		{"matching preview", "matching", "0", true, false},
+		{"qualified preview", "qualified", "0", true, false},
+		{"backend denied", `[]`, "1", false, true},
+		{"invalid response", `not json`, "0", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(root, "infra/environment"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := SaveManifest(filepath.Join(root, ManifestFilename), infraTestManifest()); err != nil {
+				t.Fatal(err)
+			}
+			options := InfraOptions{Environment: "preview", Branch: "feature/cleanup"}
+			stack, err := InfraStack(options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			listing := tc.listing
+			if listing == "matching" {
+				listing = `[{"name":"` + stack + `"}]`
+			}
+			if listing == "qualified" {
+				listing = `[{"name":"organization/environment/` + stack + `"}]`
+			}
+			bin := t.TempDir()
+			log := filepath.Join(t.TempDir(), "destroyed")
+			script := "#!/bin/sh\ncase \"$1 $2\" in\n  'stack ls') printf '%s' \"$STACK_LIST\"; exit \"$LIST_STATUS\";;\nesac\nif [ \"$1\" = destroy ]; then touch \"$DESTROY_LOG\"; fi\n"
+			if err := os.WriteFile(filepath.Join(bin, "pulumi"), []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			t.Setenv("STACK_LIST", listing)
+			t.Setenv("LIST_STATUS", tc.status)
+			t.Setenv("DESTROY_LOG", log)
+			err = RunInfra(t.Context(), root, "destroy", options, nil, nil, nil)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("cleanup error = %v", err)
+			}
+			_, err = os.Stat(log)
+			if (err == nil) != tc.wantDestroy {
+				t.Fatalf("destroyed=%t, want %t", err == nil, tc.wantDestroy)
+			}
+		})
+	}
+}
+
 func TestFullApplyDoesNotRetainPrerequisiteFilter(t *testing.T) {
 	r := &recordingInfraRunner{}
 	d := InfraResolution{Directory: "infra", Stack: "dev", BackendURL: "gs://state"}
@@ -201,7 +274,7 @@ func TestPulumiLocalLifecycle(t *testing.T) {
 	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
 		t.Fatal(err)
 	}
-	options := InfraOptions{Environment: "preview", Branch: "feature/state", Yes: true}
+	options := InfraOptions{Environment: "preview", Branch: "feature/state", Yes: true, SecretsProvider: "passphrase"}
 	manifest.Workspace.Infra.Environments["preview"] = InfraEnvironment{}
 	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
 		t.Fatal(err)
@@ -237,6 +310,10 @@ func TestPulumiLocalLifecycle(t *testing.T) {
 	}
 	if err := RunInfra(ctx, root, "destroy", options, nil, &output, &diagnostics); err != nil {
 		t.Fatal(err)
+	}
+	t.Setenv("PULUMI_HOME", t.TempDir())
+	if err := RunInfra(ctx, root, "destroy", options, nil, &output, &diagnostics); err != nil {
+		t.Fatalf("cleanup after merge and deletion must be idempotent: %v\n%s", err, diagnostics.String())
 	}
 }
 

@@ -75,6 +75,10 @@ inputs:
     description: "Configured infrastructure backend name"
     required: false
     default: ""
+  secrets-provider:
+    description: "Pulumi secrets encryption provider for new stacks; existing stacks retain their provider"
+    required: false
+    default: ""
   branch:
     description: "Feature branch identity for preview environments"
     required: false
@@ -334,6 +338,7 @@ runs:
         PREVIEW_BRANCH: ${{ inputs.branch }}
         DEPLOY_REVISION: ${{ inputs.deployment-revision || github.sha }}
         DEPLOY_ARTIFACT: ${{ inputs.artifact }}
+        SECRETS_PROVIDER: ${{ inputs.secrets-provider }}
       run: |
         set -euo pipefail
         case "$COMMAND" in
@@ -373,6 +378,7 @@ runs:
             if [[ -n "$INFRA_BACKEND" ]]; then args+=(--backend "$INFRA_BACKEND"); fi
             if [[ -n "$PREVIEW_BRANCH" ]]; then args+=(--branch "$PREVIEW_BRANCH"); fi
             if [[ "$COMMAND" == deploy ]]; then
+              if [[ -n "$SECRETS_PROVIDER" ]]; then args+=(--secrets-provider "$SECRETS_PROVIDER"); fi
               if [[ -n "$DEPLOY_ARTIFACT" ]]; then args+=(--artifact "$DEPLOY_ARTIFACT"); fi
             elif [[ -n "$PROJECT" && "$COMMAND" == infra-* ]]; then
               args+=("$PROJECT")

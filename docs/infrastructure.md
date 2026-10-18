@@ -28,17 +28,11 @@ The action restores the standard Go, Cargo, and Bun caches and project `target` 
 
 ### CI/CD Secrets
 
-Org-level secrets are utilized to avoid the need for setting up secrets for every new project. This means setup is only needed once.
-
-For GCP (default):
-
-- `GCP_SA_KEY` - Service account JSON key
-- `GCP_REGISTRY_PROJECT_ID`, `GCP_REGISTRY_REGION`, `GCP_REGISTRY_NAME` - Registry configuration
-
-For other registries:
-
-- npm: `NPM_TOKEN`
-- PyPI: `PYPI_TOKEN`
+Deployment tools belong in Mise. The CI runner supplies standard provider
+credentials through OAuth/workload identity or protected CI secrets. Premise does
+not assume a default cloud or require a service-account key. See
+[Provider setup](providers/README.md) for authentication, tool installation,
+provider-specific variables, and state encryption.
 
 ### Cross-Platform Support
 

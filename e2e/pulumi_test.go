@@ -55,17 +55,20 @@ func TestInfraGCS(t *testing.T) {
 		arguments := append([]string{"infra", operation}, scope...)
 		return gcsCommand(t, client, binary, append(arguments, args...)...)
 	}
-	infra("init")
+	infra("init", "--secrets-provider", "passphrase")
 	var bucket string
 	t.Cleanup(func() {
 		// Cleanup has its own context so a failed assertion cannot cancel destruction.
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
-		command := exec.CommandContext(ctx, binary, append([]string{"infra", "destroy"}, scope...)...)
-		command.Dir = client
-		if output, err := command.CombinedOutput(); err != nil {
-			t.Errorf("cleanup failed for branch %s, bucket %s: %v\n%s", branch, bucket, err, output)
-			return
+		// Merge cleanup may be followed by the same branch's deletion event.
+		for attempt := 1; attempt <= 2; attempt++ {
+			command := exec.CommandContext(ctx, binary, append([]string{"infra", "destroy"}, scope...)...)
+			command.Dir = client
+			if output, err := command.CombinedOutput(); err != nil {
+				t.Errorf("cleanup attempt %d failed for branch %s, bucket %s: %v\n%s", attempt, branch, bucket, err, output)
+				return
+			}
 		}
 		if bucket != "" {
 			check := exec.CommandContext(ctx, "gcloud", "storage", "buckets", "describe", "gs://"+bucket)
