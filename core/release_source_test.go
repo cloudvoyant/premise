@@ -13,7 +13,7 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// Public API -----------------------------------------------------------------
+// Tests ----------------------------------------------------------------------
 
 func TestSourceOnlyGoReleaserConfig(t *testing.T) {
 	root := t.TempDir()

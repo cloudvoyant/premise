@@ -11,7 +11,42 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// Public API -----------------------------------------------------------------
+// Fixtures -------------------------------------------------------------------
+
+func sourceReleaseFixture(t *testing.T) (string, string) {
+	t.Helper()
+	base := t.TempDir()
+	workspace := filepath.Join(base, "workspace")
+	remote := filepath.Join(base, "origin.git")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFixtureFile(t, filepath.Join(workspace, "premise.yaml"), `workspace:
+  name: lua-plugin
+  kind: monorepo
+  schema-version: "0.2"
+  package_managers: []
+  projects:
+    - name: lua-plugin
+      template: cloudvoyant/premise:premise-lib
+      version: 0.1.0
+      path: libs/lua-plugin
+`, 0o644)
+	writeFixtureFile(t, filepath.Join(workspace, "libs", "lua-plugin", "lua", "init.lua"), "return {}\n", 0o644)
+	// Source-only publication must not invoke even an existing failing hook.
+	writeFixtureFile(t, filepath.Join(workspace, "mise.toml"), "[tasks.publish]\nrun = 'exit 1'\n[tasks.\"publish:rc\"]\nrun = 'exit 1'\n", 0o644)
+	git(t, workspace, "init", "-q")
+	git(t, workspace, "config", "user.email", "test@example.invalid")
+	git(t, workspace, "config", "user.name", "Test")
+	git(t, workspace, "add", ".")
+	git(t, workspace, "commit", "-qm", "feat: add Lua plugin")
+	git(t, base, "init", "--bare", "-q", remote)
+	git(t, workspace, "remote", "add", "origin", remote)
+	git(t, workspace, "push", "-q", "origin", "HEAD")
+	return workspace, remote
+}
+
+// Tests ----------------------------------------------------------------------
 
 func TestSourceOnlyCLIAndActionRelease(t *testing.T) {
 	root := repositoryRoot(t)
@@ -212,39 +247,6 @@ func TestSourceOnlyConfigWithGoReleaser(t *testing.T) {
 }
 
 // Private helpers ------------------------------------------------------------
-
-func sourceReleaseFixture(t *testing.T) (string, string) {
-	t.Helper()
-	base := t.TempDir()
-	workspace := filepath.Join(base, "workspace")
-	remote := filepath.Join(base, "origin.git")
-	if err := os.MkdirAll(workspace, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeFixtureFile(t, filepath.Join(workspace, "premise.yaml"), `workspace:
-  name: lua-plugin
-  kind: monorepo
-  schema-version: "0.2"
-  package_managers: []
-  projects:
-    - name: lua-plugin
-      template: cloudvoyant/premise:premise-lib
-      version: 0.1.0
-      path: libs/lua-plugin
-`, 0o644)
-	writeFixtureFile(t, filepath.Join(workspace, "libs", "lua-plugin", "lua", "init.lua"), "return {}\n", 0o644)
-	// Source-only publication must not invoke even an existing failing hook.
-	writeFixtureFile(t, filepath.Join(workspace, "mise.toml"), "[tasks.publish]\nrun = 'exit 1'\n[tasks.\"publish:rc\"]\nrun = 'exit 1'\n", 0o644)
-	git(t, workspace, "init", "-q")
-	git(t, workspace, "config", "user.email", "test@example.invalid")
-	git(t, workspace, "config", "user.name", "Test")
-	git(t, workspace, "add", ".")
-	git(t, workspace, "commit", "-qm", "feat: add Lua plugin")
-	git(t, base, "init", "--bare", "-q", remote)
-	git(t, workspace, "remote", "add", "origin", remote)
-	git(t, workspace, "push", "-q", "origin", "HEAD")
-	return workspace, remote
-}
 
 func sourceReleaseCommand(t *testing.T, directory, binary string, args ...string) string {
 	t.Helper()

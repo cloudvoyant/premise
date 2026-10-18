@@ -6,7 +6,56 @@ import (
 	"testing"
 )
 
-// Public API -----------------------------------------------------------------
+// Fixtures -------------------------------------------------------------------
+
+type testPackageManager struct {
+	id        string
+	ecosystem string
+	builds    string
+	buildErr  error
+	publish   func(context.Context, string, string, string, io.Writer, io.Writer) error
+	workspace func(context.Context, string, io.Writer, io.Writer) (string, bool, error)
+	preflight func(context.Context, string, string, string) error
+}
+
+func (p testPackageManager) ID() string { return p.id }
+func (p testPackageManager) Ecosystem() string {
+	if p.ecosystem != "" {
+		return p.ecosystem
+	}
+	return p.id
+}
+func (p testPackageManager) GetPackageMetadata(_ string, _ Template) (PackageMetadata, bool, error) {
+	return PackageMetadata{}, false, nil
+}
+func (p testPackageManager) ValidatePackage(_ string, _ Template) error { return nil }
+func (p testPackageManager) WillPublishOk(_ context.Context, _ string, _ Template, _, _ string) (bool, error) {
+	return false, nil
+}
+func (p testPackageManager) PreflightPublication(ctx context.Context, root, version, task string) error {
+	if p.preflight != nil {
+		return p.preflight(ctx, root, version, task)
+	}
+	return nil
+}
+func (p testPackageManager) SupportsPackages() bool { return p.publish != nil }
+func (p testPackageManager) PublishPackages(ctx context.Context, root, version, task string, stdout, stderr io.Writer) error {
+	if p.publish == nil {
+		return nil
+	}
+	return p.publish(ctx, root, version, task, stdout, stderr)
+}
+func (p testPackageManager) ReleaseWorkspace(ctx context.Context, root string, stdout, stderr io.Writer) (string, bool, error) {
+	if p.workspace != nil {
+		return p.workspace(ctx, root, stdout, stderr)
+	}
+	return root, false, nil
+}
+func (p testPackageManager) CreateGoReleaserConfig(_ string, _ Config) (string, error) {
+	return p.builds, p.buildErr
+}
+
+// Tests ----------------------------------------------------------------------
 
 func TestPackageManagerRegistration(t *testing.T) {
 	useTestPackageManagers(t, testPackageManager{id: "test"})
@@ -63,53 +112,6 @@ func TestPackageManagerSelectionRejectsUnknownID(t *testing.T) {
 }
 
 // Private helpers ------------------------------------------------------------
-
-type testPackageManager struct {
-	id        string
-	ecosystem string
-	builds    string
-	buildErr  error
-	publish   func(context.Context, string, string, string, io.Writer, io.Writer) error
-	workspace func(context.Context, string, io.Writer, io.Writer) (string, bool, error)
-	preflight func(context.Context, string, string, string) error
-}
-
-func (p testPackageManager) ID() string { return p.id }
-func (p testPackageManager) Ecosystem() string {
-	if p.ecosystem != "" {
-		return p.ecosystem
-	}
-	return p.id
-}
-func (p testPackageManager) GetPackageMetadata(_ string, _ Template) (PackageMetadata, bool, error) {
-	return PackageMetadata{}, false, nil
-}
-func (p testPackageManager) ValidatePackage(_ string, _ Template) error { return nil }
-func (p testPackageManager) WillPublishOk(_ context.Context, _ string, _ Template, _, _ string) (bool, error) {
-	return false, nil
-}
-func (p testPackageManager) PreflightPublication(ctx context.Context, root, version, task string) error {
-	if p.preflight != nil {
-		return p.preflight(ctx, root, version, task)
-	}
-	return nil
-}
-func (p testPackageManager) SupportsPackages() bool { return p.publish != nil }
-func (p testPackageManager) PublishPackages(ctx context.Context, root, version, task string, stdout, stderr io.Writer) error {
-	if p.publish == nil {
-		return nil
-	}
-	return p.publish(ctx, root, version, task, stdout, stderr)
-}
-func (p testPackageManager) ReleaseWorkspace(ctx context.Context, root string, stdout, stderr io.Writer) (string, bool, error) {
-	if p.workspace != nil {
-		return p.workspace(ctx, root, stdout, stderr)
-	}
-	return root, false, nil
-}
-func (p testPackageManager) CreateGoReleaserConfig(_ string, _ Config) (string, error) {
-	return p.builds, p.buildErr
-}
 
 func useTestPackageManagers(t *testing.T, plugins ...PackageManagerBackend) {
 	t.Helper()

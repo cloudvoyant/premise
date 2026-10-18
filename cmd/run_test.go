@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Setup -----------------------------------------------------------------------
+// Fixtures -------------------------------------------------------------------
 
 func setupRunCommandTest(t *testing.T) {
 	t.Helper()
@@ -38,7 +38,7 @@ func setupRunCommandTest(t *testing.T) {
 	t.Chdir(root)
 }
 
-// Tests -----------------------------------------------------------------------
+// Tests ----------------------------------------------------------------------
 
 func TestRunCommandForwardsStdin(t *testing.T) {
 	setupRunCommandTest(t)
@@ -50,7 +50,7 @@ func TestRunCommandForwardsStdin(t *testing.T) {
 	assert.Equal(t, "root-command-sentinel\nproject-command-sentinel\n", output.String())
 }
 
-// Helpers ---------------------------------------------------------------------
+// Private helpers ------------------------------------------------------------
 
 func runCommandWithInput(t *testing.T, arguments []string, input string, output io.Writer) {
 	t.Helper()

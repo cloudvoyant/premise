@@ -9,7 +9,7 @@ import (
 	"github.com/cloudvoyant/premise/core"
 )
 
-// Public API -----------------------------------------------------------------
+// Tests ----------------------------------------------------------------------
 
 func TestBuiltinDetectionAndGoReleaserConfig(t *testing.T) {
 	registerBuiltins(t)
