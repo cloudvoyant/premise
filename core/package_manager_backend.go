@@ -8,6 +8,8 @@ import (
 	"sync"
 )
 
+// Public API -----------------------------------------------------------------
+
 // PackageManagerBackend parses native package specifications and supplies the
 // manager-specific release operations selected by premise.yaml. Core owns
 // release sequencing; implementations own package-format behavior.
@@ -47,11 +49,6 @@ type PackageManagerBackend interface {
 	ReleaseWorkspace(context.Context, string, io.Writer, io.Writer) (string, bool, error)
 }
 
-var packageManagerRegistry struct {
-	sync.RWMutex
-	plugins []PackageManagerBackend
-}
-
 // RegisterPackageManagerBackend registers an implementation by ID. Workspaces
 // select registered backends explicitly through workspace.package_managers.
 func RegisterPackageManagerBackend(backend PackageManagerBackend) error {
@@ -73,10 +70,14 @@ func RegisterPackageManagerBackend(backend PackageManagerBackend) error {
 	return nil
 }
 
+// Private helpers ------------------------------------------------------------
+
+var packageManagerRegistry struct {
+	sync.RWMutex
+	plugins []PackageManagerBackend
+}
+
 func packageManagersForConfig(manifest Config) ([]PackageManagerBackend, error) {
-	if len(manifest.Workspace.PackageManagers) == 0 {
-		return nil, errors.New("workspace.package_managers must declare at least one package manager")
-	}
 	packageManagerRegistry.RLock()
 	registered := make(map[string]PackageManagerBackend, len(packageManagerRegistry.plugins))
 	for _, plugin := range packageManagerRegistry.plugins {

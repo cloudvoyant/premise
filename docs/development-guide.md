@@ -95,6 +95,17 @@ go mod tidy
 
 Stable releases are owned by the release phase of `pm ci flow on-merge`, which delegates to the `pm release` implementation after validation. Merges to `main` run `.github/workflows/on-merge.yml`, which invokes that complete flow. Premise uses the svu Go SDK to calculate the version. Before it pushes a new stable tag, it builds a GoReleaser snapshot without publication credentials. A failed build leaves no new tag. It then creates and pushes the missing stable tag and publishes the release. A rerun at a tag already at HEAD skips this snapshot and resumes publication. Release candidates are not applicable to Go (prerelease installs resolve through commit hashes), so `mise run publish:rc` only echoes its skip message.
 
+A library installed directly from Git can use `workspace.package_managers: []`. An omitted list has the same meaning. Premise publishes the version tag and GitHub release without a language backend, compiled assets, registry credentials, or a custom publication hook. The package phase reports a successful skip. See [Libraries installed from Git](modules/ci.md#libraries-installed-from-git) for a Lua example.
+
+For this configuration, `pm release` plans and publishes a stable release. `pm release --build` reports a successful skip because there are no artifacts to build. The composite action uses the existing `command: plan`, `command: release`, and `command: packages` operations. Source-only releases use GitHub's source downloads and do not attach an empty checksum file.
+
+To check source-only release configuration with the pinned GoReleaser version locally, run:
+
+```bash
+PREMISE_TEST_GORELEASER="$(mise where goreleaser@2.18.1)/goreleaser" \
+  go test ./e2e -run TestSourceOnlyConfigWithGoReleaser -v
+```
+
 `pm version` exposes the same SDK calculations used by the release pipeline:
 
 ```bash

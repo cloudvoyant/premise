@@ -6,6 +6,64 @@ import (
 	"testing"
 )
 
+// Public API -----------------------------------------------------------------
+
+func TestPackageManagerRegistration(t *testing.T) {
+	useTestPackageManagers(t, testPackageManager{id: "test"})
+	if err := RegisterPackageManagerBackend(testPackageManager{id: "test"}); err == nil {
+		t.Fatal("duplicate plugin ID accepted")
+	}
+	if err := RegisterPackageManagerBackend(nil); err == nil {
+		t.Fatal("nil plugin accepted")
+	}
+	manifest := NewManifest("test")
+	manifest.Workspace.PackageManagers = []string{"test"}
+	plugins, err := packageManagersForConfig(manifest)
+	if err != nil || len(plugins) != 1 || plugins[0].ID() != "test" {
+		t.Fatalf("selected package managers = %v, %v", plugins, err)
+	}
+}
+
+func TestPackageManagerSelectionRejectsConflictingEcosystems(t *testing.T) {
+	useTestPackageManagers(t,
+		testPackageManager{id: "bun", ecosystem: "npm"},
+		testPackageManager{id: "pnpm", ecosystem: "npm"},
+	)
+	manifest := NewManifest("test")
+	manifest.Workspace.PackageManagers = []string{"bun", "pnpm"}
+	if _, err := packageManagersForConfig(manifest); err == nil {
+		t.Fatal("conflicting npm package managers accepted")
+	}
+}
+
+func TestPackageManagerSelectionWithoutBackends(t *testing.T) {
+	useTestPackageManagers(t, testPackageManager{id: "unused", buildErr: io.ErrUnexpectedEOF})
+	for _, managers := range [][]string{nil, {}} {
+		manifest := NewManifest("lua-plugin")
+		manifest.Workspace.PackageManagers = managers
+		plugins, err := packageManagersForConfig(manifest)
+		if err != nil || len(plugins) != 0 {
+			t.Fatalf("empty selection = %v, %v", plugins, err)
+		}
+		root := t.TempDir()
+		workspace, serial, err := prepareReleaseWorkspace(t.Context(), root, manifest, plugins, io.Discard, io.Discard)
+		if err != nil || workspace != root || serial {
+			t.Fatalf("empty release workspace = %q, %t, %v", workspace, serial, err)
+		}
+	}
+}
+
+func TestPackageManagerSelectionRejectsUnknownID(t *testing.T) {
+	useTestPackageManagers(t)
+	manifest := NewManifest("lua-plugin")
+	manifest.Workspace.PackageManagers = []string{"generic"}
+	if _, err := packageManagersForConfig(manifest); err == nil {
+		t.Fatal("unknown manager accepted")
+	}
+}
+
+// Private helpers ------------------------------------------------------------
+
 type testPackageManager struct {
 	id        string
 	ecosystem string
@@ -68,33 +126,5 @@ func useTestPackageManagers(t *testing.T, plugins ...PackageManagerBackend) {
 		if err := RegisterPackageManagerBackend(plugin); err != nil {
 			t.Fatal(err)
 		}
-	}
-}
-
-func TestPackageManagerRegistration(t *testing.T) {
-	useTestPackageManagers(t, testPackageManager{id: "test"})
-	if err := RegisterPackageManagerBackend(testPackageManager{id: "test"}); err == nil {
-		t.Fatal("duplicate plugin ID accepted")
-	}
-	if err := RegisterPackageManagerBackend(nil); err == nil {
-		t.Fatal("nil plugin accepted")
-	}
-	manifest := NewManifest("test")
-	manifest.Workspace.PackageManagers = []string{"test"}
-	plugins, err := packageManagersForConfig(manifest)
-	if err != nil || len(plugins) != 1 || plugins[0].ID() != "test" {
-		t.Fatalf("selected package managers = %v, %v", plugins, err)
-	}
-}
-
-func TestPackageManagerSelectionRejectsConflictingEcosystems(t *testing.T) {
-	useTestPackageManagers(t,
-		testPackageManager{id: "bun", ecosystem: "npm"},
-		testPackageManager{id: "pnpm", ecosystem: "npm"},
-	)
-	manifest := NewManifest("test")
-	manifest.Workspace.PackageManagers = []string{"bun", "pnpm"}
-	if _, err := packageManagersForConfig(manifest); err == nil {
-		t.Fatal("conflicting npm package managers accepted")
 	}
 }

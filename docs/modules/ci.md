@@ -80,6 +80,29 @@ If publication is not requested, the run stops after the flow job or matrix succ
 
 Tauri keeps its normal Mise tasks and Cargo build directories. Its `release:build` task copies output into the flow's artifact directory without tagging or uploading. Windows RC builds use NSIS; stable builds can also use MSI. No Bash release script is needed. Cache keys must separate incompatible runner images; a failed cross-image cache restore is not evidence of a speedup.
 
+### Libraries installed from Git
+
+A source-only library installs directly from Git and needs no compiled release files or package registry. For a Lua plugin generated with `premise-lib`, use an empty package-manager list:
+
+```yaml
+workspace:
+  name: lua-plugin
+  kind: monorepo
+  schema-version: "0.2"
+  package_managers: []
+  projects:
+    - name: lua-plugin
+      template: cloudvoyant/premise:premise-lib
+      version: 0.1.0
+      path: libs/lua-plugin
+```
+
+An omitted `package_managers` list also selects no backends. Do not add an unrelated backend or a `generic` entry. Unknown backend names remain errors.
+
+The existing plan, flow, release, and packages action operations support this configuration. After validation, the release operation creates or reuses the version tag and publishes a GitHub release with a changelog. GitHub provides source downloads for the tag. No `publish`, `publish:rc`, or `release:build` Mise hook is required for this publication.
+
+Stable releases keep the existing commit-based version rules. An RC release still requires a marked feature-branch push. The package operation reports a successful skip when no registry publisher is configured. `pm release --build` also reports a successful skip when there are no downloadable artifacts. GitHub publication still requires a token with permission to write repository contents.
+
 ### Manual deploy
 
 `on-release` stays independent of commit/merge publication. The root override or optional app deploy and end-to-end tasks receive `stage` or `prod`. Native builds use scoped commit or merge flows; the old `on-platform` flow and platform helper commands have been removed. The tandem premise-cargo PR pins its action calls to the commit verified by the Premise RC release and can land with the Premise PR. The `v0` alias can move only after that release is verified.

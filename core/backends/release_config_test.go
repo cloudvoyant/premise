@@ -9,6 +9,8 @@ import (
 	"github.com/cloudvoyant/premise/core"
 )
 
+// Public API -----------------------------------------------------------------
+
 func TestBuiltinDetectionAndGoReleaserConfig(t *testing.T) {
 	registerBuiltins(t)
 	goRoot := t.TempDir()
@@ -127,8 +129,8 @@ func TestBuiltinDetectionAndGoReleaserConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	config, err = core.GoReleaserConfig(root)
-	if err != nil || len(config) != 0 {
-		t.Fatalf("GoReleaserConfig(no direct app) = %q, %v; want no artifacts", config, err)
+	if err != nil || !strings.Contains(string(config), "skip: true") || !strings.Contains(string(config), "disable: true") {
+		t.Fatalf("GoReleaserConfig(no direct app) = %q, %v; want source-only release", config, err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/mixed\n"), 0o644); err != nil {
 		t.Fatal(err)
