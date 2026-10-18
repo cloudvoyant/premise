@@ -6,6 +6,8 @@ import (
 	"testing"
 )
 
+// Fixtures -------------------------------------------------------------------
+
 type testPackageManager struct {
 	id        string
 	ecosystem string
@@ -53,23 +55,7 @@ func (p testPackageManager) CreateGoReleaserConfig(_ string, _ Config) (string, 
 	return p.builds, p.buildErr
 }
 
-func useTestPackageManagers(t *testing.T, plugins ...PackageManagerBackend) {
-	t.Helper()
-	packageManagerRegistry.Lock()
-	original := packageManagerRegistry.plugins
-	packageManagerRegistry.plugins = nil
-	packageManagerRegistry.Unlock()
-	t.Cleanup(func() {
-		packageManagerRegistry.Lock()
-		packageManagerRegistry.plugins = original
-		packageManagerRegistry.Unlock()
-	})
-	for _, plugin := range plugins {
-		if err := RegisterPackageManagerBackend(plugin); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
+// Tests ----------------------------------------------------------------------
 
 func TestPackageManagerRegistration(t *testing.T) {
 	useTestPackageManagers(t, testPackageManager{id: "test"})
@@ -96,5 +82,51 @@ func TestPackageManagerSelectionRejectsConflictingEcosystems(t *testing.T) {
 	manifest.Workspace.PackageManagers = []string{"bun", "pnpm"}
 	if _, err := packageManagersForConfig(manifest); err == nil {
 		t.Fatal("conflicting npm package managers accepted")
+	}
+}
+
+func TestPackageManagerSelectionWithoutBackends(t *testing.T) {
+	useTestPackageManagers(t, testPackageManager{id: "unused", buildErr: io.ErrUnexpectedEOF})
+	for _, managers := range [][]string{nil, {}} {
+		manifest := NewManifest("lua-plugin")
+		manifest.Workspace.PackageManagers = managers
+		plugins, err := packageManagersForConfig(manifest)
+		if err != nil || len(plugins) != 0 {
+			t.Fatalf("empty selection = %v, %v", plugins, err)
+		}
+		root := t.TempDir()
+		workspace, serial, err := prepareReleaseWorkspace(t.Context(), root, manifest, plugins, io.Discard, io.Discard)
+		if err != nil || workspace != root || serial {
+			t.Fatalf("empty release workspace = %q, %t, %v", workspace, serial, err)
+		}
+	}
+}
+
+func TestPackageManagerSelectionRejectsUnknownID(t *testing.T) {
+	useTestPackageManagers(t)
+	manifest := NewManifest("lua-plugin")
+	manifest.Workspace.PackageManagers = []string{"generic"}
+	if _, err := packageManagersForConfig(manifest); err == nil {
+		t.Fatal("unknown manager accepted")
+	}
+}
+
+// Private helpers ------------------------------------------------------------
+
+func useTestPackageManagers(t *testing.T, plugins ...PackageManagerBackend) {
+	t.Helper()
+	packageManagerRegistry.Lock()
+	original := packageManagerRegistry.plugins
+	packageManagerRegistry.plugins = nil
+	packageManagerRegistry.Unlock()
+	t.Cleanup(func() {
+		packageManagerRegistry.Lock()
+		packageManagerRegistry.plugins = original
+		packageManagerRegistry.Unlock()
+	})
+	for _, plugin := range plugins {
+		if err := RegisterPackageManagerBackend(plugin); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

@@ -129,15 +129,20 @@ func PublishRelease(ctx context.Context, root string, options ReleasePublishOpti
 	if plan.Skip || plan.Version != options.ExpectedVersion {
 		return ReleasePlan{}, fmt.Errorf("expected release %s does not match planned version %s", options.ExpectedVersion, plan.Version)
 	}
+	manifest, plugins, err := loadReleaseBackends(root)
+	if err != nil {
+		return ReleasePlan{}, err
+	}
+	// Validate backend configuration before creating a tag. File paths are staged
+	// later, but backend fragments must already be valid at this boundary.
+	if _, err := goReleaserConfig(root, manifest, plugins); err != nil {
+		return ReleasePlan{}, fmt.Errorf("generate GoReleaser configuration: %w", err)
+	}
 	if !plan.ReuseTag {
 		if err := pushReleaseTag(ctx, root, plan.Version, releaseAuthentication()); err != nil {
 			return ReleasePlan{}, fmt.Errorf("create release tag: %w", err)
 		}
 		plan.ReuseTag = true
-	}
-	_, plugins, err := loadReleaseBackends(root)
-	if err != nil {
-		return ReleasePlan{}, err
 	}
 	if err := runGoReleaserWithFiles(ctx, root, plugins, files, false, stdout, stderr); err != nil {
 		return ReleasePlan{}, fmt.Errorf("publish GitHub release: %w", err)
@@ -226,7 +231,7 @@ func PublishLanguagePackages(ctx context.Context, root string, stdout, stderr io
 		}
 	}
 	if !published {
-		return ReleasePlan{}, errors.New("workspace package managers do not publish language packages")
+		fmt.Fprintln(stdout, "skip: workspace package managers do not publish language packages")
 	}
 	return plan, nil
 }
@@ -523,21 +528,23 @@ func goReleaserConfigWithFiles(root string, manifest Config, plugins []PackageMa
 	}
 
 	builds, err := packageManagerReleaseConfig(root, manifest, plugins)
-	if err != nil || (builds == "" && len(files) == 0) {
+	if err != nil {
 		return nil, err
 	}
 	var builder strings.Builder
 	fmt.Fprintf(&builder, "version: 2\n\nproject_name: %s\n\n", project)
 	if builds == "" {
-		// Explicitly disable GoReleaser's implicit default Go build for file-only releases.
+		// Disable implicit Go builds for source-only and file-only releases.
 		builder.WriteString("builds:\n  - skip: true\n\n")
 	} else {
 		builder.WriteString(builds)
 	}
-	builder.WriteString(`checksum:
-  name_template: "checksums.txt"
-
-changelog:
+	if builds == "" && len(files) == 0 {
+		builder.WriteString("checksum:\n  disable: true\n\n")
+	} else {
+		builder.WriteString("checksum:\n  name_template: \"checksums.txt\"\n\n")
+	}
+	builder.WriteString(`changelog:
   sort: asc
   filters:
     exclude:
@@ -719,9 +726,15 @@ func runGoReleaserWithFiles(ctx context.Context, root string, plugins []PackageM
 	if err != nil {
 		return fmt.Errorf("generate GoReleaser configuration: %w", err)
 	}
-	if len(configuration) == 0 {
-		fmt.Fprintln(stdout, "skip: workspace has no downloadable release artifacts")
-		return nil
+	if snapshot && len(files) == 0 {
+		builds, err := packageManagerReleaseConfig(root, manifest, plugins)
+		if err != nil {
+			return err
+		}
+		if builds == "" {
+			fmt.Fprintln(stdout, "skip: workspace has no downloadable release artifacts")
+			return nil
+		}
 	}
 	temporary, err := os.CreateTemp("", "premise-goreleaser-*.yml")
 	if err != nil {
