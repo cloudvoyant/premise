@@ -247,7 +247,7 @@ Initialization selects or creates that stack and supplies `premise:environment`,
 
 The same program creates previews from feature-branch pushes. The configuration supplies branch identity and environment parameters. A new PR or branch-specific program is not required.
 
-The generated workflow pins action and binary version `v0.5.0-rc.240` because it supplies the deployment interface introduced here. Move both pins together after a compatible stable release.
+The generated workflow pins action and binary version `v0.5.0-rc.243` because it supplies the deployment interface introduced here. Move both pins together after a compatible stable release.
 
 Set `PREMISE_DEPLOY_ENABLED=true` to enable the generated feature-branch deployment workflow. Configure backend selection and provider credentials as described in [Provider setup](../providers/README.md). Mise installs the project-selected tools. `pm infra auth --ci` authenticates declared providers before the optional root `ci:auth` fallback. The preview stack name includes a stable branch hash. Further pushes update the same stack. Set `PREMISE_SECRETS_PROVIDER` to select a native encryption provider for new stacks; existing stacks retain their provider. See [state encryption](../providers/pulumi.md).
 
