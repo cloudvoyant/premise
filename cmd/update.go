@@ -16,22 +16,27 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var updateCmd = &cobra.Command{
-	Use:   "update [version]",
-	Short: "Update the premise CLI",
-	Long:  "Downloads the Premise installer and replaces the current CLI with the latest or requested release.",
-	Args:  cobra.MaximumNArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		version := ""
-		if len(args) == 1 {
-			var err error
-			version, err = normalizeUpdateVersion(args[0])
-			if err != nil {
-				return err
+// NewUpdateCommand creates the update command.
+func NewUpdateCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "update [version]",
+		Short: "Update the premise CLI",
+		Long:  "Downloads the Premise installer and replaces the current CLI with the latest or requested release.",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			version := ""
+			if len(args) == 1 {
+				var err error
+				version, err = normalizeUpdateVersion(args[0])
+				if err != nil {
+					return err
+				}
 			}
-		}
-		return updatePremise(cmd.Context(), version, updateInstallerURL, http.DefaultClient, os.Executable, cmd.OutOrStdout(), cmd.ErrOrStderr())
-	},
+			return updatePremise(cmd.Context(), version, updateInstallerURL, http.DefaultClient, os.Executable, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
+
+	return command
 }
 
 // Private helpers ------------------------------------------------------------

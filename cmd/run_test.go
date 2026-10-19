@@ -59,7 +59,7 @@ func runCommandWithInput(t *testing.T, arguments []string, input string, output 
 	command.SetIn(strings.NewReader(input))
 	command.SetOut(output)
 	command.SetErr(io.Discard)
-	require.NoError(t, runCmd.RunE(command, arguments))
+	require.NoError(t, NewRunCommand().RunE(command, arguments))
 }
 
 func setupFakeMise(t *testing.T) {

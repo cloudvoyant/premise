@@ -11,51 +11,74 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var secretsCmd = &cobra.Command{Use: "secrets", Short: "Pull local secrets or copy application values to CI", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
-
-var secretsPullCmd = &cobra.Command{
-	Use: "pull", Short: "Write local application env files from fnox", Args: cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, _ []string) error {
-		root, project, environment, branch, err := secretCommandOptions(cmd)
-		if err != nil {
-			return err
-		}
-		return core.PullProjectSecrets(cmd.Context(), root, project, environment, branch)
-	},
+// NewSecretsCommand creates the secrets command.
+func NewSecretsCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "secrets",
+		Short: "Pull local secrets or copy application values to CI",
+		Args:  cobra.NoArgs,
+		RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
+	}
+	command.AddCommand(NewSecretsPullCommand(), NewSecretsExecCommand(), NewSecretsSyncCommand())
+	return command
 }
 
-var secretsExecCmd = &cobra.Command{
-	Use: "exec -- command [args...]", Short: "Run a command with environment-scoped application values", Args: cobra.MinimumNArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		root, project, environment, branch, err := secretCommandOptions(cmd)
-		if err != nil {
-			return err
-		}
-		return core.ExecProjectSecrets(cmd.Context(), root, project, environment, branch, args, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
-	},
+// NewSecretsPullCommand creates the pull command.
+func NewSecretsPullCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "pull",
+		Short: "Write local application env files from fnox",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			root, project, environment, branch, err := secretCommandOptions(cmd)
+			if err != nil {
+				return err
+			}
+			return core.PullProjectSecrets(cmd.Context(), root, project, environment, branch)
+		},
+	}
+	addSecretFlags(command)
+	return command
 }
 
-var secretsSyncCmd = &cobra.Command{
-	Use: "sync", Short: "Copy local fnox application values to CI secrets", Args: cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, _ []string) error {
-		root, project, environment, branch, err := secretCommandOptions(cmd)
-		if err != nil {
-			return err
-		}
-		repository, _ := cmd.Flags().GetString("repository")
-		provider, _ := cmd.Flags().GetString("ci")
-		return core.SyncProjectSecrets(cmd.Context(), root, project, environment, branch, provider, repository)
-	},
+// NewSecretsExecCommand creates the exec command.
+func NewSecretsExecCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "exec -- command [args...]",
+		Short: "Run a command with environment-scoped application values",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			root, project, environment, branch, err := secretCommandOptions(cmd)
+			if err != nil {
+				return err
+			}
+			return core.ExecProjectSecrets(cmd.Context(), root, project, environment, branch, args, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
+	addSecretFlags(command)
+	return command
 }
 
-func init() {
-	addSecretFlags(secretsPullCmd)
-	addSecretFlags(secretsExecCmd)
-	addSecretFlags(secretsSyncCmd)
-	secretsSyncCmd.Flags().String("repository", "", "Target owner/repository (required)")
-	secretsSyncCmd.Flags().String("ci", "github", "Target CI provider: github or gitlab")
-	secretsCmd.AddCommand(secretsPullCmd, secretsExecCmd, secretsSyncCmd)
-	rootCmd.AddCommand(secretsCmd)
+// NewSecretsSyncCommand creates the sync command.
+func NewSecretsSyncCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "sync",
+		Short: "Copy local fnox application values to CI secrets",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			root, project, environment, branch, err := secretCommandOptions(cmd)
+			if err != nil {
+				return err
+			}
+			repository, _ := cmd.Flags().GetString("repository")
+			provider, _ := cmd.Flags().GetString("ci")
+			return core.SyncProjectSecrets(cmd.Context(), root, project, environment, branch, provider, repository)
+		},
+	}
+	addSecretFlags(command)
+	command.Flags().String("repository", "", "Target owner/repository (required)")
+	command.Flags().String("ci", "github", "Target CI provider: github or gitlab")
+	return command
 }
 
 // Private helpers ------------------------------------------------------------

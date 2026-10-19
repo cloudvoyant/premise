@@ -27,7 +27,21 @@ func Execute(miseTemplate string, assets ...core.WorkflowAsset) {
 }
 
 func init() {
-	rootCmd.AddCommand(ciCmd, projectsCmd, initCmd, installCmd, updateCmd, generateCmd, runCmd, templateCmd)
+	rootCmd.AddCommand(
+		NewCICommand(),
+		NewDeployCommand(),
+		NewGenerateCommand(),
+		NewInfraCommand(),
+		NewInitCommand(),
+		NewInstallCommand(),
+		NewProjectsCommand(),
+		NewReleaseCommand(),
+		NewRunCommand(),
+		NewSecretsCommand(),
+		NewTemplateCommand(),
+		NewUpdateCommand(),
+		NewVersionCommand(),
+	)
 }
 
 // Private helpers ------------------------------------------------------------
