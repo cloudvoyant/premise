@@ -35,11 +35,11 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - uses: cloudvoyant/premise@v0.5.0-rc.238
+      - uses: cloudvoyant/premise@v0.5.0-rc.240
         with:
           flow: on-release
           environment: ${{ inputs.environment }}
-          premise-version: v0.5.0-rc.238
+          premise-version: v0.5.0-rc.240
           install-premise: pre-built
 
   deploy:
@@ -53,10 +53,10 @@ jobs:
         with:
           ref: ${{ inputs.branch || github.sha }}
           persist-credentials: false
-      - uses: cloudvoyant/premise@v0.5.0-rc.238
+      - uses: cloudvoyant/premise@v0.5.0-rc.240
         with:
           setup-only: true
-          premise-version: v0.5.0-rc.238
+          premise-version: v0.5.0-rc.240
           install-premise: pre-built
       - name: Configure provider credentials through the workspace
         run: |
@@ -66,7 +66,7 @@ jobs:
       - name: Build application inputs
         run: mise run '//apps/*:build'
       - name: Provision, migrate, update, and recover on failure
-        uses: cloudvoyant/premise@v0.5.0-rc.238
+        uses: cloudvoyant/premise@v0.5.0-rc.240
         with:
           command: deploy
           release: none
@@ -92,10 +92,10 @@ jobs:
         with:
           ref: main
           persist-credentials: false
-      - uses: cloudvoyant/premise@v0.5.0-rc.238
+      - uses: cloudvoyant/premise@v0.5.0-rc.240
         with:
           setup-only: true
-          premise-version: v0.5.0-rc.238
+          premise-version: v0.5.0-rc.240
           install-premise: pre-built
       - name: Configure provider credentials through the workspace
         run: |
@@ -103,7 +103,7 @@ jobs:
             mise run ci:auth
           fi
       - name: Destroy the merged or deleted branch preview
-        uses: cloudvoyant/premise@v0.5.0-rc.238
+        uses: cloudvoyant/premise@v0.5.0-rc.240
         with:
           command: infra-destroy
           release: none
