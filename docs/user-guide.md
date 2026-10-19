@@ -128,7 +128,7 @@ Destroy this preview when you finish:
 pm infra destroy --env preview
 ```
 
-The generated workflow deploys previews after you set `PREMISE_DEPLOY_ENABLED=true` and configure provider credentials. It cleans up on a same-repository PR merge or branch deletion. Persistent environments require interactive confirmation for destruction.
+After you enable `PREMISE_DEPLOY_ENABLED` and configure provider credentials, `on-commit.yml` deploys feature-branch previews. `on-merge.yml` cleans them up after a same-repository PR merge or branch deletion. `on-deploy.yml` runs only when started manually. Persistent environments require interactive confirmation for destruction.
 
 ## Deploy with migrations
 

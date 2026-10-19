@@ -9,7 +9,10 @@ import (
 	"testing"
 
 	core "github.com/cloudvoyant/premise/core"
+	"go.yaml.in/yaml/v3"
 )
+
+// Public API -----------------------------------------------------------------
 
 func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 	root := repositoryRoot(t)
@@ -45,6 +48,46 @@ func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 	assertFileContains(t, filepath.Join(project, "package.json"), `"format:check"`)
 	for _, name := range []string{"on-commit.yml", "on-merge.yml", "on-deploy.yml"} {
 		path := filepath.Join(workspace, ".github", "workflows", name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var workflow struct {
+			Events map[string]any `yaml:"on"`
+			Jobs   map[string]struct {
+				Condition string `yaml:"if"`
+			} `yaml:"jobs"`
+		}
+		if err := yaml.Unmarshal(data, &workflow); err != nil {
+			t.Fatal(err)
+		}
+		switch name {
+		case "on-deploy.yml":
+			if _, ok := workflow.Events["workflow_dispatch"]; !ok || len(workflow.Events) != 1 {
+				t.Fatal("on-deploy must be manual-only")
+			}
+			if _, ok := workflow.Jobs["cleanup-preview"]; ok {
+				t.Fatal("manual deploy workflow contains preview cleanup")
+			}
+		case "on-commit.yml":
+			preview, ok := workflow.Jobs["deploy-preview"]
+			if !ok || !strings.Contains(preview.Condition, "github.event_name == 'push'") {
+				t.Fatal("automatic preview deployment must run only on feature pushes")
+			}
+		case "on-merge.yml":
+			if _, ok := workflow.Jobs["cleanup-preview"]; !ok {
+				t.Fatal("merge workflow must clean up previews")
+			}
+			if workflow.Jobs["plan"].Condition != "github.event_name == 'push'" {
+				t.Fatal("PR-close and branch-delete cleanup events must not publish a stable release")
+			}
+			for _, event := range []string{"push", "pull_request", "delete"} {
+				if _, ok := workflow.Events[event]; !ok {
+					t.Fatalf("merge workflow is missing %s", event)
+				}
+			}
+		}
+
 		if name == "on-commit.yml" {
 			assertFileContains(t, path, "cloudvoyant/premise@v0")
 			workflow, err := os.ReadFile(path)
@@ -149,6 +192,8 @@ func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 		t.Fatalf("release created bootstrap tag: %s", refs)
 	}
 }
+
+// Private helpers ------------------------------------------------------------
 
 func bunReleaseRegistryFixture(t *testing.T, root string) {
 	t.Helper()

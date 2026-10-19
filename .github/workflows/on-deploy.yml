@@ -11,24 +11,18 @@ name: On Deploy
       branch:
         description: Feature branch for a preview
         default: ""
-  push:
-    branches-ignore: [main]
-  delete:
-  pull_request:
-    branches: [main]
-    types: [closed]
 
 permissions:
   contents: read
   id-token: write
 
 concurrency:
-  group: deploy-${{ inputs.environment || 'preview' }}-${{ (inputs.environment == 'preview' || github.event_name != 'workflow_dispatch') && (inputs.branch || github.event.pull_request.head.ref || (github.event_name == 'delete' && github.event.ref) || github.ref_name) || 'persistent' }}
+  group: deploy-${{ inputs.environment }}-${{ inputs.environment == 'preview' && (inputs.branch || github.ref_name) || 'persistent' }}
   cancel-in-progress: false
 
 jobs:
   legacy:
-    if: github.event_name == 'workflow_dispatch' && vars.PREMISE_DEPLOY_ENABLED != 'true'
+    if: vars.PREMISE_DEPLOY_ENABLED != 'true'
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     steps:
@@ -42,11 +36,9 @@ jobs:
           install-premise: build
 
   deploy:
-    if: >-
-      vars.PREMISE_DEPLOY_ENABLED == 'true' &&
-      (github.event_name == 'workflow_dispatch' || github.event_name == 'push')
+    if: vars.PREMISE_DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment || 'preview' }}
+    environment: ${{ inputs.environment }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -65,41 +57,11 @@ jobs:
         with:
           command: deploy
           release: none
-          environment: ${{ inputs.environment || 'preview' }}
-          branch: ${{ (inputs.environment == 'preview' || github.event_name == 'push') && (inputs.branch || github.ref_name) || '' }}
+          environment: ${{ inputs.environment }}
+          branch: ${{ inputs.environment == 'preview' && (inputs.branch || github.ref_name) || '' }}
           backend: ${{ vars.PREMISE_INFRA_BACKEND }}
           secrets-provider: ${{ vars.PREMISE_SECRETS_PROVIDER }}
           records-url: ${{ vars.PREMISE_RECORDS_URL }}
           deployment-revision: ${{ github.sha }}
           artifact: ${{ vars.PREMISE_ARTIFACT_IDENTITIES }}
-          install-premise: skip
-
-  cleanup-preview:
-    if: >-
-      vars.PREMISE_DEPLOY_ENABLED == 'true' &&
-      ((github.event_name == 'pull_request' && github.event.pull_request.merged == true &&
-        github.event.pull_request.head.repo.full_name == github.repository) ||
-       (github.event_name == 'delete' && github.event.ref_type == 'branch' && github.event.ref != 'main'))
-    runs-on: ubuntu-latest
-    environment: preview
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: main
-          persist-credentials: false
-      - uses: ./
-        with:
-          setup-only: true
-          install-premise: build
-      - name: Authenticate infrastructure providers
-        run: pm infra auth --ci --env-file "$GITHUB_ENV"
-      - name: Destroy the merged or deleted branch preview
-        uses: ./
-        with:
-          command: infra-destroy
-          release: none
-          environment: preview
-          branch: ${{ github.event.pull_request.head.ref || github.event.ref }}
-          backend: ${{ vars.PREMISE_INFRA_BACKEND }}
-          secrets-provider: ${{ vars.PREMISE_SECRETS_PROVIDER }}
           install-premise: skip

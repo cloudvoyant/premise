@@ -13,6 +13,10 @@ compatible release exists. Keep generated workflows in `assets/github-workflows`
 consistent with the repository workflows. A release candidate tag is acceptable
 for a tandem PR that needs an interface absent from the stable release.
 
+Keep `on-deploy.yml` manual-only (`workflow_dispatch`). Feature-push previews belong
+in `on-commit.yml`. Preview cleanup belongs in `on-merge.yml`, including the
+branch-deletion fallback.
+
 # Cobra commands
 
 Declare every command as a named variable under `Public API`. Keep `init` last
