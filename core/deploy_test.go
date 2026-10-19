@@ -26,7 +26,7 @@ func TestDeploymentRollbackPreservesLastSuccessfulRelease(t *testing.T) {
 	}
 	manifest := infraTestManifest()
 	manifest.Workspace.Projects = append(manifest.Workspace.Projects, Project{Name: "web", Template: "registry/app", Path: "apps/web"})
-	manifest.Workspace.Deployment = &Deployment{Records: ".premise/releases", Prerequisites: []string{"urn:db"}, Migrations: []TaskReference{{Project: "web", Task: "migrate"}}, Applications: []DeploymentApplication{{Project: "web", ManagedBy: "infra", Health: "health", Rollback: "rollback"}}, Recovery: DeploymentRecovery{FirstDeploy: &TaskReference{Project: "web", Task: "cleanup"}}}
+	manifest.Workspace.Deployment = &Deployment{Records: ".premise/releases", Prerequisites: []string{"urn:db"}, Migrations: []TaskReference{{Project: "web", Task: "migrate"}}, Applications: []DeploymentApplication{{Project: "web", Health: "health", Rollback: "rollback"}}, Recovery: DeploymentRecovery{FirstDeploy: &TaskReference{Project: "web", Task: "cleanup"}}}
 	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +216,6 @@ func TestDeploymentWithoutMigrationsDoesNotDeployInfraManagedAppTwice(t *testing
 	}
 	manifest.Workspace.Deployment.Migrations = nil
 	manifest.Workspace.Deployment.Prerequisites = nil
-	manifest.Workspace.Deployment.Applications[0].ManagedBy = "infra"
 	manifest.Workspace.Deployment.Applications[0].Deploy = ""
 	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
 		t.Fatal(err)
@@ -323,7 +322,7 @@ func deploymentFailureFixture(t *testing.T) (string, string, DeployOptions) {
 	}
 	manifest := infraTestManifest()
 	manifest.Workspace.Projects = append(manifest.Workspace.Projects, Project{Name: "web", Template: "registry/app", Path: "apps/web"})
-	manifest.Workspace.Deployment = &Deployment{Records: ".premise/releases", RecordOutputs: []string{"deploymentId"}, Prerequisites: []string{"urn:db"}, Migrations: []TaskReference{{Project: "web", Task: "migrate"}}, Applications: []DeploymentApplication{{Project: "web", ManagedBy: "task", Deploy: "deploy", Health: "health", Rollback: "rollback"}}, Recovery: DeploymentRecovery{FirstDeploy: &TaskReference{Project: "web", Task: "cleanup"}}}
+	manifest.Workspace.Deployment = &Deployment{Records: ".premise/releases", RecordOutputs: []string{"deploymentId"}, Prerequisites: []string{"urn:db"}, Migrations: []TaskReference{{Project: "web", Task: "migrate"}}, Applications: []DeploymentApplication{{Project: "web", Deploy: "deploy", Health: "health", Rollback: "rollback"}}, Recovery: DeploymentRecovery{FirstDeploy: &TaskReference{Project: "web", Task: "cleanup"}}}
 	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
 		t.Fatal(err)
 	}

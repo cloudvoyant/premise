@@ -8,6 +8,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Public API -----------------------------------------------------------------
+
 var templateCmd = &cobra.Command{
 	Use:   "template",
 	Short: "Create and test premise templates",
@@ -106,6 +108,12 @@ var templateTestCmd = &cobra.Command{
 	},
 }
 
+func init() {
+	templateCmd.AddCommand(templateDetectCmd, templateInitCmd, templateListCmd, templateTestCmd)
+}
+
+// Private helpers ------------------------------------------------------------
+
 func premiseRoot() (string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -113,8 +121,4 @@ func premiseRoot() (string, error) {
 	}
 	root, _, err := core.FindManifest(cwd)
 	return root, err
-}
-
-func init() {
-	templateCmd.AddCommand(templateDetectCmd, templateInitCmd, templateListCmd, templateTestCmd)
 }

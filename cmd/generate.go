@@ -11,6 +11,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Public API -----------------------------------------------------------------
+
 var generateCmd = &cobra.Command{
 	Use:     "generate [template]",
 	Aliases: []string{"g"},
@@ -52,6 +54,12 @@ Use .:app to select a template from the current workspace.`,
 	},
 }
 
+func init() {
+	generateCmd.Flags().StringToString("answer", nil, "Explicit question key=value; repeat to generate without a terminal")
+}
+
+// Private helpers ------------------------------------------------------------
+
 // resolveSelectorArgument routes a generate argument to the matching selector
 // resolution strategy and returns the fully qualified selector to generate.
 func resolveSelectorArgument(ctx context.Context, args []string, progress io.Writer) (string, error) {
@@ -75,10 +83,4 @@ func resolveSelectorArgument(ctx context.Context, args []string, progress io.Wri
 	default:
 		return "", fmt.Errorf("unhandled selector kind %d", classified.Kind)
 	}
-}
-
-// Private helpers ------------------------------------------------------------
-
-func init() {
-	generateCmd.Flags().StringToString("answer", nil, "Explicit question key=value; repeat to generate without a terminal")
 }

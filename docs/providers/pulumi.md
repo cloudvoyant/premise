@@ -8,7 +8,7 @@ passphrase explicitly.
 Pulumi still encodes secret values as encrypted state, but an empty passphrase
 provides no meaningful protection to someone who can read that state. For now,
 protection comes from the backend's access controls, transport security, and
-storage encryption. Stronger state encryption is deferred to the backend project.
+storage encryption. Stronger state encryption is tracked in [DIFF-232](https://linear.app/cloudvoyant/issue/DIFF-232/replace-the-empty-pulumi-passphrase-with-managed-state-encryption) in premise-backlog.
 
 An explicit passphrase or passphrase-file setting takes precedence. Existing
 stacks encrypted with a non-empty passphrase still require their original key;

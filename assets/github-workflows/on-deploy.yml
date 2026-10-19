@@ -58,11 +58,8 @@ jobs:
           setup-only: true
           premise-version: v0.5.0-rc.240
           install-premise: pre-built
-      - name: Configure provider credentials through the workspace
-        run: |
-          if mise task info ci:auth >/dev/null 2>&1; then
-            mise run ci:auth
-          fi
+      - name: Authenticate infrastructure providers
+        run: pm infra auth --ci --env-file "$GITHUB_ENV"
       - name: Build application inputs
         run: mise run '//apps/*:build'
       - name: Provision, migrate, update, and recover on failure
@@ -97,11 +94,8 @@ jobs:
           setup-only: true
           premise-version: v0.5.0-rc.240
           install-premise: pre-built
-      - name: Configure provider credentials through the workspace
-        run: |
-          if mise task info ci:auth >/dev/null 2>&1; then
-            mise run ci:auth
-          fi
+      - name: Authenticate infrastructure providers
+        run: pm infra auth --ci --env-file "$GITHUB_ENV"
       - name: Destroy the merged or deleted branch preview
         uses: cloudvoyant/premise@v0.5.0-rc.240
         with:

@@ -9,11 +9,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var releaseDryRun bool
-var releaseBuildOnly bool
-var releaseChannel string
-var releaseExpectedVersion string
-var releaseFilesDir string
+// Public API -----------------------------------------------------------------
 
 var releaseCmd = &cobra.Command{
 	Use:   "release",
@@ -88,8 +84,6 @@ var releasePackagesCmd = &cobra.Command{
 	},
 }
 
-func currentDirectory() string { cwd, _ := os.Getwd(); return cwd }
-
 func init() {
 	releaseCmd.Flags().BoolVar(&releaseDryRun, "dry-run", false, "plan the release without changing anything")
 	releaseCmd.Flags().BoolVar(&releaseBuildOnly, "build", false, "build release artifacts without publishing")
@@ -101,3 +95,17 @@ func init() {
 	releaseCmd.AddCommand(releasePublishCmd, releasePackagesCmd)
 	rootCmd.AddCommand(releaseCmd)
 }
+
+// Private helpers ------------------------------------------------------------
+
+var releaseDryRun bool
+
+var releaseBuildOnly bool
+
+var releaseChannel string
+
+var releaseExpectedVersion string
+
+var releaseFilesDir string
+
+func currentDirectory() string { cwd, _ := os.Getwd(); return cwd }

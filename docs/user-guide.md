@@ -1,316 +1,222 @@
 # User Guide
 
-premise creates applications and libraries from live templates and records where each generated project came from. Templates remain valid projects before generation because premise uses literal string replacement instead of template-expression syntax.
+Premise creates projects from templates and runs their tasks through Mise. A workspace groups applications, libraries, and infrastructure in one repository.
 
-## Install premise
+## Install
 
-Use the installer to install the latest release. It adds the `premise` command and the `pm` alias:
+Install Premise and its `pm` alias:
 
-```bash
+```sh
 curl -fsSL https://raw.githubusercontent.com/cloudvoyant/premise/main/install.sh | bash
 ```
 
-If you use Go, install the binary with `go install`. This command adds `premise`, but not the `pm` alias. For an installer-managed installation, run `pm update` to install a newer release.
+Install [Mise](https://mise.jdx.dev/) for project tools. Update Premise with `pm update` or select a release with `pm update VERSION`.
 
-Install [mise](https://mise.jdx.dev/) for workspace tools. Run commands in a terminal because some commands use interactive questions. Allow network access when you use a remote template for the first time.
+## Create a workspace
 
-## Getting Started
-
-Initialize a monorepo and generate a project from an official registry:
-
-```bash
+```sh
+mkdir my-product
+cd my-product
 pm init
-pm generate :premise-app
+pm g :premise-tanstack-start-app
+pm install
 ```
 
-Initialize a separate template registry when you author templates:
+Answer the template questions to name your app. Premise records the project in `premise.yaml` and places its files under `apps/`. Library templates use `libs/`.
 
-```bash
-pm init --kind template-registry
-pm template init app
-pm template init lib
-pm template ls
-pm template test
+Choose a registry or a specific template:
+
+```sh
+pm g cloudvoyant/premise-bun
+pm g cloudvoyant/premise-bun:premise-hono-api
+pm g ../my-registry:app
 ```
 
-A Premise root can contain generated projects, a template registry, or both. `workspace.kind` selects the default CI lifecycle; it does not prohibit the other capability.
+`pm g` opens the official template picker. A local registry path lets you test unmerged template changes. Remote selectors use the repository’s default branch.
 
-## Usage
+## Run project tasks
 
-### Update premise
+For an app named `web`, run:
 
-Update the current CLI installation to the latest GitHub release:
-
-```bash
-pm update
+```sh
+pm run web:dev
+pm run web:test
+pm run build
 ```
 
-Pass a version to install a specific release:
+The last command runs the root `build` task. Tasks live in each project's `mise.toml`. Arguments after the task name pass through to Mise.
 
-```bash
-pm update v0.2.1
-```
+Run a task across the workspace:
 
-Premise resolves the current executable, follows the `pm` symlink when needed, and installs the replacement in the same directory. The directory must be writable by the current user. The installer stages the new executable in that directory and atomically renames it over the previous version, so the running process is not overwritten in place.
-
-### Initialize a workspace
-
-Run `pm init` at the repository root. The default `monorepo` kind creates the manifest, root Mise configuration, project directories, and GitHub workflows. It does not replace an existing manifest or workflow file. Use `pm init --kind template-registry` to create a template registry with a `templates/` directory.
-
-Use `pm install` or `pm i` to install Mise tools declared by the workspace and its generated projects, then dispatch each generated project's `install` contract. CI runs `format` and then `format:check`. Run project lifecycle tasks directly through Mise's monorepo pattern:
-
-```bash
+```sh
 mise run --jobs 1 '//...:build'
 mise run --jobs 1 '//...:test'
 ```
 
-### Run tasks
+## Check a change
 
-Use `pm run <task>` to run a root Mise task. Use `pm run <project>:<task>` to run a task from a generated project:
-
-```bash
-pm run build
-pm run api:dev
+```sh
+pm ci flow on-commit --release none
+pm ci plan --flow on-commit --json
+pm projects ls --flow on-commit --json
 ```
 
-Arguments after the task selector are passed to Mise. Premise forwards standard input, output, and error to the child task, so interactive commands and terminal applications can use the controlling terminal.
+The flow runs project checks. The plan reports the required runners without running tasks. CI uses the same commands and can create separate project/platform jobs. See [CI](modules/ci.md).
 
-### Initialize and list templates
+## Add infrastructure
 
-Run these commands in any Premise project:
+A Pulumi program declares your resources. A stack holds one environment’s state. Use one program with separate `dev`, `stage`, `prod`, and feature-branch preview stacks.
 
-```bash
+For a GCS bucket, generate the template and bind an app’s built files:
+
+```sh
+pm g cloudvoyant/premise-pulumi:gcs-bucket --answer name=environment
+pm infra bind web environment --artifact dist
+```
+
+During tandem PR development, select the local `premise-pulumi` checkout instead. Remote templates use the default branch.
+
+Supply an existing state bucket and the GCP resource project:
+
+```sh
+export PULUMI_BACKEND_URL=gs://YOUR_STATE_BUCKET
+```
+
+```yaml
+# Add these entries under workspace in premise.yaml.
+infra:
+  providers: [gcp]
+  environments:
+    dev:
+      config:
+        gcp:project: YOUR_GCP_PROJECT
+    preview:
+      config:
+        gcp:project: YOUR_GCP_PROJECT
+```
+
+Install the template’s tools, then authenticate locally through OAuth:
+
+```sh
+pm install
+pm infra auth
+pm infra init --env dev
+pm infra test
+pm infra plan --env dev
+pm infra apply --env dev --yes
+pm infra output --env dev
+```
+
+`plan` previews changes. `apply` changes resources. The project argument is optional because these commands select the environment stack. A declared component target can filter an update within that stack.
+
+## Create a branch preview
+
+On a feature branch, run:
+
+```sh
+git switch -c feature/login
+pm infra init --env preview
+pm infra plan --env preview
+pm infra apply --env preview --yes
+```
+
+Premise uses the current branch to select a stable preview stack. Further pushes update the same stack. The same program handles each branch through parameters.
+
+Destroy this preview when you finish:
+
+```sh
+pm infra destroy --env preview
+```
+
+The generated workflow deploys previews after you set `PREMISE_DEPLOY_ENABLED=true` and configure provider credentials. It cleans up on a same-repository PR merge or branch deletion. Persistent environments require interactive confirmation for destruction.
+
+## Deploy with migrations
+
+Use `pm deploy` when a deployment needs database provisioning, migrations, or recovery tasks. The order is:
+
+```mermaid
+flowchart LR
+    db[Database prerequisites] --> migrate[Optional migrations]
+    migrate --> infra[Full infrastructure update]
+    infra --> extra[Optional extra deployment task]
+    extra --> health[Health tasks]
+```
+
+Declare task names, prerequisite resource targets, and recovery tasks under `workspace.deployment`. See the [complete configuration](modules/infrastructure.md#deploy-in-order).
+
+```sh
+pm deploy plan --env stage
+pm deploy run --env stage --release COMMIT_SHA --artifact web=IMMUTABLE_ARTIFACT_ID
+```
+
+Pulumi deploys applications that it owns. Add a project `deploy` hook only for work outside Pulumi. On failure, client recovery tasks use the previous successful release. The client must provide backward-compatible migrations. Premise does not run database down migrations.
+
+Persist recovery records across CI runs and serialize deployments per environment. The [infrastructure guide](modules/infrastructure.md) explains recovery inputs and first-deployment cleanup.
+
+## Pull application secrets
+
+Declare application keys and local fnox profiles in the project’s `secrets` configuration. Keep `.env.local` Git-ignored:
+
+```sh
+pm secrets pull --env dev --project web
+pm secrets exec --env dev --project web -- mise run migrate
+```
+
+`pull` writes a private local env file. `exec` supplies values to one child process. Fnox can read local secret files or a secret service through Mise.
+
+Copy selected local values into CI secrets:
+
+```sh
+pm secrets sync --env stage --project web --ci github --repository owner/repo
+```
+
+CI reads the declared variables directly. Deployment OAuth credentials and administration tokens remain separate from application values. See [Secret management](secret-management.md) and the individual [provider guides](providers/README.md).
+
+## Publish a release
+
+Check the next version or build files without publication:
+
+```sh
+pm version current
+pm version next
+pm release --dry-run
+pm release --build
+```
+
+Publish from a clean checkout after checks pass:
+
+```sh
+pm release
+```
+
+The generated main-branch workflow publishes stable releases. It creates or reuses the release tag, publishes downloadable files, then publishes eligible language packages.
+
+For an RC that another repository must test, include the exact marker in a feature-branch commit:
+
+```sh
+git commit -m 'feat: add deployment support [publish-rc]'
+git push
+```
+
+Wait for publication before selecting that RC in the dependent repository. Keep the action and CLI on the same version. Pull requests run checks without publishing. See [Release](modules/release.md) for staged publication and credential setup.
+
+## Create templates
+
+Create a registry and test its templates:
+
+```sh
+pm init --kind template-registry
 pm template init app
-pm template init lib
 pm template ls
-```
-
-Each init command creates `templates/<kind>/mise.toml`, creates `template_registry` when needed, and adds a matching declaration to `premise.yaml`. Omit the kind to select it interactively. `pm template ls` prints declared template names in stable alphabetical order.
-
-`template_registry.workspace_files` explicitly lists repository-root files that Premise copies or merges into a client workspace root. Entries can use basename globs, but cannot contain path separators or select directories. Every pattern must match at least one direct regular file. `premise.yaml` is always excluded. Direct files inside the physical `templates/` directory have no special meaning. The selected `templates/<name>` tree is copied separately to `apps/<name>` or `libs/<name>`. See the [Generation Architecture](generation.md) for the implementation boundary and merge flow.
-
-Premise resolves client-root conflicts before it creates the project destination. Interactive prompts (or a supplied resolver) choose among the supported three tiers; no technical conflict report is printed:
-
-| Tier                                      | Merge behavior                                                                             |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Tier 1: `mise.toml`                       | Parse typed registry and client Mise data and apply semantic rules.                        |
-| Tier 2: `.gitignore` and `.gitattributes` | Keep registry lines first and existing client lines second because line order has meaning. |
-| Tier 3: any other differing root file     | Keep the complete registry file, retain the complete client file, or abort.                |
-
-Equal files need no decision. A root file and a selected-project file with the same name do not conflict because their destinations differ. Premise does not parse editor configuration, Prettier files, package manifests, or arbitrary ignore files as smart merge formats.
-
-When root contract tasks collide, Premise keeps the existing client task metadata and appends registry commands before client commands. Root contract tasks are expected to be argument-free. When a non-contract root task collides, the registry task keeps its name and the client task is copied to `<registry-prefix>:<task>`. Premise prints a notice naming that namespace. Only the contract task command sequence is combined; other task fields remain one-sided.
-
-The initial Mise tasks echo their contract names. Replace each echo with the real implementation while keeping the task name stable.
-
-### Test templates
-
-```bash
 pm template test
 ```
 
-Premise enters each declared template directory, installs its Mise tools, and executes every required task. It continues after failures and returns one combined error containing every missing or failing contract.
+Register template questions and literal substitutions in `premise.yaml`. Templates remain valid projects before generation. Root files listed in `template_registry.workspace_files` are shared with the client. Premise asks about conflicting root files before it writes the generated project.
 
-### Run CI flows
+Infra templates create executable programs under `infra/`. Component templates create reusable Go components under `infra/components/`. Clients can also author components there directly. See [Generation](generation.md) and [Infrastructure](modules/infrastructure.md).
 
-```bash
-pm ci flow on-commit
-pm ci flow on-merge
-pm ci flow on-release --environment stage
-```
+## Limits
 
-A root `on-commit`, `on-merge`, or `on-release` Mise task overrides the fallback lifecycle. The `pm ci flow` command still owns publication after that lifecycle. Template registries run fallback lifecycle tasks inside each template. App-only deploy and end-to-end tasks do not run for libraries. `on-commit` invokes `publish:rc` only for a non-main branch push whose HEAD contains `[publish-rc]`; pull requests never run it. `on-merge` invokes the stable release phase after validation.
+Generation creates new projects. It does not update existing ones. Remote selectors use the default branch and need network access. Private-template authentication and offline operation remain separate work.
 
-### Generate from a local registry
-
-```bash
-pm generate ../my-registry:app
-pm generate ../my-registry:lib
-```
-
-Premise asks the selected template's questions, expands its registry's declared `workspace_files` against the registry repository root, plans those files against the current client workspace root, and creates `apps/<name>` or `libs/<name>` according to the template kind. It resolves each client-root conflict before publication. Premise records the project, source-qualified template selector, path, answers, and declared template version under `workspace.projects`.
-
-Before publication, Premise preflights each existing client-root tool selector that the registry's root `mise.toml` would change. It then builds a disposable complete workspace candidate containing the planned root files and selected project at its final relative path. It installs root Mise tools and runs complete root and selected-project contracts under `PREMISE_TEMPLATE_TEST=1`. Successful command output stays hidden, and validation stops at the first failure. Only a completely validated candidate is published; a failed decision, preflight, or final validation leaves root files, the project destination, and `premise.yaml` unchanged.
-
-### Choose from the default registry
-
-```bash
-pm generate
-```
-
-When the selector is omitted, Premise loads every official registry — `cloudvoyant/premise`, `cloudvoyant/premise-cargo`, and `cloudvoyant/premise-bun` — and lists their templates in one interactive picker. The combined entries are randomized for each prompt so no registry or language keeps the first position. The Bun entries are `premise-commander-cli`, `premise-hono-api`, `premise-opentui-cli`, `premise-sveltekit-app`, and `premise-tanstack-start-app`. Choosing an entry records its fully qualified `<owner>/<repo>:<template>` selector, so a Bun template resolves to `cloudvoyant/premise-bun:<template>` and never collides with a same-named template from another source.
-
-### Generate from one registry
-
-```bash
-pm generate cloudvoyant/premise-cargo
-pm generate cloudvoyant/premise-bun
-```
-
-Passing an `<owner>/<repo>` with no `:<template>` loads that one registry and opens a picker scoped to its templates, returning the selected entry's fully qualified selector. This is the same picker as `pm generate` with no argument, narrowed to a single source.
-
-### Generate a bare template name
-
-```bash
-pm generate :premise-rust-lib
-pm generate :premise-hono-api
-```
-
-The leading-colon shorthand names a template without a source. Premise resolves it against every official registry and generates the single match, so `:premise-rust-lib` resolves to Cargo and `:premise-hono-api` resolves to Bun. If the name matches no official registry, or matches more than one, Premise reports the ambiguity and asks you to qualify the source. A bare name is never searched across unofficial registries; reach those with a fully qualified `<owner>/<repo>:<template>` selector.
-
-### Generate from a remote repository
-
-```bash
-pm generate cloudvoyant/premise-template:app
-```
-
-The remote repository must contain `premise.yaml` and `templates/<template>` for the selected manifest entry. Premise clones it through go-git and caches it below `~/.premise/templates`; later runs refresh that cache. Selectors accept `owner/repository:<template>`, HTTPS Git URLs such as `https://github.com/cloudvoyant/premise-template.git:app`, and SSH Git URLs followed by `:<template>`.
-
-Remote selectors follow the repository's default branch and do not accept a branch, tag, or commit. During registry development, use an absolute local selector such as `/path/to/premise-bun:premise-hono-api` to test an unmerged branch.
-
-### Manifest
-
-```yaml
-workspace:
-  name: example
-  kind: monorepo
-  schema-version: "0.2"
-  package_managers:
-    - bun
-  providers:
-    ci: github
-    tools: mise
-    tasks: mise
-    infra: pulumi
-    versioning: svu
-  projects: []
-template_registry:
-  workspace_files:
-    - .gitignore
-    - package.json
-    - "*.config.js"
-  templates:
-    - name: premise-app
-      kind: app
-      path: templates/premise-app
-      version: 0.1.0
-      questions:
-        - prompt: "App name:"
-          type: string
-          populate: name
-      substitutions:
-        premise-app: name
-```
-
-Each `workspace_files` entry is an explicit repository-root filename or basename glob. Use `[]` when the registry shares no root files. Premise rejects missing matches, nested paths, directories, and `premise.yaml`. Every template also declares a normalized repository-relative `path`, independent of the workspace-file sources.
-
-Each key under `substitutions` is literal text that exists in the live template. Its value names the questionnaire answer that replaces it. In this example, generation replaces every `premise-app` occurrence in UTF-8 text files with the app name; binary files remain unchanged.
-
-Question type `string` accepts free text. Types `radio` and `select` require a non-empty `choices` list:
-
-```yaml
-questions:
-  - prompt: "Runtime:"
-    type: select
-    populate: runtime
-    choices:
-      - node
-      - go
-```
-
-After generation, Premise records provenance under `workspace.projects`:
-
-```yaml
-projects:
-  - name: orders
-    template: .:app
-    version: 0.1.0
-    path: apps/orders
-    answers:
-      name: orders
-```
-
-`version` records the selected template declaration's version at generation time when the registry provides one; registries with repository-level versioning can omit it. If project registration or manifest saving fails after the validated stage is renamed, Premise removes the newly created destination so output and provenance do not diverge. Generation is create-only; crash-consistent updates across the destination and manifest are out of scope.
-
-### Task contracts
-
-Applications and libraries must provide these tasks:
-
-```text
-install
-build
-clean
-test
-lint
-lint:fix
-format
-format:check
-env-pull
-publish:rc
-publish
-```
-
-Applications must also provide:
-
-```text
-run
-dev
-deploy
-e2e
-```
-
-Templates can define additional tasks.
-
-### Versioning
-
-Premise calculates release versions through the svu Go SDK, exposed by the `pm version` command:
-
-```bash
-pm version current                  # current stable version (e.g. v0.1.0)
-pm version next                     # next version from git history
-pm version bump patch|minor|major   # explicit patch/minor/major bump
-pm version rc --identifier <id>     # MAJOR.MINOR.PATCH-rc.<id>
-```
-
-Each command prints exactly one version to stdout. Release-candidate identifiers must be valid SemVer prerelease identifiers: letters, digits, and hyphens, with numeric identifiers forbidding leading zeroes.
-
-If no stable tag exists, version calculation uses a virtual `v0.0.0` baseline. A first conventional feature release therefore plans `v0.1.0`; no bootstrap tag or other external ref is required. Premise configures the SDK to read only stable SemVer tags (`vMAJOR.MINOR.PATCH`), so unrelated tags are ignored. No `.svu.yml` file or svu executable is required.
-
-### Publishing
-
-Stable releases happen on pushes to `main`. The workflow calls `pm ci flow on-merge`, which validates the trunk and then invokes the stable release phase. Premise reuses a stable tag already present at HEAD or computes, creates, and pushes the next `vMAJOR.MINOR.PATCH` tag. It generates temporary GoReleaser configuration and publishes the GitHub archives that `install.sh` downloads. If there is no release-worthy change, the command skips cleanly. Reruns reuse the tag and replace conflicting release assets. Repositories do not carry `.goreleaser.yml`.
-
-Run `pm release` for the full stable release. The release performs structural and full preflight before creating a tag. CI can separate tag preparation, GitHub artifact publication, and language-package publication through the Go release API to isolate credentials. `pm release --dry-run` prints `version` and `should_publish` key-value outputs without mutation, and `pm release --build` builds the complete artifact matrix without tagging or publishing. If credentials or a publication task fail, correct them and rerun; a rerun reuses the stable tag at `HEAD` and replaces conflicting assets. The composite action exposes the same values as action outputs for downstream artifact jobs.
-
-Package registry publication and application artifacts are separate decisions. Declare package managers explicitly under `workspace.package_managers`; native files do not select backends. Generation records that manager provenance in the workspace manifest, while publication targets are derived from eligible generated workspace projects and their native metadata, not from template declarations alone. The declaration order is the release order. Backends with the same ecosystem conflict, so Bun and pnpm cannot both manage npm packages in one workspace. A selected backend extracts shared package metadata, checks whether each template is eligible for its registry, prepares downloadable GoReleaser archives, and runs package publish tasks. Premise owns the common version, tag, release order, and credential boundaries. A template without an eligible registry package or artifact destination remains unpublished; being private does not by itself rule out publishing to a restricted registry. Deployable images and static-site uploads still need an explicit destination and are not inferred from `kind: app`.
-
-```yaml
-workspace:
-  package_managers:
-    - go
-    - cargo
-    - bun
-```
-
-- Cargo publishes matching direct packages to crates.io unless `[package] publish = false` or its publish allowlist excludes crates.io. A matching direct `kind: app` also gets native GoReleaser archives even if registry publication is disabled. Nested Tauri packages do not enter either direct path; their template task and workflow publish installers separately.
-- Bun publishes packages with `private: false` and a `publishConfig.registry` through their template `publish` or `publish:rc` tasks. `publishConfig.access` describes public or restricted visibility; `private: true` disables registry publication. The current Bun CLI templates publish to npm; their package names need not match their template names. Bun has no downloadable native archive target, so GitHub artifact publication is skipped without skipping npm publication. Static sites and deployable apps need separately configured destinations.
-
-Registry credentials are only available to selected package tasks, not GoReleaser. Bun checks `NODE_AUTH_TOKEN` once per publication run and shares one temporary npm credential file among packages using the same registry. Cargo checks `CRATES_TOKEN` once when crates.io publication is eligible. Cargo's allowlist for a different registry does not trigger crates.io publication; publishing to that registry needs a separate configured adapter.
-
-Release-candidate publication is opt-in for Go: a feature-branch push whose HEAD commit message contains the exact marker `[publish-rc]` runs `mise run publish:rc`, which succeeds and prints only `Skipping RC publish: Go supports prerelease installs through commit hashes.` Go needs no prerelease artifact because installs resolve through commit hashes, so no RC tag or release is ever created.
-
-### Current limitations
-
-- Template source paths are fixed by template name, and generated roots are fixed by app/lib kind.
-- Substitution changes UTF-8 file contents but not file or directory names.
-- Remote templates use the repository's default branch.
-- Private-repository authentication, concurrent cache locking, and offline mode are not available yet. Credential delegation for private registry sources is deferred to DIFF-150; go-git performs clones today.
-- Premise refuses to merge into or replace an existing destination.
-- Smart root merging is limited to `.gitignore`, `.gitattributes`, and `mise.toml`. Other root collisions use a complete-file choice.
-- Generation is create-only. It does not update existing projects or provide crash recovery across the destination and workspace manifest.
-
-## Pulumi environments and application secrets
-
-Use the environment stack commands for infrastructure and the ordered deployment executor for provisioning, migration, full updates and recovery. Application secrets use fnox through Mise. Deployment administration credentials use provider-supported OAuth or CI secrets.
-
-See [infrastructure deployment](modules/infrastructure.md) and [secret management](secret-management.md) for configuration, commands and recovery.
+Pulumi state uses an empty passphrase for now. Backend access controls and storage encryption protect it. Existing encrypted stacks still require their original key.

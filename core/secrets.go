@@ -27,9 +27,36 @@ type ProjectSecrets struct {
 
 // Public API -----------------------------------------------------------------
 
-// LoadProjectSecrets resolves only declared application keys through fnox and Mise.
-// It does not print provider output or accept undeclared environment profiles.
+// LoadProjectSecrets reads declared keys from CI variables or local fnox profiles.
+// It never prints secret values or provider diagnostics.
 func LoadProjectSecrets(ctx context.Context, root, project, environment, branch string) (map[string]string, error) {
+	if runningInCI() {
+		if _, err := InfraStack(InfraOptions{Environment: environment, Branch: branch}); err != nil {
+			return nil, err
+		}
+		manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
+		if err != nil {
+			return nil, err
+		}
+		for _, candidate := range manifest.Workspace.Projects {
+			if candidate.Name != project {
+				continue
+			}
+			if candidate.Secrets == nil {
+				return nil, fmt.Errorf("project %s does not declare application secrets", project)
+			}
+			values := map[string]string{}
+			for _, key := range candidate.Secrets.Keys {
+				value := os.Getenv(key)
+				if value == "" || !utf8.ValidString(value) {
+					return nil, fmt.Errorf("missing or invalid CI application variable %s for %s; sync or configure CI secrets", key, project)
+				}
+				values[key] = value
+			}
+			return values, nil
+		}
+		return nil, fmt.Errorf("%w: %s", ErrProjectNotFound, project)
+	}
 	return loadProjectSecrets(ctx, root, project, environment, branch, commandSecretReader{})
 }
 
@@ -49,7 +76,7 @@ func PullProjectSecrets(ctx context.Context, root, project, environment, branch 
 		if candidate.Secrets == nil || (project != "" && project != candidate.Name) {
 			continue
 		}
-		values, err := LoadProjectSecrets(ctx, root, candidate.Name, environment, branch)
+		values, err := loadProjectSecrets(ctx, root, candidate.Name, environment, branch, commandSecretReader{})
 		if err != nil {
 			return err
 		}
@@ -117,6 +144,51 @@ func ExecProjectSecrets(ctx context.Context, root, project, environment, branch 
 	}
 	if err := runErr; err != nil {
 		return fmt.Errorf("application secret command failed: %w", err)
+	}
+	return nil
+}
+
+// SyncProjectSecrets copies local fnox values into explicitly selected CI secrets.
+// Values travel on stdin and provider diagnostics remain private.
+func SyncProjectSecrets(ctx context.Context, root, project, environment, branch, ci, repository string) error {
+	if project == "" || repository == "" || strings.HasPrefix(repository, "-") || !strings.Contains(repository, "/") {
+		return errors.New("secrets sync requires --project and --repository owner/repository")
+	}
+	if ci != "github" && ci != "gitlab" {
+		return errors.New("secrets sync supports github or gitlab")
+	}
+	values, err := loadProjectSecrets(ctx, root, project, environment, branch, commandSecretReader{})
+	if err != nil {
+		return err
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		var command *exec.Cmd
+		if ci == "github" {
+			command = exec.CommandContext(ctx, "gh", "secret", "set", key, "--repo", repository, "--env", environment)
+		} else {
+			probe := exec.CommandContext(ctx, "glab", "variable", "get", key, "--repo", repository, "--scope", environment)
+			probe.Dir = root
+			var diagnostics bytes.Buffer
+			probe.Stderr = &diagnostics
+			operation := "update"
+			if err := probe.Run(); err != nil {
+				if !strings.Contains(diagnostics.String(), "404") {
+					return fmt.Errorf("inspect CI secret %s failed", key)
+				}
+				operation = "set"
+			}
+			command = exec.CommandContext(ctx, "glab", "variable", operation, key, "--repo", repository, "--scope", environment, "--masked", "--raw")
+		}
+		command.Dir = root
+		command.Stdin = strings.NewReader(values[key])
+		if err := command.Run(); err != nil {
+			return fmt.Errorf("sync CI secret %s failed; previous keys can already be updated", key)
+		}
 	}
 	return nil
 }

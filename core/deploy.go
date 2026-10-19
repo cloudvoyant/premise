@@ -30,7 +30,6 @@ type ReleaseRecord struct {
 	Program   string            `json:"program"`
 	Stack     string            `json:"stack"`
 	Backend   string            `json:"backend"`
-	Config    map[string]string `json:"config"`
 	Completed time.Time         `json:"completed"`
 	Outputs   map[string]string `json:"outputs,omitempty"`
 }
@@ -113,6 +112,9 @@ func ResolveDeploymentPlan(root string, options InfraOptions) (DeploymentPlan, e
 
 // RunDeployment serializes both applies, migrations and recovery under one lock.
 func RunDeployment(ctx context.Context, root string, options DeployOptions, stdin io.Reader, stdout, stderr io.Writer) error {
+	if err := EnsureInfrastructureEnvironment(root, runningInCI()); err != nil {
+		return err
+	}
 	if len(options.Artifacts) == 0 {
 		return fmt.Errorf("deployment requires pinned --artifact identities")
 	}
@@ -262,7 +264,7 @@ func RunDeployment(ctx context.Context, root string, options DeployOptions, stdi
 		return errors.Join(fmt.Errorf("deployment failed during %s: %w", result.Phase, original), recoveryErr, recordErr)
 	}
 	result.Succeeded = true
-	record := ReleaseRecord{Program: destination.Program.Name, Release: options.Release, Artifacts: options.Artifacts, Stack: destination.Stack, Backend: destination.BackendURL, Config: destination.Config, Completed: time.Now().UTC(), Outputs: releaseOutputs}
+	record := ReleaseRecord{Program: destination.Program.Name, Release: options.Release, Artifacts: options.Artifacts, Stack: destination.Stack, Backend: destination.BackendURL, Completed: time.Now().UTC(), Outputs: releaseOutputs}
 	if err := writeDeploymentJSON(filepath.Join(records, "last-success.json"), record); err != nil {
 		result.Succeeded = false
 		result.Phase = "record"

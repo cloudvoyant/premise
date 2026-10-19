@@ -14,10 +14,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const (
-	updateInstallerURL    = "https://raw.githubusercontent.com/cloudvoyant/premise/main/install.sh"
-	maximumInstallerBytes = 1 << 20
-)
+// Public API -----------------------------------------------------------------
 
 var updateCmd = &cobra.Command{
 	Use:   "update [version]",
@@ -36,6 +33,13 @@ var updateCmd = &cobra.Command{
 		return updatePremise(cmd.Context(), version, updateInstallerURL, http.DefaultClient, os.Executable, cmd.OutOrStdout(), cmd.ErrOrStderr())
 	},
 }
+
+// Private helpers ------------------------------------------------------------
+
+const (
+	updateInstallerURL    = "https://raw.githubusercontent.com/cloudvoyant/premise/main/install.sh"
+	maximumInstallerBytes = 1 << 20
+)
 
 func normalizeUpdateVersion(value string) (string, error) {
 	value = strings.TrimSpace(value)

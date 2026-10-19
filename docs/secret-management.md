@@ -4,14 +4,14 @@ An application secret is a value that the application needs. A deployment creden
 
 ## Ownership
 
-| Value                                      | Source                                                                   | Consumer                                               |
-| ------------------------------------------ | ------------------------------------------------------------------------ | ------------------------------------------------------ |
-| Stored application secrets                 | GCP Secret Manager through fnox                                          | Local application, migration task, CI application task |
-| Database connection for a preview          | Secret output from its Pulumi stack                                      | Migration task and server-side application             |
-| Neon and Vercel administration credentials | Provider-supported OAuth or CI secrets                                   | Declared deployment and recovery tasks                 |
-| GCP authentication                         | Local Application Default Credentials or CI workload identity            | fnox, Pulumi and durable record storage                |
-| Pulumi state protection                    | Backend access controls and storage encryption; empty passphrase for now | Pulumi configuration and state                         |
-| Project IDs and environment labels         | Committed non-secret configuration                                       | Environment resolver                                   |
+| Value                                      | Source                                                                   | Consumer                                   |
+| ------------------------------------------ | ------------------------------------------------------------------------ | ------------------------------------------ |
+| Stored application secrets                 | GCP Secret Manager through fnox                                          | Local application and local migration task |
+| Database connection for a preview          | Secret output from its Pulumi stack                                      | Migration task and server-side application |
+| Neon and Vercel administration credentials | Provider-supported OAuth or CI secrets                                   | Declared deployment and recovery tasks     |
+| GCP authentication                         | Local Application Default Credentials or CI workload identity            | fnox, Pulumi and durable record storage    |
+| Pulumi state protection                    | Backend access controls and storage encryption; empty passphrase for now | Pulumi configuration and state             |
+| Project IDs and environment labels         | Committed non-secret configuration                                       | Environment resolver                       |
 
 Vercel receives application values during deployment. It does not own the source values for `pm secrets pull`. Do not put deployment credentials in an application fnox profile. Do not put database credentials in a browser bundle.
 
@@ -91,25 +91,37 @@ Premise does not execute env-file text as shell code. It quotes values and rejec
 
 ## Infra program secrets
 
-The infrastructure program declares its own `secrets` profile using the same configuration as an app. Its keys arrive as ordinary process environment variables. The Go program reads those variables and assigns them to the intended component, wrapping provider secret inputs with `pulumi.ToSecret`. For several apps, declare distinct names such as `WEB_SECRET` and `ADMIN_SECRET`. Bindings carry source paths only.
+The infrastructure program declares its own `secrets` keys using the same configuration as an app. Local use resolves its fnox profile. CI supplies its declared variables directly. Its keys arrive as ordinary process environment variables. The Go program reads those variables and assigns them to the intended component, wrapping provider secret inputs with `pulumi.ToSecret`. For several apps, declare distinct names such as `WEB_SECRET` and `ADMIN_SECRET`. Bindings carry source paths only.
 
 Premise uses fnox's versioned environment API because it starts Pulumi and task subprocesses itself. The scalar adapter keeps the explicit environment selection, ignored atomic `0600` files, administration-token filtering, and output masking. It rejects file secrets and credential leases; use native `fnox exec` for those contracts. It also refuses inherited values that fnox requires removing. See [fnox environment API](https://fnox.jdx.dev/reference/env-json.html).
 
 ## CI use
 
-Configure provider credentials before deployment. See [Provider setup](providers/README.md) for the standard credential contract, Mise tools, and optional `ci:auth` task. Premise defaults to an empty Pulumi passphrase for now; no extra CI secret is required. Explicit credentials and [managed encryption providers](providers/pulumi.md) remain supported.
+Keep fnox secret providers local. Copy the selected application values into CI secrets from your workstation:
 
-For GCP-backed application secrets, configure workload identity before the application secret task runs. Workload identity exchanges the CI identity for short-lived GCP credentials. It avoids a service-account key in CI secrets.
+```sh
+pm secrets sync --env stage --project web --ci github --repository owner/repo
+pm secrets sync --env stage --project web --ci gitlab --repository group/repo
+```
 
-Run the same `pm secrets exec` command in CI. Configure fnox references in the repository rather than copying each application value into CI secrets. Give the CI identity access only to the required application secrets.
+Authenticate `gh` or `glab` locally before the sync. Declare these tools through Mise. The destination environment must exist. GitHub receives environment secrets. GitLab receives masked, raw variables scoped to that environment. GitLab masking rules can reject short or multiline values. The command reports the failed key without printing its value. Earlier keys can already be updated when a later key fails.
 
-Keep administration API tokens in CI secrets when the provider does not support the required OAuth flow. Pass them only to the deployment operation. Migration and health tasks receive application values. Declared deployment and recovery tasks can receive administration credentials from CI.
+The command reads the local fnox profile. That profile can use GCP Secret Manager, a local env file, or another fnox provider. Secret values travel to the CI CLI on standard input. They do not appear in command arguments or logs. Repeat the sync after rotation.
 
-An interactive provider CLI login does not necessarily authenticate the Pulumi provider. Make sure that the provider supports the selected identity. If local deployment requires an administration API token, run the deployment through CI instead.
+Map each declared key into its job environment:
+
+```yaml
+env:
+  APP_SECRET: ${{ secrets.APP_SECRET }}
+```
+
+In CI, `pm secrets exec`, migration tasks, and Pulumi program secrets read their declared keys directly from the environment. They do not invoke fnox or contact its secret provider. A missing key stops the operation. CI must set `CI=true`, `GITHUB_ACTIONS=true`, or `GITLAB_CI=true`.
+
+Configure deployment credentials separately through [provider setup](providers/README.md). OAuth or protected CI administration tokens authenticate the infrastructure operation. `pm infra auth --ci` runs native authentication before the optional root `ci:auth` fallback. Provider guides define the variable names. The empty Pulumi passphrase requires no additional CI secret.
 
 ## Rotation and previews
 
-A pull retrieves values again through fnox without daemon caching. Rotate values in Secret Manager, then repeat the pull or process execution. Environment files are local snapshots. Remove an obsolete snapshot rather than using it as the source for a new secret.
+A pull retrieves values again through fnox without daemon caching. Rotate local source values, then repeat the pull or process execution. Sync them again before the next CI deployment. Environment files are local snapshots. Remove an obsolete snapshot rather than using it as the source for a new secret.
 
 Preview database connections come from the selected branch stack. Templates can publish these outputs to branch-specific Secret Manager entries when a persistent local pull needs them. The template owns this publication contract. Cleanup removes only entries that the preview owns.
 

@@ -1,58 +1,57 @@
 # Provider setup
 
-Premise runs Pulumi and project Mise tasks with the credentials provided by the
-caller. It does not log into cloud accounts or translate provider credentials.
-The same contract applies locally, in GitHub Actions, and in other CI systems.
+Declare the cloud services that your infrastructure uses. Pulumi still owns resources and provider configuration.
 
-## Tools and credentials
+```yaml
+workspace:
+  infra:
+    providers: [gcp, neon, vercel]
+```
 
-Declare Pulumi and any required provider CLIs in workspace or project
-`mise.toml` files. Mise installs these tools before deployment. The generated
-workflow does not install gcloud through a separate action or assume GCP,
-Neon, or Vercel credentials.
+## Usage
 
-Provide the provider's standard environment variables or credential files before
-running `pm infra` or `pm deploy`. Prefer short-lived OAuth or workload identity.
-If a provider requires an administration token, map a protected CI secret to its
-standard environment variable. Application fnox profiles must not contain those
-tokens. See [Secret management](../secret-management.md).
+Install tools through Mise, then authenticate:
 
-A workspace can declare a `ci:auth` Mise task to prepare credential files from the
-CI runner's identity. Generated deploy and cleanup jobs run this task after Mise
-setup, if it exists. It must fail when authentication fails. An absent task means
-the runner already supplies credentials. A child task cannot export variables to
-its parent: configure paths in the job environment or Mise environment settings
-so later processes can find its files. Use the same configuration for deploy and
-cleanup, and never cache or upload credential files.
+```sh
+mise install
+pm infra auth
+pm infra init --env dev
+```
 
-The CI adapter only obtains the runner's identity and exposes standard provider
-credentials. For example, a GitHub OIDC action can exchange that identity for a
-credential file; another runner can supply its own token file. Provider tools and
-Pulumi programs remain in Mise and do not depend on that action.
+In CI, use the runner identity or protected CI secrets:
 
-## Separate access requirements
+```sh
+pm infra auth --ci --env-file "$GITHUB_ENV"  # GitHub environment file
+pm deploy run --env stage --release COMMIT_SHA --artifact web=ARTIFACT_ID
+```
 
-State storage, infrastructure resources, application secrets, and state encryption
-can use different services or accounts. Grant each identity access to the resources
-it needs. A state bucket grant does not grant permission to create infrastructure.
-With the current empty-passphrase default, readers can recover secret values from
-state. If managed encryption is selected, grant key access separately.
+`--env-file` appends credential file paths for later jobs steps. It never writes token values. Other runners can pass the returned paths through their own environment mechanism. Existing standard credential files also work.
 
-The current Premise action syncs deployment recovery records using `gcloud storage`.
-When using that action's `deploy` operation, declare gcloud in Mise and supply GCP
-credentials plus a GCS `records-url` (or a GCS state backend). This does not restrict
-the providers in the Pulumi program. For another record store, call the CLI and
-restore/persist its record directory through your own CI tasks.
+Premise supports native GCP authentication and checks Neon and Vercel token variables. For unsupported providers, declare `ci:auth` in the root `mise.toml`. Premise runs native authentication first, then this optional fallback. Project or global Mise tasks cannot supply the fallback. A failed native operation or fallback stops the job.
+
+```toml
+[tasks."ci:auth"]
+run = "./scripts/custom-provider-auth.sh"
+```
+
+The fallback can create credential files at paths already defined in CI. A child task cannot export variables to its parent.
+
+## Credentials and application values
+
+Keep fnox providers local. Run `pm secrets sync` locally to copy selected application values into CI secrets. CI reads those values from its environment and does not contact fnox or Secret Manager. See [Secret management](../secret-management.md).
+
+Deployment credentials come from OAuth or protected CI secrets. They do not belong in application fnox profiles. State storage and deployed resources can require separate permissions. Backend access controls protect state while the empty Pulumi passphrase remains the default.
+
+The current Premise action copies recovery records with `gcloud storage`. Its deploy operation requires gcloud, GCP credentials, and a GCS `records-url`. This requirement does not restrict the resources in the Pulumi program. Other CI runners can persist the CLI record directory themselves.
 
 ## Providers
 
-- [Google Cloud](gcp.md): ADC, workload identity, state, and Secret Manager access.
-- [AWS and Azure](aws-azure.md): their SDK credential chains and backend differences.
-- [Neon and Vercel](neon-vercel.md): administration tokens in protected CI.
-- [Pulumi state encryption](pulumi.md): passphrases and managed encryption keys.
+| Provider     | Native authentication                             | Guide               |
+| ------------ | ------------------------------------------------- | ------------------- |
+| Google Cloud | Local OAuth, CI workload identity or existing ADC | [GCP](gcp.md)       |
+| Neon         | Standard CI token check                           | [Neon](neon.md)     |
+| Vercel       | Standard CI token check                           | [Vercel](vercel.md) |
+| AWS          | Runner credentials or root fallback               | [AWS](aws.md)       |
+| Azure        | Runner credentials or root fallback               | [Azure](azure.md)   |
 
-Preview cleanup runs when a same-repository PR merges into `main` and when a
-feature branch is deleted. Allow the trusted default branch to use the CI preview
-environment for cleanup. Push, merge, and deletion use the same branch concurrency
-group. A missing preview stack is already clean; authorization
-and backend errors still fail the job.
+See [Pulumi state protection](pulumi.md) for the current empty-passphrase decision and encryption follow-up.

@@ -7,7 +7,10 @@ import (
 	"github.com/cloudvoyant/premise/core/backends"
 )
 
+// Private helpers ------------------------------------------------------------
+
 var registerPackageManagersOnce sync.Once
+
 var registerPackageManagersErr error
 
 // registerPackageManagerBackends installs the CLI's built-in implementations.

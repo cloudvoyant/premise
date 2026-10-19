@@ -102,9 +102,10 @@ type Question struct {
 
 // Infrastructure declares named state backends and non-secret environment settings.
 type Infrastructure struct {
-	Backend      string                      `yaml:"backend"`
-	Backends     map[string]InfraBackend     `yaml:"backends"`
-	Environments map[string]InfraEnvironment `yaml:"environments"`
+	Providers    []string                    `yaml:"providers,omitempty"`
+	Backend      string                      `yaml:"backend,omitempty"`
+	Backends     map[string]InfraBackend     `yaml:"backends,omitempty"`
+	Environments map[string]InfraEnvironment `yaml:"environments,omitempty"`
 	Bindings     map[string]InfraBinding     `yaml:"bindings,omitempty"`
 }
 
@@ -151,14 +152,14 @@ type Deployment struct {
 	RecordOutputs []string                `yaml:"record_outputs,omitempty"`
 }
 
-// DeploymentApplication declares exactly one deployment owner.
+// DeploymentApplication names optional extra deploy work and required recovery tasks.
+// Pulumi deploys the app unless Deploy names an additional project task.
 type DeploymentApplication struct {
-	Project   string            `yaml:"project"`
-	ManagedBy string            `yaml:"managed_by,omitempty"`
-	Deploy    string            `yaml:"deploy,omitempty"`
-	Health    string            `yaml:"health"`
-	Rollback  string            `yaml:"rollback"`
-	Outputs   map[string]string `yaml:"outputs,omitempty"`
+	Project  string            `yaml:"project"`
+	Deploy   string            `yaml:"deploy,omitempty"`
+	Health   string            `yaml:"health"`
+	Rollback string            `yaml:"rollback"`
+	Outputs  map[string]string `yaml:"outputs,omitempty"`
 }
 
 // DeploymentRecovery declares compensation without guessing database down migrations.
@@ -886,6 +887,17 @@ func validateInfrastructure(manifest Config) error {
 	}
 	if manifest.Workspace.Infra != nil {
 		infra := manifest.Workspace.Infra
+		providerNames := map[string]bool{}
+		for _, name := range infra.Providers {
+			if err := ValidateProjectName(name); err != nil {
+				return fmt.Errorf("invalid infrastructure provider: %w", err)
+			}
+			if providerNames[name] {
+				return fmt.Errorf("duplicate infrastructure provider %s", name)
+			}
+			providerNames[name] = true
+		}
+
 		if _, ok := infra.Backends[infra.Backend]; infra.Backend != "" && !ok {
 			return fmt.Errorf("infrastructure default backend %q is not declared", infra.Backend)
 		}
@@ -967,15 +979,6 @@ func validateInfrastructure(manifest Config) error {
 			return fmt.Errorf("duplicate deployment app %s", a.Project)
 		}
 		seen["app:"+a.Project] = true
-		if a.ManagedBy != "" && a.ManagedBy != "infra" && a.ManagedBy != "task" {
-			return fmt.Errorf("app %s managed_by must be infra or task", a.Project)
-		}
-		if a.ManagedBy == "infra" && a.Deploy != "" {
-			return fmt.Errorf("infra-managed app %s cannot declare deploy task", a.Project)
-		}
-		if a.ManagedBy == "task" && a.Deploy == "" {
-			return fmt.Errorf("task-managed app %s requires deploy task", a.Project)
-		}
 		if a.Health == "" || a.Rollback == "" {
 			return fmt.Errorf("app %s requires health and rollback tasks", a.Project)
 		}

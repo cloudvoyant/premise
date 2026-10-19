@@ -10,25 +10,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	ciEnvironment      string
-	ciReleaseMode      string
-	ciProject          string
-	ciChannel          string
-	ciVersion          string
-	ciOutputDir        string
-	ciPlatform         string
-	ciRootOnly         bool
-	ciSkipRoot         bool
-	ciPlanFlow         string
-	ciPlanJSON         bool
-	ciGitHubOutput     bool
-	projectType        string
-	projectFlow        string
-	projectMode        string
-	projectEligibility string
-	projectJSON        bool
-)
+// Public API -----------------------------------------------------------------
 
 var ciCmd = &cobra.Command{
 	Use:   "ci",
@@ -72,6 +54,7 @@ var ciPlanCmd = &cobra.Command{
 }
 
 var projectsCmd = &cobra.Command{Use: "projects", Args: cobra.NoArgs}
+
 var projectsListCmd = &cobra.Command{
 	Use: "ls", Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
@@ -175,6 +158,28 @@ func init() {
 	projectsListCmd.Flags().BoolVar(&projectJSON, "json", false, "emit JSON")
 	projectsCmd.AddCommand(projectsListCmd)
 }
+
+// Private helpers ------------------------------------------------------------
+
+var (
+	ciEnvironment      string
+	ciReleaseMode      string
+	ciProject          string
+	ciChannel          string
+	ciVersion          string
+	ciOutputDir        string
+	ciPlatform         string
+	ciRootOnly         bool
+	ciSkipRoot         bool
+	ciPlanFlow         string
+	ciPlanJSON         bool
+	ciGitHubOutput     bool
+	projectType        string
+	projectFlow        string
+	projectMode        string
+	projectEligibility string
+	projectJSON        bool
+)
 
 // writeCIGitHubOutput writes values directly to a GitHub Actions step output file.
 func writeCIGitHubOutput(output io.Writer, plan core.CISchedule) error {

@@ -6,6 +6,53 @@ The release module plans repository releases, creates and reuses stable tags, co
 
 ## Design
 
+### Release flows
+
+The workflow separates validation, downloadable files, and package publication:
+
+```mermaid
+flowchart TD
+    feature[Feature push] --> marker{HEAD has publish-rc marker?}
+    marker -->|Yes| rc[Plan release candidate]
+    marker -->|No| checks[Run checks only]
+    main[Push to main] --> stable[Plan stable release]
+    rc --> validate[Run all project/platform checks]
+    stable --> validate
+    validate --> collect[Collect required native files]
+    collect --> github[Create or reuse tag and GitHub release]
+    github --> packages[Publish eligible language packages]
+```
+
+Pull requests run checks without publication. A release candidate is a prerelease. It does not replace the latest stable release. The generated workflows keep publication credentials in their dedicated jobs.
+
+### Usage
+
+```bash
+pm release             # prepare and publish the stable release
+pm release --dry-run   # report the plan without changing the repository
+pm release --build     # build release artifacts without publishing
+```
+
+```sh
+pm release publish --channel rc --expected-version v1.2.3-rc.1 --files-dir /tmp/native-files
+pm release packages --channel rc --expected-version v1.2.3-rc.1
+```
+
+```mermaid
+sequenceDiagram
+    participant CI
+    participant CLI as Premise CLI
+    participant GH as GitHub release
+    participant Registry as Package registry
+    CI->>CLI: release publish (expected version, staged files)
+    CLI->>CLI: Validate the complete file set
+    CLI->>GH: Create or reuse tag and publish files
+    CI->>CLI: release packages (same version)
+    CLI->>Registry: Publish eligible packages
+```
+
+For tandem PR validation, push a commit containing `[publish-rc]`. Wait for publication, then test the exact published RC in the dependent repository.
+
 ### API
 
 | API                                                  | Use                                                                    |
@@ -18,14 +65,6 @@ The release module plans repository releases, creates and reuses stable tags, co
 | `BuildReleaseArtifacts(ctx, root, stdout, stderr)`   | Build the complete artifact matrix without tags or publication.        |
 | `GoReleaserConfig(root)`                             | Return the merged GoReleaser configuration as bytes.                   |
 | `ReleasePlan`                                        | Return the selected version plus skip/reuse decisions.                 |
-
-### Usage
-
-```bash
-pm release             # prepare and publish the stable release
-pm release --dry-run   # report the plan without changing the repository
-pm release --build     # build release artifacts without publishing
-```
 
 ## Implementation Details
 

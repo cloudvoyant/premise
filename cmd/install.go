@@ -10,6 +10,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Public API -----------------------------------------------------------------
+
 var installCmd = &cobra.Command{
 	Use:     "install",
 	Aliases: []string{"i"},

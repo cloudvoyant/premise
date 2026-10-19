@@ -9,6 +9,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Public API -----------------------------------------------------------------
+
 var runCmd = &cobra.Command{
 	Use:   "run <task|project:task> [args...]",
 	Short: "Run a workspace or generated-project task",

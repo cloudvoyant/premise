@@ -1,8 +1,12 @@
 package cmd
 
 import (
+	"fmt"
 	core "github.com/cloudvoyant/premise/core"
 	"github.com/spf13/cobra"
+	"os"
+	"sort"
+	"strings"
 )
 
 // Public API -----------------------------------------------------------------
@@ -65,9 +69,50 @@ var infraTestCmd = &cobra.Command{
 	},
 }
 
-// Private helpers ------------------------------------------------------------
+var infraAuthCmd = &cobra.Command{
+	Use: "auth", Short: "Authenticate declared infrastructure providers", Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		root, err := premiseRoot()
+		if err != nil {
+			return err
+		}
+		ci, _ := cmd.Flags().GetBool("ci")
+		values, err := core.AuthenticateInfrastructure(cmd.Context(), root, ci, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
+		if err != nil {
+			return err
+		}
+		path, _ := cmd.Flags().GetString("env-file")
+		if path == "" {
+			return nil
+		}
+		for key, value := range values {
+			if strings.ContainsAny(key+value, "\r\n") {
+				return fmt.Errorf("invalid credential path")
+			}
+		}
+		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0600)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		keys := make([]string, 0, len(values))
+		for key := range values {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			if _, err := fmt.Fprintf(file, "%s=%s\n", key, values[key]); err != nil {
+				return err
+			}
+		}
+		return nil
+	},
+}
 
 func init() {
+	infraAuthCmd.Flags().Bool("ci", false, "Use CI identity instead of interactive OAuth")
+	infraAuthCmd.Flags().String("env-file", "", "Append credential paths to the CI environment file")
+	infraCmd.AddCommand(infraAuthCmd)
 	addInfraFlags(infraInitCmd)
 	infraInitCmd.Flags().Bool("all", false, "Select the complete environment program")
 	addInfraFlags(infraPlanCmd)
@@ -84,6 +129,8 @@ func init() {
 	infraCmd.AddCommand(infraInitCmd, infraPlanCmd, infraApplyCmd, infraOutputCmd, infraDestroyCmd, infraBindCmd, infraTestCmd)
 	rootCmd.AddCommand(infraCmd)
 }
+
+// Private helpers ------------------------------------------------------------
 
 func runInfraCommand(cmd *cobra.Command, args []string, operation string) error {
 	root, err := premiseRoot()

@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var workspaceScaffold core.WorkspaceScaffold
+// Public API -----------------------------------------------------------------
 
 var rootCmd = &cobra.Command{
 	Use:   "pm",
@@ -29,3 +29,7 @@ func Execute(miseTemplate string, assets ...core.WorkflowAsset) {
 func init() {
 	rootCmd.AddCommand(ciCmd, projectsCmd, initCmd, installCmd, updateCmd, generateCmd, runCmd, templateCmd)
 }
+
+// Private helpers ------------------------------------------------------------
+
+var workspaceScaffold core.WorkspaceScaffold

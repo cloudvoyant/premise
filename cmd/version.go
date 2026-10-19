@@ -8,6 +8,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Public API -----------------------------------------------------------------
+
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Calculate repository-derived release versions",
@@ -47,8 +49,6 @@ var versionBumpCmd = &cobra.Command{
 	},
 }
 
-var rcIdentifier string
-
 var versionRcCmd = &cobra.Command{
 	Use:   "rc",
 	Short: "Print the next release-candidate version",
@@ -66,6 +66,10 @@ func init() {
 	versionCmd.AddCommand(versionCurrentCmd, versionNextCmd, versionBumpCmd, versionRcCmd)
 	rootCmd.AddCommand(versionCmd)
 }
+
+// Private helpers ------------------------------------------------------------
+
+var rcIdentifier string
 
 func runVersionCalculation(cmd *cobra.Command, calculate func(string) (string, error)) error {
 	cwd, err := os.Getwd()

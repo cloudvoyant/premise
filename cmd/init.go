@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var initProjectKind string
+// Public API -----------------------------------------------------------------
 
 var initCmd = &cobra.Command{
 	Use:   "init",
@@ -40,3 +40,7 @@ var initCmd = &cobra.Command{
 func init() {
 	initCmd.Flags().StringVar(&initProjectKind, "kind", "monorepo", "project kind: monorepo or template-registry")
 }
+
+// Private helpers ------------------------------------------------------------
+
+var initProjectKind string

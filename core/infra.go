@@ -116,6 +116,9 @@ func ResolveInfrastructure(root string, options InfraOptions) (InfraResolution, 
 
 // RunInfra executes a provider-neutral operation with explicit backend and stack.
 func RunInfra(ctx context.Context, root, operation string, options InfraOptions, stdin io.Reader, stdout, stderr io.Writer) error {
+	if err := EnsureInfrastructureEnvironment(root, runningInCI()); err != nil {
+		return err
+	}
 	resolution, err := ResolveInfrastructure(root, options)
 	if err != nil {
 		return err
