@@ -270,6 +270,9 @@ func (r infraCommandRunner) run(ctx context.Context, dir string, env map[string]
 		}
 		command.Env = append(command.Env, prefix+value)
 	}
+	if name == "pulumi" {
+		command.Env = withDefaultPulumiPassphrase(command.Env)
+	}
 	var output, diagnostics *secretRedactor
 	if !r.private {
 		values := map[string]string{}
@@ -308,6 +311,18 @@ func (r infraCommandRunner) run(ctx context.Context, dir string, env map[string]
 	}
 	return flushErr
 }
+
+// State currently relies on backend protection; explicit encryption credentials win.
+func withDefaultPulumiPassphrase(environment []string) []string {
+	for _, entry := range environment {
+		if strings.HasPrefix(entry, "PULUMI_CONFIG_PASSPHRASE=") ||
+			(strings.HasPrefix(entry, "PULUMI_CONFIG_PASSPHRASE_FILE=") && entry != "PULUMI_CONFIG_PASSPHRASE_FILE=") {
+			return environment
+		}
+	}
+	return append(environment, "PULUMI_CONFIG_PASSPHRASE=")
+}
+
 func executeInfra(ctx context.Context, r infraRunner, d InfraResolution, operation string, yes bool, env map[string]string) error {
 	scopedEnv := map[string]string{}
 	for key, value := range env {

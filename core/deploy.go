@@ -358,6 +358,7 @@ func runDeploymentTask(ctx context.Context, root string, manifest Config, ref Ta
 			command.Env = slices.DeleteFunc(command.Env, func(entry string) bool { return strings.HasPrefix(entry, prefix) })
 			command.Env = append(command.Env, prefix+v)
 		}
+		command.Env = withDefaultPulumiPassphrase(command.Env)
 	}
 	command.Stdin = runner.stdin
 	command.Stdout = output

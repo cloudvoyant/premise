@@ -13,6 +13,11 @@ import (
 // Public API -----------------------------------------------------------------
 
 func TestDeploymentRollbackPreservesLastSuccessfulRelease(t *testing.T) {
+	t.Setenv("PULUMI_CONFIG_PASSPHRASE", "")
+	if err := os.Unsetenv("PULUMI_CONFIG_PASSPHRASE"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PULUMI_CONFIG_PASSPHRASE_FILE", "")
 	root := t.TempDir()
 	for _, directory := range []string{"infra/environment", "apps/web", "bin"} {
 		if err := os.MkdirAll(filepath.Join(root, directory), 0700); err != nil {
@@ -35,6 +40,9 @@ done
 `
 	mise := `#!/bin/sh
 printf 'task %s release=%s previous=%s\n' "$2" "$PM_RELEASE" "$PM_PREVIOUS_RELEASE" >> "$TEST_DEPLOY_LOG"
+if [ "$2" = "rollback" ]; then
+ [ "${PULUMI_CONFIG_PASSPHRASE+x}" = "x" ] && [ -z "$PULUMI_CONFIG_PASSPHRASE" ] || exit 1
+fi
 if [ "$2" = "health" ] && [ "$PM_RELEASE" = "B" ]; then exit 1; fi
 `
 	for name, script := range map[string]string{"pulumi": pulumi, "mise": mise} {

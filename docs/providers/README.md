@@ -34,8 +34,9 @@ Pulumi programs remain in Mise and do not depend on that action.
 
 State storage, infrastructure resources, application secrets, and state encryption
 can use different services or accounts. Grant each identity access to the resources
-it needs. A state bucket grant does not grant permission to create infrastructure
-or decrypt Pulumi secrets.
+it needs. A state bucket grant does not grant permission to create infrastructure.
+With the current empty-passphrase default, readers can recover secret values from
+state. If managed encryption is selected, grant key access separately.
 
 The current Premise action syncs deployment recovery records using `gcloud storage`.
 When using that action's `deploy` operation, declare gcloud in Mise and supply GCP

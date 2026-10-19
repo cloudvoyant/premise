@@ -126,6 +126,46 @@ func TestInfrastructureSelectsEncryptionOnlyAtStackCreation(t *testing.T) {
 	}
 }
 
+func TestInfraRunnerDefaultsToEmptyPassphraseAndPreservesCallerSettings(t *testing.T) {
+	for _, tc := range []struct {
+		name, command, passphrase, file, want string
+		passphraseSet                         bool
+		env                                   map[string]string
+	}{
+		{name: "default", command: "pulumi", want: "x||"},
+		{name: "explicit empty", command: "pulumi", passphraseSet: true, want: "x||"},
+		{name: "explicit value", command: "pulumi", passphraseSet: true, passphrase: "caller-value", want: "x|caller-value|"},
+		{name: "passphrase file", command: "pulumi", file: "/caller/key-file", want: "||/caller/key-file"},
+		{name: "scoped value", command: "pulumi", env: map[string]string{"PULUMI_CONFIG_PASSPHRASE": "scoped-value"}, want: "x|scoped-value|"},
+		{name: "scoped file", command: "pulumi", env: map[string]string{"PULUMI_CONFIG_PASSPHRASE_FILE": "/scoped/key-file"}, want: "||/scoped/key-file"},
+		{name: "other command", command: "other-tool", want: "||"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("PULUMI_CONFIG_PASSPHRASE", tc.passphrase)
+			if !tc.passphraseSet {
+				if err := os.Unsetenv("PULUMI_CONFIG_PASSPHRASE"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("PULUMI_CONFIG_PASSPHRASE_FILE", tc.file)
+			bin := t.TempDir()
+			script := "#!/bin/sh\nprintf '%s|%s|%s' \"${PULUMI_CONFIG_PASSPHRASE+x}\" \"$PULUMI_CONFIG_PASSPHRASE\" \"$PULUMI_CONFIG_PASSPHRASE_FILE\"\n"
+			if err := os.WriteFile(filepath.Join(bin, tc.command), []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			var output bytes.Buffer
+			runner := infraCommandRunner{stdout: &output, private: true}
+			if err := runner.run(t.Context(), bin, tc.env, tc.command); err != nil {
+				t.Fatal(err)
+			}
+			if got := output.String(); got != tc.want {
+				t.Fatalf("passphrase environment = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestPreviewCleanupHandlesMissingStacksWithoutHidingBackendFailures(t *testing.T) {
 	for _, tc := range []struct {
 		name, listing, status string
@@ -259,7 +299,11 @@ func TestPulumiLocalLifecycle(t *testing.T) {
 	}
 	t.Setenv("PATH", filepath.Dir(binary)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("PULUMI_HOME", t.TempDir())
-	t.Setenv("PULUMI_CONFIG_PASSPHRASE", "test-only-passphrase")
+	t.Setenv("PULUMI_CONFIG_PASSPHRASE", "")
+	if err := os.Unsetenv("PULUMI_CONFIG_PASSPHRASE"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PULUMI_CONFIG_PASSPHRASE_FILE", "")
 	t.Setenv("PULUMI_SKIP_UPDATE_CHECK", "true")
 	root := t.TempDir()
 	program := filepath.Join(root, "infra/environment")

@@ -1,14 +1,18 @@
 # Pulumi state encryption
 
-Pulumi can save secret configuration and outputs in state. Those values need
-an encryption provider in addition to credentials for the state storage backend.
-GCS encryption at rest does not replace Pulumi's encryption of secret values.
+Premise currently uses an empty passphrase when the caller supplies neither
+`PULUMI_CONFIG_PASSPHRASE` nor `PULUMI_CONFIG_PASSPHRASE_FILE`. This requires no
+additional CI secret or local setup. The GCS smoke test uses the same empty
+passphrase explicitly.
 
-A DIY backend defaults to passphrase encryption. `PULUMI_CONFIG_PASSPHRASE`
-unlocks that encryption in non-interactive runs. It is a state encryption
-credential, not a GCP login or an application secret. Retain it in protected CI
-secrets and operator recovery storage when choosing that provider. The disposable
-GCS smoke test uses a passphrase; client workflows do not mandate one.
+Pulumi still encodes secret values as encrypted state, but an empty passphrase
+provides no meaningful protection to someone who can read that state. For now,
+protection comes from the backend's access controls, transport security, and
+storage encryption. Stronger state encryption is deferred to the backend project.
+
+An explicit passphrase or passphrase-file setting takes precedence. Existing
+stacks encrypted with a non-empty passphrase still require their original key;
+this default does not migrate them.
 
 To use a managed key instead, select Pulumi's native encryption provider:
 
@@ -19,8 +23,9 @@ pm infra init --env stage \
 
 `pm deploy` accepts the same flag for stacks it creates. The action exposes
 `secrets-provider`; generated workflows read `PREMISE_SECRETS_PROVIDER` from CI
-variables. The URL is non-secret configuration. An unset value preserves Pulumi's
-default. Existing stacks retain their encryption provider.
+variables. The URL is non-secret configuration. An unset value uses the current
+empty-passphrase default for new stacks. Existing stacks retain their encryption
+provider.
 
 Supported native choices include `gcpkms`, `awskms`, `azurekeyvault`, and
 `hashivault`. Authenticate to the key service and grant encryption/decryption

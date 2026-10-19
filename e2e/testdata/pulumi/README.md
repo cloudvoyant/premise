@@ -32,8 +32,9 @@ mise run e2e:infra
 The identity needs permission to create/delete buckets and objects in the test
 project and to read/write the state prefix. The bucket is private and lives in
 `US`. Every run uses a unique preview stack. `PREMISE_BIN` can select a published
-CLI binary; otherwise the test builds the current checkout. An unset
-`PULUMI_CONFIG_PASSPHRASE` receives a test-only value for this disposable stack.
+CLI binary; otherwise the test builds the current checkout. The test explicitly sets
+`PULUMI_CONFIG_PASSPHRASE=""` for its disposable stack; it needs no passphrase CI
+secret.
 
 The normal `go test ./...` run skips this cloud test. Unit tests in
 `core/infra_test.go`, `core/deploy_test.go`, and `core/secrets_test.go` cover stack

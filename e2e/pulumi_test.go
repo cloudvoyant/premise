@@ -39,9 +39,7 @@ func TestInfraGCS(t *testing.T) {
 		gcsCommand(t, repositoryRoot(t), "go", "build", "-o", binary, ".")
 	}
 	t.Setenv("PULUMI_HOME", t.TempDir())
-	if os.Getenv("PULUMI_CONFIG_PASSPHRASE") == "" {
-		t.Setenv("PULUMI_CONFIG_PASSPHRASE", "disposable-gcs-test")
-	}
+	t.Setenv("PULUMI_CONFIG_PASSPHRASE", "")
 	fixture := filepath.Join(repositoryRoot(t), "e2e/testdata/pulumi")
 	client := filepath.Join(t.TempDir(), "client")
 	copyGCSFixture(t, filepath.Join(fixture, "client"), client)
