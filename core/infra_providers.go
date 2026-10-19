@@ -77,8 +77,10 @@ func AuthenticateInfrastructure(ctx context.Context, root string, ci bool, stdin
 		if err != nil {
 			return nil, err
 		}
-		if name == "gcp" && os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") == "" {
-			createdDirectories = append(createdDirectories, filepath.Dir(values["GOOGLE_APPLICATION_CREDENTIALS"]))
+		if ci && name == "gcp" && os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") == "" {
+			if path := values["GOOGLE_APPLICATION_CREDENTIALS"]; filepath.IsAbs(path) {
+				createdDirectories = append(createdDirectories, filepath.Dir(path))
+			}
 		}
 		for key, value := range values {
 			environment[key] = value
