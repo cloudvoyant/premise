@@ -20,7 +20,7 @@ object content through AWS, repeated apply, and saved state from another checkou
 It creates two previews, destroys one, and proves that the other bucket and object still exist.
 It destroys both and repeats cleanup. The existing backend bucket remains.
 
-Use a dedicated test account and an existing S3 backend:
+Use a test account and an existing S3 or GCS state backend. The provider creates S3 resources regardless of the state backend. GCS also requires local Google Application Default Credentials.
 
 ```sh
 aws sso login --profile premise-test
@@ -28,6 +28,7 @@ export AWS_PROFILE=premise-test
 export AWS_REGION=us-east-1
 export PREMISE_TEST_AWS_ACCOUNT=123456789012
 export PULUMI_BACKEND_URL=s3://EXISTING_STATE_BUCKET/premise-e2e
+# Alternatively: gs://EXISTING_STATE_BUCKET/premise-e2e
 mise run e2e:infra
 ```
 
