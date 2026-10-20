@@ -314,6 +314,9 @@ For previews, also pass the original `--branch`.
 ### Run CI phases
 
 `deployment.yml` is the reusable job graph. Each job selects the same commit, backend, environment, and run ID.
+Its optional `directory` input selects a workspace below the checkout root.
+`revision` selects the source commit. `deployment-revision` can identify a different immutable application release.
+Use `run-id` when one workflow run performs more than one deployment. Each deployment needs its own ID.
 Fresh runners restore declared stack configuration. Migration workers write separate outcomes to shared storage.
 The full update waits for all workers. A zero-migration deployment skips the matrix and continues directly.
 Recovery waits for all migration jobs, including failed jobs.
@@ -349,4 +352,4 @@ Core imports no cloud resource SDK. Client fixture modules own their published p
 Premise's end-to-end harness exercises real Go and TypeScript programs, saved-state queries, PostgreSQL migrations, and automatic artifact recovery.
 The live S3 test creates two isolated preview buckets and managed objects. It checks state reuse and cleanup isolation.
 Cloud checks require explicit test credentials. A skipped check is not live validation.
-See the [S3 fixture](../../e2e/testdata/pulumi/README.md) and [deployment fixture](../../e2e/testdata/deploy/README.md).
+See the [S3 fixture](../../e2e/testdata/pulumi/README.md) and [local deployment fixture](../../e2e/testdata/deploy/README.md) and [live Neon/Vercel fixture](../../e2e/testdata/neon-vercel/README.md).

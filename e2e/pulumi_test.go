@@ -19,6 +19,7 @@ func TestInfraS3CreatesIsolatedBucketsAndPreservesOtherPreviewOnCleanup(t *testi
 	if os.Getenv("PREMISE_TEST_S3") != "1" {
 		t.Skip("set PREMISE_TEST_S3=1 with an explicit AWS test account and remote backend")
 	}
+	t.Setenv("PULUMI_HOME", t.TempDir())
 	account := os.Getenv("PREMISE_TEST_AWS_ACCOUNT")
 	if account == "" || !strings.HasPrefix(os.Getenv("PULUMI_BACKEND_URL"), "s3://") {
 		t.Fatal("PREMISE_TEST_AWS_ACCOUNT and an existing s3:// PULUMI_BACKEND_URL are required")

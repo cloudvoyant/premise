@@ -65,7 +65,9 @@ func RunDeploymentPhase(ctx context.Context, root, phase string, options DeployO
 	environment := deploymentTaskEnvironment(run)
 	// A phase can run in a fresh checkout. Stack settings are local files, so
 	// restore declared environment values before running the client program.
-	if phase != "provision" && run.Phase != "started" && run.Phase != "init" && run.Phase != "completed" {
+	// Migration workers only query saved state. Do not rewrite stack settings
+	// from parallel workers that may share the same checkout.
+	if phase != "migrate" && phase != "provision" && run.Phase != "started" && run.Phase != "init" && run.Phase != "completed" {
 		if err := executeInfra(ctx, runner, destination, "select", false, environment); err != nil {
 			return err
 		}

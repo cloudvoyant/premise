@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"go.yaml.in/yaml/v3"
 )
 
 // Private helpers ------------------------------------------------------------
@@ -35,6 +37,9 @@ func main() {
 		fail(fmt.Errorf("environment argument is required"))
 	}
 	environment := os.Args[2]
+	if environment == "preview" && os.Getenv("PM_BRANCH") == "" {
+		fail(fmt.Errorf("preview application tasks require PM_BRANCH"))
+	}
 	if selected := os.Getenv("PM_ENV"); selected != "" && selected != environment {
 		fail(fmt.Errorf("environment argument does not match PM_ENV"))
 	}
@@ -94,10 +99,28 @@ func prepare() error {
 	if err != nil {
 		return err
 	}
-	text := strings.ReplaceAll(string(source), "SCENARIO", scenario)
+	var manifest map[string]any
+	if err := yaml.Unmarshal(source, &manifest); err != nil {
+		return err
+	}
+	workspace := manifest["workspace"].(map[string]any)
+	infra := workspace["infra"].(map[string]any)
+	environments := infra["environments"].(map[string]any)
+	preview := environments["preview"].(map[string]any)
+	preview["config"].(map[string]any)["client:scenario"] = scenario
 	if scenario == "shared" {
-		text = strings.Replace(text, "  deployment:\n", "  deployment:\n    migration_groups:\n      shared-history: [api, worker]\n", 1)
-		text = strings.Replace(text, ", '*::worker-branch', '*::worker-endpoint', '*::worker-role', '*::worker-database'", "", 1)
+		workspace["deployment"].(map[string]any)["migration_groups"] = map[string][]string{"shared-history": {"api", "worker"}}
+		var prerequisites []string
+		for _, value := range infra["prerequisites"].([]any) {
+			resource := value.(string)
+			if !strings.Contains(resource, "::worker-") {
+				prerequisites = append(prerequisites, resource)
+			}
+		}
+		infra["prerequisites"] = prerequisites
+	}
+	if scenario == "none" {
+		infra["prerequisites"] = []string{}
 	}
 	for _, app := range []string{"api", "worker", "web"} {
 		directory := filepath.Join(root, "apps", app)
@@ -112,10 +135,11 @@ func prepare() error {
 			return err
 		}
 	}
-	if scenario == "none" {
-		text = strings.Replace(text, "['*::api-branch', '*::api-endpoint', '*::api-role', '*::api-database', '*::worker-branch', '*::worker-endpoint', '*::worker-role', '*::worker-database']", "[]", 1)
+	configuration, err := yaml.Marshal(manifest)
+	if err != nil {
+		return err
 	}
-	if err := os.WriteFile(filepath.Join(root, "premise.yaml"), []byte(text), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "premise.yaml"), configuration, 0644); err != nil {
 		return err
 	}
 	for _, release := range []string{"A", "B"} {
@@ -481,22 +505,55 @@ func pruneDeployments() error {
 			fmt.Println("Removed owned retained deployment", deployment.UID)
 		}
 		if page.Pagination.Next == nil {
+			if err := verifyDatabaseCleanup(stack); err != nil {
+				return err
+			}
 			base := strings.TrimRight(os.Getenv("PULUMI_BACKEND_URL"), "/")
 			if !strings.HasPrefix(base, "gs://") {
 				return fmt.Errorf("validation cleanup requires its GCS backend")
 			}
-			_, err := run("gcloud", "storage", "rm", "--recursive", base+"/.premise-validation/"+stack+"/", "--quiet")
-			// Shared and zero-migration scenarios create no barrier objects.
-			if err != nil {
-				scenario, _, settingErr := settings()
-				if settingErr != nil || (scenario != "shared" && scenario != "none") {
-					return err
-				}
+			command := exec.Command("gcloud", "storage", "rm", "--recursive", base+"/.premise-validation/"+stack+"/", "--quiet")
+			output, err := command.CombinedOutput()
+			if err != nil && !strings.Contains(string(output), "No URLs matched") && !strings.Contains(string(output), "matched no objects") {
+				return fmt.Errorf("owned migration barrier cleanup failed")
 			}
 			return nil
 		}
 		parameters.Set("until", fmt.Sprint(*page.Pagination.Next))
 	}
+}
+
+// verifyDatabaseCleanup checks the provider after Pulumi destroys the owned preview.
+func verifyDatabaseCleanup(stack string) error {
+	request, err := http.NewRequest(http.MethodGet, "https://console.neon.tech/api/v2/projects/bitter-river-81933503/branches", nil)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Authorization", "Bearer "+os.Getenv("NEON_API_KEY"))
+	client := &http.Client{Timeout: 30 * time.Second}
+	response, err := client.Do(request)
+	if err != nil {
+		return fmt.Errorf("Neon cleanup verification failed")
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("Neon cleanup verification returned HTTP %d", response.StatusCode)
+	}
+	var data struct {
+		Branches []struct {
+			Name string `json:"name"`
+		} `json:"branches"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(&data); err != nil {
+		return err
+	}
+	for _, branch := range data.Branches {
+		if branch.Name == "premise-"+stack+"-api" || branch.Name == "premise-"+stack+"-worker" {
+			return fmt.Errorf("owned Neon branch still exists after destroy")
+		}
+	}
+	fmt.Println("Verified owned Neon branches are absent")
+	return nil
 }
 
 func vercel(method, path string, destination any) error {
