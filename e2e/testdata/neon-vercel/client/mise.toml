@@ -1,8 +1,20 @@
 monorepo_root = true
+[monorepo]
+config_roots = ["apps/*"]
 [tools]
 go = "1.25.11"
 pulumi = "3.268.0"
 bun = "1.4.2"
+gcloud = "559.0.0"
+[tasks."fixture:prepare"]
+run = '''
+mkdir -p bin
+go build -o bin/cloud-tasks ./tasks/main.go
+bin/cloud-tasks prepare
+'''
 [tasks."infra:install"]
-dir = "infra"
-run = "mise exec -- pulumi install"
+run = '''
+mise run fixture:prepare
+cd infra
+mise exec -- pulumi install
+'''

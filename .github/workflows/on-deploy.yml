@@ -3,6 +3,24 @@ name: On Deploy
 "on":
   workflow_dispatch:
     inputs:
+      validation:
+        description: Run published-RC validation instead of deployment
+        type: choice
+        options: [none, infra, cloud]
+        default: none
+      version:
+        description: Exact published RC for validation
+        type: string
+        default: ""
+      scenario:
+        description: Cloud validation scenario
+        type: choice
+        options: [parallel, shared, none, fail-migration, fail-apply, rollback]
+        default: parallel
+      s3:
+        description: Include live S3 validation
+        type: boolean
+        default: false
       environment:
         description: Target environment
         type: choice
@@ -18,7 +36,7 @@ permissions:
 
 jobs:
   legacy:
-    if: vars.PREMISE_DEPLOY_ENABLED != 'true'
+    if: inputs.validation == 'none' && vars.PREMISE_DEPLOY_ENABLED != 'true'
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     steps:
@@ -32,7 +50,7 @@ jobs:
           install-premise: build
 
   deploy:
-    if: vars.PREMISE_DEPLOY_ENABLED == 'true'
+    if: inputs.validation == 'none' && vars.PREMISE_DEPLOY_ENABLED == 'true'
     uses: ./.github/workflows/deployment.yml
     secrets: inherit
     with:
@@ -42,3 +60,19 @@ jobs:
       artifacts: ${{ vars.PREMISE_ARTIFACT_IDENTITIES }}
       backend: ${{ vars.PREMISE_INFRA_BACKEND }}
       install-premise: build
+
+  validate-infra:
+    if: inputs.validation == 'infra'
+    uses: ./.github/workflows/on-infra-test.yml
+    secrets: inherit
+    with:
+      version: ${{ inputs.version }}
+      s3: ${{ inputs.s3 }}
+
+  validate-cloud:
+    if: inputs.validation == 'cloud'
+    uses: ./.github/workflows/on-infra-deploy-test.yml
+    secrets: inherit
+    with:
+      version: ${{ inputs.version }}
+      scenario: ${{ inputs.scenario }}

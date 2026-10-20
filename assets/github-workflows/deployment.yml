@@ -19,6 +19,18 @@ name: Deployment phases
       backend:
         type: string
         default: ""
+      directory:
+        description: "Workspace directory within the checkout"
+        type: string
+        default: "."
+      deployment-revision:
+        description: "Immutable application release identity; defaults to the source commit"
+        type: string
+        default: ""
+      run-id:
+        description: "Optional identity for repeated deployments within one workflow run"
+        type: string
+        default: ""
       install-premise:
         type: string
         default: pre-built
@@ -39,16 +51,20 @@ env:
   DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
   PREVIEW_BRANCH: ${{ inputs.branch }}
   INFRA_BACKEND: ${{ inputs.backend }}
-  DEPLOY_RUN_ID: gha-${{ github.run_id }}-${{ github.run_attempt }}
+  DEPLOY_RUN_ID: ${{ inputs.run-id || format('gha-{0}-{1}', github.run_id, github.run_attempt) }}
   GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
   GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
   NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
   VERCEL_API_TOKEN: ${{ secrets.VERCEL_API_TOKEN }}
+  VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
 jobs:
   provision:
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.directory }}
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
       has_migrations: ${{ steps.plan.outputs.has_migrations }}
@@ -59,7 +75,7 @@ jobs:
         with:
           ref: ${{ inputs.revision }}
           persist-credentials: false
-      - uses: cloudvoyant/premise@v0.5.0-rc.243
+      - uses: cloudvoyant/premise@v0.5.0-rc.248
         with:
           setup-only: true
           release: none
@@ -101,7 +117,7 @@ jobs:
         id: start
         shell: bash
         env:
-          DEPLOY_REVISION: ${{ steps.revision.outputs.sha }}
+          DEPLOY_REVISION: ${{ inputs.deployment-revision || steps.revision.outputs.sha }}
           DEPLOY_ARTIFACTS: ${{ inputs.artifacts }}
         run: |
           set -euo pipefail
@@ -124,6 +140,9 @@ jobs:
     if: needs.provision.outputs.has_migrations == 'true'
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.directory }}
     strategy:
       # Recovery waits for all workers, including after one worker fails.
       fail-fast: false
@@ -133,7 +152,7 @@ jobs:
         with:
           ref: ${{ needs.provision.outputs.revision }}
           persist-credentials: false
-      - uses: cloudvoyant/premise@v0.5.0-rc.243
+      - uses: cloudvoyant/premise@v0.5.0-rc.248
         with:
           setup-only: true
           release: none
@@ -171,12 +190,15 @@ jobs:
        (needs.provision.outputs.has_migrations == 'false' && needs.migrate.result == 'skipped'))
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.directory }}
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ needs.provision.outputs.revision }}
           persist-credentials: false
-      - uses: cloudvoyant/premise@v0.5.0-rc.243
+      - uses: cloudvoyant/premise@v0.5.0-rc.248
         with:
           setup-only: true
           release: none
@@ -212,12 +234,15 @@ jobs:
       needs.finish.result != 'success'
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.directory }}
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ needs.provision.outputs.revision }}
           persist-credentials: false
-      - uses: cloudvoyant/premise@v0.5.0-rc.243
+      - uses: cloudvoyant/premise@v0.5.0-rc.248
         with:
           setup-only: true
           release: none

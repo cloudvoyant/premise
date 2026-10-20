@@ -205,4 +205,4 @@ jobs:
       artifacts: ${{ vars.PREMISE_ARTIFACT_IDENTITIES }}
       backend: ${{ vars.PREMISE_INFRA_BACKEND }}
       install-premise: pre-built
-      premise-version: v0.5.0-rc.243
+      premise-version: v0.5.0-rc.248

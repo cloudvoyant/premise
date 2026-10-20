@@ -1,0 +1,160 @@
+name: Validate hosted deployment and recovery
+
+"on":
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
+      scenario:
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact published RC containing the cloud application fixture
+        type: string
+        required: true
+      scenario:
+        type: choice
+        description: Hosted job-graph scenario
+        options: [parallel, shared, none, fail-migration, fail-apply, rollback]
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: premise-cloud-application-validation
+  cancel-in-progress: false
+
+jobs:
+  baseline:
+    uses: ./.github/workflows/deployment.yml
+    secrets: inherit
+    with:
+      environment: preview
+      branch: validation/${{ github.run_id }}
+      revision: ${{ inputs.version }}
+      directory: e2e/testdata/neon-vercel/client
+      deployment-revision: validation-${{ github.run_id }}-A
+      run-id: validation-${{ github.run_id }}-A
+      artifacts: >-
+        api=.releases/${{ inputs.version }}-A/web,worker=.releases/${{ inputs.version }}-A/web,web=.releases/${{ inputs.version }}-A/web
+      install-premise: pre-built
+      premise-version: ${{ inputs.version }}
+
+  update:
+    needs: baseline
+    uses: ./.github/workflows/deployment.yml
+    secrets: inherit
+    with:
+      environment: preview
+      branch: validation/${{ github.run_id }}
+      revision: ${{ inputs.version }}
+      directory: e2e/testdata/neon-vercel/client
+      deployment-revision: validation-${{ github.run_id }}-B
+      run-id: validation-${{ github.run_id }}-B
+      artifacts: >-
+        api=.releases/${{ inputs.version }}-B/web,worker=.releases/${{ inputs.version }}-B/web,web=.releases/${{ inputs.version }}-B/web
+      install-premise: pre-built
+      premise-version: ${{ inputs.version }}
+
+  verify:
+    needs: [baseline, update]
+    if: always() && needs.baseline.result == 'success'
+    runs-on: ubuntu-latest
+    environment: preview
+    defaults:
+      run:
+        working-directory: e2e/testdata/neon-vercel/client
+    env:
+      PM_BRANCH: validation/${{ github.run_id }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+      VERCEL_API_TOKEN: ${{ secrets.VERCEL_API_TOKEN }}
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.version }}
+          persist-credentials: false
+      - uses: ./
+        with:
+          setup-only: true
+          release: none
+          install-premise: pre-built
+          premise-version: ${{ inputs.version }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - run: pm infra auth --ci --env-file "$GITHUB_ENV"
+      - run: mise run infra:install
+      - name: Check serving release, database history, and persisted outcomes
+        shell: bash
+        env:
+          SCENARIO: ${{ inputs.scenario }}
+          UPDATE_RESULT: ${{ needs.update.result }}
+          EXPECTED_RELEASE: validation-${{ github.run_id }}-${{ contains('fail-migration,fail-apply,rollback', inputs.scenario) && 'A' || 'B' }}
+        run: |
+          set -euo pipefail
+          case "$SCENARIO" in
+            fail-migration|fail-apply|rollback) test "$UPDATE_RESULT" = failure ;;
+            *) test "$UPDATE_RESULT" = success ;;
+          esac
+          bin/cloud-tasks assert preview
+
+  cleanup:
+    needs: [baseline, update, verify]
+    if: always()
+    runs-on: ubuntu-latest
+    environment: preview
+    defaults:
+      run:
+        working-directory: e2e/testdata/neon-vercel/client
+    env:
+      PM_BRANCH: validation/${{ github.run_id }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+      VERCEL_API_TOKEN: ${{ secrets.VERCEL_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.version }}
+          persist-credentials: false
+      - uses: ./
+        with:
+          setup-only: true
+          release: none
+          install-premise: pre-built
+          premise-version: ${{ inputs.version }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - run: pm infra auth --ci --env-file "$GITHUB_ENV"
+      - run: mise run infra:install
+      - name: Resolve the owned preview stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          pm deploy plan --env preview --branch "$PM_BRANCH" --json > "$RUNNER_TEMP/cleanup-plan.json"
+          python3 - "$RUNNER_TEMP/cleanup-plan.json" <<'PY'
+          import json, os, sys
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              plan = json.load(open(sys.argv[1]))
+              output.write('PM_STACK=' + plan['stack'] + '\n')
+              output.write('PULUMI_BACKEND_URL=' + plan['backend_url'] + '\n')
+          PY
+      - name: Release this finished test's interrupted ownership if needed
+        shell: bash
+        run: |
+          for release in A B; do
+            pm deploy unlock --env preview --branch "$PM_BRANCH" \
+              --run-id "validation-$GITHUB_RUN_ID-$release" || true
+          done
+      - name: Destroy the preview and retained test deployments
+        shell: bash
+        run: |
+          set -euo pipefail
+          pm infra destroy --env preview --branch "$PM_BRANCH"
+          bin/cloud-tasks prune preview
+          pm infra destroy --env preview --branch "$PM_BRANCH"

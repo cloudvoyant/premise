@@ -1,0 +1,8 @@
+.env*
+.git
+node_modules
+.output
+dist
+coverage
+fnox.toml
+mise.toml

@@ -1,6 +1,14 @@
 name: Validate published infrastructure RC
 
 "on":
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
+      s3:
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       version:
