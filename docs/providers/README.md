@@ -42,7 +42,10 @@ Keep fnox providers local. Run `pm secrets sync` locally to copy selected applic
 
 Deployment credentials come from OAuth or protected CI secrets. They do not belong in application fnox profiles. State storage and deployed resources can require separate permissions. Backend access controls protect state while the empty Pulumi passphrase remains the default.
 
-The current Premise action copies recovery records with `gcloud storage`. Its deploy operation requires gcloud, GCP credentials, and a GCS `records-url`. This requirement does not restrict the resources in the Pulumi program. Other CI runners can persist the CLI record directory themselves.
+Deployment records use conditional writes in an existing S3 or GCS prefix.
+The default prefix lives beside the selected Pulumi state. Set `deployment.records` to choose another prefix.
+Install AWS CLI or gcloud through Mise for that store. Each CI job authenticates independently.
+The action does not copy runner-local record directories between jobs.
 
 ## Providers
 

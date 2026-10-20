@@ -67,47 +67,33 @@ The flow runs project checks. The plan reports the required runners without runn
 
 A Pulumi program declares your resources. A stack holds one environment’s state. Use one program with separate `dev`, `stage`, `prod`, and feature-branch preview stacks.
 
-For a GCS bucket, generate the template and bind an app’s built files:
+Create a client-owned program during workspace initialization:
 
 ```sh
-pm g cloudvoyant/premise-pulumi:gcs-bucket --answer name=environment
-pm infra bind web environment --artifact dist
+pm init --infra --infra-language go
+# Or choose TypeScript and an explicit Pulumi pin.
+pm init --infra --infra-language typescript --pulumi-version 3.268.0
+mise run infra:install
 ```
 
-During tandem PR development, select the local `premise-pulumi` checkout instead. Remote templates use the default branch.
+If `infra/Pulumi.yaml` already exists, use `pm init --infra` to adopt it.
+The file selects the language runtime. Root `mise.toml` selects Pulumi and runtime versions.
+Use ordinary language imports to share resource declarations across environment stacks.
 
-Supply an existing state bucket and the GCP resource project:
+Declare `workspace.infra.directory`, backend choices, and environment values in `premise.yaml`.
+Supply an existing remote backend through a named selection or `PULUMI_BACKEND_URL`:
 
 ```sh
-export PULUMI_BACKEND_URL=gs://YOUR_STATE_BUCKET
-```
-
-```yaml
-# Add these entries under workspace in premise.yaml.
-infra:
-  providers: [gcp]
-  environments:
-    dev:
-      config:
-        gcp:project: YOUR_GCP_PROJECT
-    preview:
-      config:
-        gcp:project: YOUR_GCP_PROJECT
-```
-
-Install the template’s tools, then authenticate locally through OAuth:
-
-```sh
-pm install
+export PULUMI_BACKEND_URL=s3://YOUR_STATE_BUCKET/product
 pm infra auth
 pm infra init --env dev
-pm infra test
 pm infra plan --env dev
 pm infra apply --env dev --yes
-pm infra output --env dev
+pm infra query --env dev --resource uploads --property arn
 ```
 
-`plan` previews changes. `apply` changes resources. The project argument is optional because these commands select the environment stack. A declared component target can filter an update within that stack.
+The commands select the whole environment stack and accept no application project argument.
+See the [infrastructure module](modules/infrastructure.md) for Go and TypeScript layouts and full configuration.
 
 ## Create a branch preview
 
@@ -142,7 +128,7 @@ flowchart LR
     extra --> health[Health tasks]
 ```
 
-Declare task names, prerequisite resource targets, and recovery tasks under `workspace.deployment`. See the [complete configuration](modules/infrastructure.md#deploy-in-order).
+Declare prerequisite resource targets under `workspace.infra.prerequisites`. Applications expose an optional `migrate` task in their own `mise.toml`. Declare health and recovery tasks under `workspace.deployment`. See the [complete configuration](modules/infrastructure.md#order-provisioning-migrations-and-deployment).
 
 ```sh
 pm deploy plan --env stage
@@ -151,7 +137,7 @@ pm deploy run --env stage --release COMMIT_SHA --artifact web=IMMUTABLE_ARTIFACT
 
 Pulumi deploys applications that it owns. Add a project `deploy` hook only for work outside Pulumi. On failure, client recovery tasks use the previous successful release. The client must provide backward-compatible migrations. Premise does not run database down migrations.
 
-Persist recovery records across CI runs and serialize deployments per environment. The [infrastructure guide](modules/infrastructure.md) explains recovery inputs and first-deployment cleanup.
+Premise stores release references and deployment ownership in shared storage. CI fans out independent migrations and waits for all required groups before the full update. Applications without migrations produce no migration job. The [infrastructure guide](modules/infrastructure.md) explains retained artifacts, recovery, and interrupted runs.
 
 ## Pull application secrets
 
@@ -213,10 +199,10 @@ pm template test
 
 Register template questions and literal substitutions in `premise.yaml`. Templates remain valid projects before generation. Root files listed in `template_registry.workspace_files` are shared with the client. Premise asks about conflicting root files before it writes the generated project.
 
-Infra templates create executable programs under `infra/`. Component templates create reusable Go components under `infra/components/`. Clients can also author components there directly. See [Generation](generation.md) and [Infrastructure](modules/infrastructure.md).
+Template registries provide application and library templates. Clients own infrastructure code under `infra/` and import published providers directly. See [Generation](generation.md) and [Infrastructure](modules/infrastructure.md).
 
 ## Limits
 
 Generation creates new projects. It does not update existing ones. Remote selectors use the default branch and need network access. Private-template authentication and offline operation remain separate work.
 
-Pulumi state uses an empty passphrase for now. Backend access controls and storage encryption protect it. Existing encrypted stacks still require their original key.
+Pulumi state uses an empty passphrase for now. Backend access controls and storage encryption protect it. Custom passphrases are outside the current interface. See [state protection](providers/pulumi.md) before adopting an encrypted stack.

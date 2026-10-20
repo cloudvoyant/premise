@@ -89,11 +89,26 @@ Premise removes common administration tokens from the child environment. It call
 
 Premise does not execute env-file text as shell code. It quotes values and rejects empty values, invalid UTF-8 and NUL characters. Generated env files must remain outside deployment bundles, caches and reports.
 
-## Infra program secrets
+## Infrastructure and migration secrets
 
-The infrastructure program declares its own `secrets` keys using the same configuration as an app. Local use resolves its fnox profile. CI supplies its declared variables directly. Its keys arrive as ordinary process environment variables. The Go program reads those variables and assigns them to the intended component, wrapping provider secret inputs with `pulumi.ToSecret`. For several apps, declare distinct names such as `WEB_SECRET` and `ADMIN_SECRET`. Bindings carry source paths only.
+The client-owned infrastructure program reads its required process environment variables.
+Premise does not register an infrastructure project or resolve an infrastructure fnox profile automatically.
+Wrap sensitive provider inputs and exported values with the Pulumi SDK's secret API.
 
-Premise uses fnox's versioned environment API because it starts Pulumi and task subprocesses itself. The scalar adapter keeps the explicit environment selection, ignored atomic `0600` files, administration-token filtering, and output masking. It rejects file secrets and credential leases; use native `fnox exec` for those contracts. It also refuses inherited values that fnox requires removing. See [fnox environment API](https://fnox.jdx.dev/reference/env-json.html).
+Application tasks own database credential lookup. For example, a migration can run:
+
+```sh
+DATABASE_URL="$(pm infra query --env stage --output databaseUrl --show-secrets)"
+export DATABASE_URL
+```
+
+Keep this value out of command arguments, logs, release records, and browser bundles.
+For previews, pass `--env preview --branch "$PM_BRANCH"` to the query.
+Use an exported output as the application's stable interface to infrastructure.
+
+For stored local application values, explicitly wrap a task with `pm secrets exec` or pull its env file.
+Premise's deployment executor does not load fnox automatically.
+The fnox adapter rejects file secrets and credential leases. Use native `fnox exec` for those contracts.
 
 ## CI use
 
@@ -115,7 +130,7 @@ env:
   APP_SECRET: ${{ secrets.APP_SECRET }}
 ```
 
-In CI, `pm secrets exec`, migration tasks, and Pulumi program secrets read their declared keys directly from the environment. They do not invoke fnox or contact its secret provider. A missing key stops the operation. CI must set `CI=true`, `GITHUB_ACTIONS=true`, or `GITLAB_CI=true`.
+In CI, `pm secrets exec` reads declared application keys directly from the environment and rejects missing values. Migration tasks and Pulumi programs receive the job environment and validate their own required keys. These operations do not invoke fnox automatically or contact its secret provider. CI must set `CI=true`, `GITHUB_ACTIONS=true`, or `GITLAB_CI=true`.
 
 Configure deployment credentials separately through [provider setup](providers/README.md). OAuth or protected CI administration tokens authenticate the infrastructure operation. `pm infra auth --ci` runs native authentication before the optional root `ci:auth` fallback. Provider guides define the variable names. The empty Pulumi passphrase requires no additional CI secret.
 
@@ -123,7 +138,9 @@ Configure deployment credentials separately through [provider setup](providers/R
 
 A pull retrieves values again through fnox without daemon caching. Rotate local source values, then repeat the pull or process execution. Sync them again before the next CI deployment. Environment files are local snapshots. Remove an obsolete snapshot rather than using it as the source for a new secret.
 
-Preview database connections come from the selected branch stack. Templates can publish these outputs to branch-specific Secret Manager entries when a persistent local pull needs them. The template owns this publication contract. Cleanup removes only entries that the preview owns.
+Preview database connections come from the selected branch stack. Client infrastructure code can publish these outputs to branch-specific Secret Manager entries when a persistent local pull needs them. The client owns this publication contract. Cleanup removes only entries that the preview owns.
+
+Premise masks known provider credentials and declared application values in captured task output. CI masking does not cover local logs or every value generated at runtime. Clients must avoid printing queried credentials or transformed secret values.
 
 Recovery records contain release identities and references. They do not contain secret values. Do not restore revoked credentials when you restore an application release. Database migration compatibility remains the client's responsibility.
 

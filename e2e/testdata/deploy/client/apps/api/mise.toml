@@ -1,0 +1,11 @@
+[tasks.migrate]
+run = "../../bin/tasks migrate"
+
+[tasks.health]
+run = "../../bin/tasks health"
+
+[tasks.rollback]
+run = "../../bin/tasks rollback"
+
+[tasks.cleanup]
+run = "../../bin/tasks cleanup"

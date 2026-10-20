@@ -29,14 +29,14 @@ err := core.RunProjectTask(ctx, root, "billing", "test", stdin, stdout, stderr)
 
 ### API
 
-| API                                             | Use                                                                                      |
-| ----------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `Project`                                       | Represent one entry in `workspace.projects`.                                             |
-| `ValidateProjectName(name)`                     | Validate a project identifier.                                                           |
-| `Config.AddProject(project)`                    | Register a project while enforcing unique names and paths.                               |
-| `KindDirectory(kind)`                           | Map `app`, `lib`, `infra`, or `infra-component` to its conventional workspace directory. |
-| `RunProjectTask(ctx, root, project, task, ...)` | Resolve a registered project and execute one of its Mise tasks.                          |
-| `HasProjectMiseConfigs(root)`                   | Report whether conventional project roots contain project-level Mise configuration.      |
+| API                                             | Use                                                                                 |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `Project`                                       | Represent one entry in `workspace.projects`.                                        |
+| `ValidateProjectName(name)`                     | Validate a project identifier.                                                      |
+| `Config.AddProject(project)`                    | Register a project while enforcing unique names and paths.                          |
+| `KindDirectory(kind)`                           | Map `app` or `lib` to its conventional workspace directory.                         |
+| `RunProjectTask(ctx, root, project, task, ...)` | Resolve a registered project and execute one of its Mise tasks.                     |
+| `HasProjectMiseConfigs(root)`                   | Report whether conventional project roots contain project-level Mise configuration. |
 
 ## Implementation Details
 
@@ -56,4 +56,4 @@ ci:
   release_platforms: [linux, macos, windows]
 ```
 
-Project tasks remain in the project's `mise.toml`. Infrastructure components authored by the client can omit template provenance; their optional `infra` declaration provides test selection and resource targets.
+Project tasks remain in the project's `mise.toml`. Client infrastructure belongs to the workspace's configured `infra/` directory and has no project or template registration.

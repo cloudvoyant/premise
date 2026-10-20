@@ -1,3 +1,0 @@
-name: premise-gcs-fixture
-runtime: go
-description: A private test bucket with one bound dummy artifact

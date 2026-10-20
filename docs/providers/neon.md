@@ -19,11 +19,7 @@ pulumi = "3.268.0"
 
 ## Local authentication
 
-The Pulumi provider uses `NEON_API_KEY`. An interactive CLI login does not establish this environment variable. Keep administration tokens in CI secrets under the current credential policy. Use CI for deployments that require this token. Local component tests can use Pulumi mocks without deployment credentials.
-
-```sh
-pm infra test
-```
+The Pulumi provider uses `NEON_API_KEY`. An interactive CLI login does not establish this environment variable. Keep administration tokens in CI secrets under the current credential policy. Use CI for deployments that require this token. Client code owns its provider dependencies and resource declarations.
 
 ## CI authentication
 
@@ -48,7 +44,7 @@ Premise checks that the variable exists before infrastructure work. Pulumi uses 
 | `NEON_API_KEY`       | Protected CI secret | Administration access for the published Neon provider. |
 | `PULUMI_BACKEND_URL` | CI variable         | Existing remote state store, authenticated separately. |
 
-Select resource IDs and account configuration in the client Pulumi program. The separate `neon-db` template defines the project resources. It does not implement a provider.
+Select resource IDs and account configuration in the client-owned Pulumi program under `infra/`. Import the published provider directly.
 
 ## Permissions
 

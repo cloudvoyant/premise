@@ -106,11 +106,6 @@ func SelectCIProjects(root string, manifest Config, flow CIFlow) ([]CIPlatformPr
 			}
 			kind := ""
 			switch {
-			case project.Infra != nil:
-				kind = "infra"
-				if project.Infra.Role == "component" {
-					kind = "infra-component"
-				}
 			case strings.HasPrefix(project.Path, "apps/"):
 				kind = "app"
 			case strings.HasPrefix(project.Path, "libs/"):
@@ -147,16 +142,19 @@ type CIMatrixRow struct {
 }
 
 type CISchedule struct {
-	Mode      string              `json:"mode"`
-	Runner    string              `json:"runner,omitempty"`
-	HasNative bool                `json:"has_native"`
-	Matrix    []CIMatrixRow       `json:"matrix"`
-	Excluded  []CIPlatformProject `json:"excluded"`
+	Mode        string              `json:"mode"`
+	Runner      string              `json:"runner,omitempty"`
+	HasNative   bool                `json:"has_native"`
+	Matrix      []CIMatrixRow       `json:"matrix"`
+	Excluded    []CIPlatformProject `json:"excluded"`
+	Migrations  []MigrationGroup    `json:"migrations"`
+	Environment string              `json:"environment,omitempty"`
+	Branch      string              `json:"branch,omitempty"`
 }
 
 // PlanCISchedule chooses one whole-runner flow or one unified matrix.
 func PlanCISchedule(projects []CIPlatformProject) (CISchedule, error) {
-	plan := CISchedule{Matrix: []CIMatrixRow{}, Excluded: []CIPlatformProject{}}
+	plan := CISchedule{Matrix: []CIMatrixRow{}, Excluded: []CIPlatformProject{}, Migrations: []MigrationGroup{}}
 	platforms := make(map[string]bool)
 	for _, project := range projects {
 		if !project.Eligible {

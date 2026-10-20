@@ -2,16 +2,14 @@ package core
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
+
+	"github.com/cloudvoyant/premise/core/providers"
 )
 
 // InfraProvider authenticates deployment tools and checks their standard variables.
@@ -26,8 +24,12 @@ type InfraProvider interface {
 // InfrastructureProvider returns a supported provider, independently of Pulumi resources.
 func InfrastructureProvider(name string) (InfraProvider, bool) {
 	switch name {
-	case "gcp", "neon", "vercel":
-		return infraProvider{name: name}, true
+	case "gcp":
+		return providers.GCP{}, true
+	case "neon":
+		return providers.Neon{}, true
+	case "vercel":
+		return providers.Vercel{}, true
 	default:
 		return nil, false
 	}
@@ -120,8 +122,6 @@ func AuthenticateInfrastructure(ctx context.Context, root string, ci bool, stdin
 
 // Private helpers ------------------------------------------------------------
 
-type infraProvider struct{ name string }
-
 func infrastructureProviderNames(root string) ([]string, error) {
 	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
 	if err != nil {
@@ -131,122 +131,6 @@ func infrastructureProviderNames(root string) ([]string, error) {
 		return nil, nil
 	}
 	return manifest.Workspace.Infra.Providers, nil
-}
-
-func (p infraProvider) EnsureEnvironment(ci bool) error {
-	switch p.name {
-	case "neon":
-		return requireProviderVariables(p.name, "NEON_API_KEY")
-	case "vercel":
-		return requireProviderVariables(p.name, "VERCEL_API_TOKEN")
-	case "gcp":
-		if !ci && os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") == "" {
-			return nil
-		} // Local ADC has a standard SDK search path.
-		if err := requireProviderVariables(p.name, "GOOGLE_APPLICATION_CREDENTIALS"); err != nil {
-			return err
-		}
-		if info, err := os.Stat(os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")); err != nil || !info.Mode().IsRegular() {
-			return fmt.Errorf("gcp: GOOGLE_APPLICATION_CREDENTIALS must name a readable credential file; run pm infra auth --ci (see docs/providers/gcp.md)")
-		}
-	}
-	return nil
-}
-
-func requireProviderVariables(provider string, keys ...string) error {
-	var missing []string
-	for _, key := range keys {
-		if os.Getenv(key) == "" {
-			missing = append(missing, key)
-		}
-	}
-	if len(missing) > 0 {
-		return fmt.Errorf("%s: missing %s; configure CI variables as described in docs/providers/%s.md", provider, strings.Join(missing, ", "), provider)
-	}
-	return nil
-}
-
-func (p infraProvider) Authenticate(ctx context.Context, root string, ci bool, stdin io.Reader, stdout, stderr io.Writer) (map[string]string, error) {
-	if p.name != "gcp" {
-		return nil, p.EnsureEnvironment(ci)
-	}
-	runner := infraCommandRunner{stdin: stdin, stdout: stdout, stderr: stderr}
-	if !ci {
-		if err := runner.run(ctx, root, nil, "gcloud", "auth", "application-default", "login"); err != nil {
-			return nil, err
-		}
-		return nil, runner.run(ctx, root, nil, "gcloud", "auth", "login")
-	}
-	if path := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); path != "" {
-		if err := p.EnsureEnvironment(true); err != nil {
-			return nil, err
-		}
-		return map[string]string{"GOOGLE_APPLICATION_CREDENTIALS": path, "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE": path}, nil
-	}
-	if err := requireProviderVariables("gcp", "GCP_WORKLOAD_IDENTITY_PROVIDER", "GCP_SERVICE_ACCOUNT"); err != nil {
-		return nil, err
-	}
-	directory, err := os.MkdirTemp("", "premise-gcp-auth-*")
-	if err != nil {
-		return nil, err
-	}
-	success := false
-	defer func() {
-		if !success {
-			os.RemoveAll(directory)
-		}
-	}()
-	token := os.Getenv("CI_OIDC_TOKEN_FILE")
-	if token == "" {
-		token = filepath.Join(directory, "identity-token")
-		audience := "//iam.googleapis.com/" + os.Getenv("GCP_WORKLOAD_IDENTITY_PROVIDER")
-		if err := githubIdentityToken(ctx, audience, token); err != nil {
-			return nil, err
-		}
-	}
-	path := filepath.Join(directory, "credentials.json")
-	if err := runner.run(ctx, root, nil, "gcloud", "iam", "workload-identity-pools", "create-cred-config", os.Getenv("GCP_WORKLOAD_IDENTITY_PROVIDER"), "--service-account="+os.Getenv("GCP_SERVICE_ACCOUNT"), "--credential-source-file="+token, "--output-file="+path); err != nil {
-		return nil, err
-	}
-	if err := os.Chmod(path, 0600); err != nil {
-		return nil, err
-	}
-	success = true
-	return map[string]string{"GOOGLE_APPLICATION_CREDENTIALS": path, "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE": path}, nil
-}
-
-// GitHub's runner token endpoint is an adapter. Other runners supply CI_OIDC_TOKEN_FILE.
-func githubIdentityToken(ctx context.Context, audience, path string) error {
-	endpoint := os.Getenv("ACTIONS_ID_TOKEN_REQUEST_URL")
-	bearer := os.Getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
-	if endpoint == "" || bearer == "" {
-		return errors.New("gcp: supply CI_OIDC_TOKEN_FILE from the CI issuer (see docs/providers/gcp.md)")
-	}
-	u, err := url.Parse(endpoint)
-	if err != nil || u.Scheme != "https" {
-		return errors.New("gcp: invalid CI identity endpoint")
-	}
-	query := u.Query()
-	query.Set("audience", audience)
-	u.RawQuery = query.Encode()
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return errors.New("gcp: invalid CI identity request")
-	}
-	request.Header.Set("Authorization", "Bearer "+bearer)
-	client := &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	response, err := client.Do(request)
-	if err != nil {
-		return errors.New("gcp: CI identity exchange failed")
-	}
-	defer response.Body.Close()
-	var identity struct {
-		Value string `json:"value"`
-	}
-	if response.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&identity) != nil || identity.Value == "" {
-		return errors.New("gcp: CI issuer did not return an identity token")
-	}
-	return os.WriteFile(path, []byte(identity.Value), 0600)
 }
 
 func runningInCI() bool {

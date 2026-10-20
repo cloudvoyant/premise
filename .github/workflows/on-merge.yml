@@ -208,6 +208,11 @@ jobs:
        (github.event_name == 'delete' && github.event.ref_type == 'branch' && github.event.ref != 'main'))
     runs-on: ubuntu-latest
     environment: preview
+    env:
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+      VERCEL_API_TOKEN: ${{ secrets.VERCEL_API_TOKEN }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -217,6 +222,13 @@ jobs:
         with:
           setup-only: true
           install-premise: build
+      - uses: google-github-actions/setup-gcloud@v3
+        if: vars.GCP_WORKLOAD_IDENTITY_PROVIDER != ''
+      - uses: aws-actions/configure-aws-credentials@v5
+        if: vars.PREMISE_AWS_ROLE != ''
+        with:
+          role-to-assume: ${{ vars.PREMISE_AWS_ROLE }}
+          aws-region: ${{ vars.PREMISE_AWS_REGION }}
       - name: Authenticate infrastructure providers
         run: pm infra auth --ci --env-file "$GITHUB_ENV"
       - name: Destroy the merged or deleted branch preview
@@ -227,5 +239,4 @@ jobs:
           environment: preview
           branch: ${{ github.event.pull_request.head.ref || github.event.ref }}
           backend: ${{ vars.PREMISE_INFRA_BACKEND }}
-          secrets-provider: ${{ vars.PREMISE_SECRETS_PROVIDER }}
           install-premise: skip

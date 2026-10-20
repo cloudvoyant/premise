@@ -68,7 +68,7 @@ GitHub exposes `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKE
 
 ## Permissions
 
-Enable APIs for the template resources. Grant create, update, and delete access in their destination projects. Grant object read, write, and delete access plus bucket metadata access on the existing state bucket. Recovery-record synchronization needs object read, write, and list access on its GCS prefix.
+Enable APIs for the client-owned resources. Grant create, update, and delete access in their destination projects. Grant object read, write, and delete access plus bucket metadata access on the existing state bucket. Deployment records need object read, conditional write, and conditional delete access on their GCS prefix.
 
 Local fnox use can require Secret Manager access. CI consumes application values from CI secrets and does not require Secret Manager access. Preview cleanup requires the same deployment rights as creation. Preserve the state bucket and project after cleanup.
 

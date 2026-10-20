@@ -24,7 +24,6 @@ var (
 	ErrNotPremiseProject = errors.New("not a premise project")
 )
 
-// Config is the validated in-memory form of premise.yaml.
 // WorkflowAsset is a client GitHub Actions workflow embedded in the CLI.
 type WorkflowAsset struct {
 	Path    string
@@ -37,6 +36,7 @@ type WorkspaceScaffold struct {
 	WorkflowAssets []WorkflowAsset
 }
 
+// Config is the validated in-memory form of premise.yaml.
 type Config struct {
 	Workspace        Workspace         `yaml:"workspace"`
 	TemplateRegistry *TemplateRegistry `yaml:"template_registry,omitempty"`
@@ -78,7 +78,6 @@ type Project struct {
 	Path     string              `yaml:"path"`
 	CI       PlatformDeclaration `yaml:"ci,omitempty"`
 	Answers  map[string]string   `yaml:"answers,omitempty"`
-	Infra    *InfraDeclaration   `yaml:"infra,omitempty"`
 	Secrets  *ProjectSecrets     `yaml:"secrets,omitempty"`
 }
 
@@ -90,7 +89,6 @@ type Template struct {
 	CI            PlatformDeclaration `yaml:"ci,omitempty"`
 	Questions     []Question          `yaml:"questions"`
 	Substitutions map[string]string   `yaml:"substitutions,omitempty"`
-	Infra         *InfraDeclaration   `yaml:"infra,omitempty"`
 }
 
 type Question struct {
@@ -102,11 +100,13 @@ type Question struct {
 
 // Infrastructure declares named state backends and non-secret environment settings.
 type Infrastructure struct {
-	Providers    []string                    `yaml:"providers,omitempty"`
-	Backend      string                      `yaml:"backend,omitempty"`
-	Backends     map[string]InfraBackend     `yaml:"backends,omitempty"`
-	Environments map[string]InfraEnvironment `yaml:"environments,omitempty"`
-	Bindings     map[string]InfraBinding     `yaml:"bindings,omitempty"`
+	Directory       string                      `yaml:"directory,omitempty"`
+	SharedDirectory string                      `yaml:"shared_directory,omitempty"`
+	Prerequisites   []string                    `yaml:"prerequisites,omitempty"`
+	Providers       []string                    `yaml:"providers,omitempty"`
+	Backend         string                      `yaml:"backend,omitempty"`
+	Backends        map[string]InfraBackend     `yaml:"backends,omitempty"`
+	Environments    map[string]InfraEnvironment `yaml:"environments,omitempty"`
 }
 
 // InfraBackend identifies an existing DIY state store. Backend changes never migrate state.
@@ -121,45 +121,28 @@ type InfraEnvironment struct {
 	Config  map[string]string `yaml:"config,omitempty"`
 }
 
-// InfraDeclaration distinguishes executable programs from imported components.
-type InfraDeclaration struct {
-	Role    string   `yaml:"role"`
-	Scope   string   `yaml:"scope,omitempty"`
-	Targets []string `yaml:"targets,omitempty"`
-}
-
-// InfraBinding connects an app's artifact to its owning program.
-type InfraBinding struct {
-	Program  string `yaml:"program"`
-	Artifact string `yaml:"artifact"`
-}
-
-// TaskReference names a project-owned task and its stack output inputs.
+// TaskReference names a project-owned recovery task.
 type TaskReference struct {
-	Project        string            `yaml:"project"`
-	Task           string            `yaml:"task"`
-	Outputs        map[string]string `yaml:"outputs,omitempty"`
-	administration bool
+	Project string `yaml:"project"`
+	Task    string `yaml:"task"`
 }
 
 // Deployment declares ordering and client-owned recovery contracts.
 type Deployment struct {
-	Prerequisites []string                `yaml:"prerequisites,omitempty"`
-	Migrations    []TaskReference         `yaml:"migrations,omitempty"`
-	Applications  []DeploymentApplication `yaml:"applications"`
-	Recovery      DeploymentRecovery      `yaml:"recovery"`
-	Records       string                  `yaml:"records"`
-	RecordOutputs []string                `yaml:"record_outputs,omitempty"`
+	MigrationGroups map[string][]string     `yaml:"migration_groups,omitempty"`
+	Applications    []DeploymentApplication `yaml:"applications"`
+	Recovery        DeploymentRecovery      `yaml:"recovery"`
+	Records         string                  `yaml:"records,omitempty"`
+	RecordOutputs   []string                `yaml:"record_outputs,omitempty"`
 }
 
 // DeploymentApplication names optional extra deploy work and required recovery tasks.
 // Pulumi deploys the app unless Deploy names an additional project task.
 type DeploymentApplication struct {
-	Project  string            `yaml:"project"`
-	Deploy   string            `yaml:"deploy,omitempty"`
-	Health   string            `yaml:"health"`
-	Rollback string            `yaml:"rollback"`
-	Outputs  map[string]string `yaml:"outputs,omitempty"`
+	Project  string `yaml:"project"`
+	Deploy   string `yaml:"deploy,omitempty"`
+	Health   string `yaml:"health"`
+	Rollback string `yaml:"rollback"`
 }
 
 // DeploymentRecovery declares compensation without guessing database down migrations.
@@ -491,7 +474,7 @@ func (manifest Config) Validate() error {
 		if err := ValidateProjectName(project.Name); err != nil {
 			return fmt.Errorf("workspace.projects[%d].name: %w", index, err)
 		}
-		if project.Template == "" && (project.Infra == nil || project.Infra.Role != "component") {
+		if project.Template == "" {
 			return fmt.Errorf("workspace.projects[%d].template is required", index)
 		}
 		if project.Path == "" || filepath.IsAbs(project.Path) || escapesRoot(project.Path) {
@@ -531,6 +514,8 @@ func ValidatePlatformDeclaration(declaration PlatformDeclaration) error {
 	return nil
 }
 
+// DeclaredTemplates returns registry source templates for discovery and generation.
+// Unlike PublicationTargets, it never converts workspace applications into packages.
 func (manifest Config) DeclaredTemplates() []Template {
 	if manifest.TemplateRegistry == nil {
 		return nil
@@ -546,18 +531,10 @@ func (manifest Config) PublicationTargets() []Template {
 	var targets []Template
 	switch manifest.Workspace.Kind {
 	case ProjectKindTemplateRegistry:
-		for _, template := range manifest.DeclaredTemplates() {
-			if template.Kind == "infra" || template.Kind == "infra-component" {
-				continue
-			}
-			targets = append(targets, template)
-		}
+		targets = append(targets, manifest.DeclaredTemplates()...)
 	default:
 		targets = make([]Template, 0, len(manifest.Workspace.Projects))
 		for _, project := range manifest.Workspace.Projects {
-			if project.Infra != nil {
-				continue
-			}
 			kind := ""
 			if strings.HasPrefix(filepath.ToSlash(project.Path), "apps/") {
 				kind = "app"
@@ -638,10 +615,6 @@ func KindDirectory(kind string) (string, error) {
 		return "apps", nil
 	case "lib":
 		return "libs", nil
-	case "infra":
-		return "infra", nil
-	case "infra-component":
-		return "infra/components", nil
 	default:
 		return "", fmt.Errorf("unsupported template kind %q", kind)
 	}
@@ -851,42 +824,15 @@ func escapesRoot(path string) bool {
 }
 
 func validateInfrastructure(manifest Config) error {
-	programs := map[string]int{}
-	for _, project := range manifest.Workspace.Projects {
-		if project.Infra == nil {
-			continue
-		}
-		if !strings.HasPrefix(filepath.ToSlash(filepath.Clean(project.Path)), "infra/") {
-			return fmt.Errorf("infra project %s must be under infra/", project.Name)
-		}
-		if err := validateInfraDeclaration(project.Infra); err != nil {
-			return fmt.Errorf("project %s: %w", project.Name, err)
-		}
-		if project.Infra.Role == "program" {
-			programs[project.Infra.Scope]++
-		}
-	}
-	if programs["environment"] > 1 || programs["shared"] > 1 {
-		return fmt.Errorf("only one program may own each infrastructure scope")
-	}
-	for _, template := range manifest.DeclaredTemplates() {
-		if err := validateInfraDeclaration(template.Infra); err != nil {
-			return fmt.Errorf("template %s: %w", template.Name, err)
-		}
-		if template.Infra != nil {
-			if template.Kind == "infra" && template.Infra.Role != "program" {
-				return fmt.Errorf("infra template %s must declare program role", template.Name)
-			}
-			if template.Kind == "infra-component" && template.Infra.Role != "component" {
-				return fmt.Errorf("component template %s must declare component role", template.Name)
-			}
-		}
-		if (template.Kind == "infra" || template.Kind == "infra-component") && template.Infra == nil {
-			return fmt.Errorf("template %s requires infra metadata", template.Name)
-		}
-	}
 	if manifest.Workspace.Infra != nil {
 		infra := manifest.Workspace.Infra
+		for _, directory := range []string{infra.Directory, infra.SharedDirectory} {
+			if directory != "" {
+				if err := validateTemplatePath(directory); err != nil {
+					return fmt.Errorf("infrastructure directory: %w", err)
+				}
+			}
+		}
 		providerNames := map[string]bool{}
 		for _, name := range infra.Providers {
 			if err := ValidateProjectName(name); err != nil {
@@ -906,23 +852,6 @@ func validateInfrastructure(manifest Config) error {
 				return fmt.Errorf("backend %s: %w", name, err)
 			}
 		}
-		for app, binding := range infra.Bindings {
-			var owner, application Project
-			for _, p := range manifest.Workspace.Projects {
-				if p.Name == app {
-					application = p
-				}
-				if p.Name == binding.Program {
-					owner = p
-				}
-			}
-			if application.Name == "" || application.Infra != nil || owner.Infra == nil || owner.Infra.Role != "program" {
-				return fmt.Errorf("invalid infra binding for %s", app)
-			}
-			if binding.Artifact == "" || filepath.IsAbs(binding.Artifact) || escapesRoot(binding.Artifact) {
-				return fmt.Errorf("binding %s artifact must be relative to app", app)
-			}
-		}
 		for name, env := range infra.Environments {
 			if name != "dev" && name != "stage" && name != "prod" && name != "preview" && name != "shared" {
 				return fmt.Errorf("unsupported environment %q", name)
@@ -938,14 +867,8 @@ func validateInfrastructure(manifest Config) error {
 	if d == nil {
 		return nil
 	}
-	if programs["environment"] != 1 {
-		return fmt.Errorf("deployment requires one environment program and configured infrastructure")
-	}
-	if d.Records == "" {
-		return fmt.Errorf("deployment.records must identify a persistent recovery directory")
-	}
-	if len(d.Migrations) > 0 && len(d.Prerequisites) == 0 {
-		return fmt.Errorf("migrations require explicit prerequisite targets")
+	if manifest.Workspace.Infra == nil {
+		return fmt.Errorf("deployment requires workspace.infra to configure the client Pulumi project")
 	}
 	projects := map[string]Project{}
 	for _, p := range manifest.Workspace.Projects {
@@ -961,16 +884,6 @@ func validateInfrastructure(manifest Config) error {
 		return nil
 	}
 	seen := map[string]bool{}
-	for _, m := range d.Migrations {
-		if err := check(&m); err != nil {
-			return err
-		}
-		key := m.Project + ":" + m.Task
-		if seen[key] {
-			return fmt.Errorf("duplicate migration owner %s", key)
-		}
-		seen[key] = true
-	}
 	for _, a := range d.Applications {
 		if _, ok := projects[a.Project]; !ok {
 			return fmt.Errorf("unknown deployment app %s", a.Project)
@@ -983,6 +896,24 @@ func validateInfrastructure(manifest Config) error {
 			return fmt.Errorf("app %s requires health and rollback tasks", a.Project)
 		}
 	}
+	grouped := map[string]bool{}
+	for name, members := range d.MigrationGroups {
+		if err := ValidateProjectName(name); err != nil {
+			return fmt.Errorf("migration group name: %w", err)
+		}
+		if len(members) == 0 {
+			return fmt.Errorf("migration group %s must list applications", name)
+		}
+		for _, project := range members {
+			if !seen["app:"+project] {
+				return fmt.Errorf("migration group %s references %s, which is not a deployment application", name, project)
+			}
+			if grouped[project] {
+				return fmt.Errorf("application %s appears more than once in migration groups", project)
+			}
+			grouped[project] = true
+		}
+	}
 	if d.Recovery.FirstDeploy == nil {
 		return fmt.Errorf("deployment requires first_deploy recovery task")
 	}
@@ -990,22 +921,6 @@ func validateInfrastructure(manifest Config) error {
 		if err := check(r); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-func validateInfraDeclaration(d *InfraDeclaration) error {
-	if d == nil {
-		return nil
-	}
-	if d.Role != "program" && d.Role != "component" {
-		return fmt.Errorf("infra.role must be program or component")
-	}
-	if d.Role == "program" && d.Scope != "environment" && d.Scope != "shared" {
-		return fmt.Errorf("program infra.scope must be environment or shared")
-	}
-	if d.Role == "component" && d.Scope != "" {
-		return fmt.Errorf("component cannot own a stack scope")
 	}
 	return nil
 }

@@ -190,40 +190,18 @@ jobs:
           version: ${{ needs.publish-release.outputs.version }}
 
   deploy-preview:
-    permissions:
-      contents: read
-      id-token: write
+    needs: [single, matrix]
     if: >-
-      vars.PREMISE_DEPLOY_ENABLED == 'true' &&
-      github.event_name == 'push'
-    concurrency:
-      group: deploy-preview-${{ github.ref_name }}
-      cancel-in-progress: false
-    runs-on: ubuntu-latest
-    environment: preview
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - uses: ./
-        with:
-          setup-only: true
-          install-premise: build
-      - name: Authenticate infrastructure providers
-        run: pm infra auth --ci --env-file "$GITHUB_ENV"
-      - name: Build application inputs
-        run: mise run '//apps/*:build'
-      - name: Provision, migrate, update, and recover on failure
-        uses: ./
-        with:
-          command: deploy
-          release: none
-          environment: preview
-          branch: ${{ github.ref_name }}
-          backend: ${{ vars.PREMISE_INFRA_BACKEND }}
-          secrets-provider: ${{ vars.PREMISE_SECRETS_PROVIDER }}
-          records-url: ${{ vars.PREMISE_RECORDS_URL }}
-          deployment-revision: ${{ github.sha }}
-          artifact: ${{ vars.PREMISE_ARTIFACT_IDENTITIES }}
-          install-premise: skip
+      always() && !cancelled() && vars.PREMISE_DEPLOY_ENABLED == 'true' &&
+      github.event_name == 'push' &&
+      (needs.single.result == 'success' || needs.matrix.result == 'success') &&
+      needs.single.result != 'failure' && needs.matrix.result != 'failure'
+    uses: ./.github/workflows/deployment.yml
+    secrets: inherit
+    with:
+      environment: preview
+      branch: ${{ github.ref_name }}
+      revision: ${{ github.sha }}
+      artifacts: ${{ vars.PREMISE_ARTIFACT_IDENTITIES }}
+      backend: ${{ vars.PREMISE_INFRA_BACKEND }}
+      install-premise: build

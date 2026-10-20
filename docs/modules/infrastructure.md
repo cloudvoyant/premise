@@ -1,270 +1,352 @@
-# Infrastructure Module
+# Infrastructure module
 
-## Purpose
+Premise runs client-owned Pulumi code and application tasks in a defined order.
+A program is the code that declares resources. A stack is one instance of that program.
+A backend stores stack state. Clients supply an existing remote backend.
 
-The infrastructure module invokes Pulumi for an explicit environment and connects project-owned tasks to the deployment lifecycle. Pulumi owns resource dependencies, provider configuration, state, and secret outputs. A program declares resources; a stack is an instance of that program; a component groups resources in the program.
+## Usage
 
-## Design
-
-### Stack ownership
-
-```mermaid
-flowchart TD
-    program[One client-owned environment program] --> dev[dev stack]
-    program --> stage[stage stack]
-    program --> prod[prod stack]
-    program --> preview[One preview stack per feature branch]
-    preview --> resources[Database and application resources together]
-    remote[Existing remote backend] --- dev
-    remote --- stage
-    remote --- prod
-    remote --- preview
-```
-
-### Usage
-
-#### Configure an environment
-
-Use one program for each environment's infrastructure. Its `dev`, `stage`, `prod` and feature-branch preview stacks have separate state. The program contains database and application resources. A shared program can own resources outside these environments.
-
-```yaml
-workspace:
-  infra:
-    bindings:
-      web: {program: environment, artifact: .}
-  projects:
-    - name: environment
-      path: infra/environment
-      infra: {role: program, scope: environment}
-```
-
-Set `PULUMI_BACKEND_URL` to an existing remote backend. Provider SDKs read normal Pulumi configuration and environment variables. Environment maps and cloud project declarations are optional in `premise.yaml`.
-
-For saved backend choices, declare `workspace.infra.backends` and select one with `--backend NAME`. Environment or workspace defaults can select a saved backend. Explicit selection takes precedence over the ambient URL. Optional `environments.ENV.config` supplies non-secret values at initialization. Normal `Pulumi.STACK.yaml` configuration also works.
-
-The backend must exist before initialization. Hosted deployments use a configured remote DIY backend. Local tests can use an absolute `file://` URL with `allow_local: true`. A backend selection changes the state destination. It does not migrate existing state.
+### Create or adopt a program
 
 ```sh
+pm init --infra --infra-language go
+pm init --infra --infra-language typescript --pulumi-version 3.268.0
+# Adopt an existing infra/Pulumi.yaml without changing its source files.
+pm init --infra
+mise run infra:install
+```
+
+Interactive initialization asks whether you need infrastructure and which language you use.
+A new program uses an official empty Pulumi starter. Initialization creates no resources or stack.
+Existing programs retain their runtime and files. A conflicting language stops initialization before writes.
+
+Root `mise.toml` owns the Pulumi version. Initialization preserves existing tool pins unless you pass an explicit version.
+Change `[tools].pulumi` to select another version later. Premise runs every Pulumi command through `mise exec`.
+The action uses the same workspace configuration.
+
+```text
+client/
+├── premise.yaml
+├── mise.toml                  Pulumi pin, runtime tools, infra:install
+├── infra/
+│   ├── Pulumi.yaml            Project name and runtime: go
+│   ├── go.mod
+│   ├── go.sum
+│   ├── main.go                Connect resources and export task-facing values
+│   ├── database.go            Client resource declarations
+│   └── storage.go             Shared by every environment stack
+└── apps/
+    ├── api/mise.toml          migrate, health, rollback
+    ├── worker/mise.toml       migrate, health, rollback
+    └── website/mise.toml      health, rollback
+```
+
+The source files belong to one Go package. File boundaries do not create stacks.
+A TypeScript program uses `runtime: nodejs`, `package.json`, a lockfile, and normal imports:
+
+```text
+infra/
+├── Pulumi.yaml
+├── package.json
+├── package-lock.json
+├── tsconfig.json
+├── index.ts
+├── database.ts
+└── storage.ts
+```
+
+Premise does not register infrastructure projects or copy components from a template registry.
+Import shared code through your language's module system. Published providers own their resource APIs.
+Application and library templates remain supported.
+
+For example, one Go declaration serves every stack:
+
+```go
+package main
+
+import (
+    "github.com/pulumi/pulumi-aws/sdk/v7/go/aws/s3"
+    "github.com/pulumi/pulumi/sdk/v3/go/pulumi"
+)
+
+func main() {
+    pulumi.Run(func(ctx *pulumi.Context) error {
+        bucket, err := s3.NewBucket(ctx, "uploads", &s3.BucketArgs{})
+        if err != nil {
+            return err
+        }
+        ctx.Export("bucketName", bucket.Bucket)
+        ctx.Export("bucketArn", bucket.Arn)
+        return nil
+    })
+}
+```
+
+The TypeScript equivalent uses the same logical resource name:
+
+```ts
+import * as aws from "@pulumi/aws";
+
+const bucket = new aws.s3.Bucket("uploads");
+export const bucketName = bucket.bucket;
+export const bucketArn = bucket.arn;
+```
+
+Declare the SDK and provider versions in the language's dependency files.
+Each selected stack creates its own bucket from this code.
+
+### Select environments and backends
+
+Add this configuration under `workspace` in `premise.yaml`:
+
+```yaml
+infra:
+  directory: infra
+  backend: team
+  backends:
+    team:
+      url: s3://existing-state-bucket/product
+  environments:
+    dev:
+      config: {aws:region: us-east-1}
+    stage:
+      config: {aws:region: us-east-1}
+    prod:
+      config: {aws:region: us-east-1}
+    preview:
+      config: {aws:region: us-east-1}
+```
+
+`--backend NAME` selects a declared backend. The environment's backend overrides the workspace default.
+Without a named selection, set `PULUMI_BACKEND_URL`. Selection does not migrate existing state.
+An absolute `file://` backend requires `allow_local: true` and serves local tests.
+
+```mermaid
+flowchart LR
+  Source["One infra/ program"] --> Dev[dev stack]
+  Source --> Stage[stage stack]
+  Source --> Prod[prod stack]
+  Source --> Preview["preview-branch-hash stack"]
+  Backend["Existing remote backend"] --- Dev
+  Backend --- Stage
+  Backend --- Prod
+  Backend --- Preview
+```
+
+Premise writes declared environment values to `infra/Pulumi.<stack>.yaml` through Pulumi.
+It preserves other keys and Pulumi secret metadata. State stays in the backend.
+Premise also sets `premise:environment`, `premise:branch`, and `premise:stack` configuration values.
+
+```sh
+pm infra auth
 pm infra init --env dev
 pm infra plan --env dev
 pm infra apply --env dev --yes
 pm infra output --env dev
-pm infra test
 ```
 
-A client-owned component needs a project declaration only when Premise should run its task contracts or select its resource targets. It does not need a registry template identifier.
+These commands select the whole stack. They accept no application project argument.
+Use normal Pulumi dependencies inside the program.
 
-```yaml
-workspace:
-  projects:
-    - name: client-resources
-      path: infra/components/client
-      infra: {role: component}
-```
-
-Import the component from the environment program through the language's normal module imports. The Neon/Vercel example demonstrates this composition.
-
-The project argument is optional. Omitting it selects the complete program for the environment. Selecting a component uses its declared resource targets in the same stack. A component does not receive its own stack.
+### Create previews and shared resources
 
 ```sh
-pm infra bind web environment --artifact .output
-pm infra plan --env preview --branch feature/example
+pm infra init --env preview --branch feature/login
+pm infra apply --env preview --branch feature/login --yes
+pm infra destroy --env preview --branch feature/login
 ```
 
-The binding connects the app's artifact path to the program. Initialization supplies `premise:bindings` and an `artifacts` map to the program. A template must consume its declared inputs.
+If you omit `--branch`, Premise reads the current feature branch.
+The branch produces a stable stack name with a hash. No new source code or environment declaration is required.
+Preview destruction removes that stack and can run again safely. Persistent stack destruction requires interactive confirmation.
 
-#### Deploy in order
+Use `--shared` explicitly for a shared stack. An optional `shared_directory` selects another client-owned program.
+The environment program can read shared outputs with Pulumi's normal stack references.
+Environment updates and preview cleanup do not select shared stacks.
 
-```mermaid
-flowchart LR
-    db[Apply database prerequisites] --> migration[Run optional migration tasks]
-    migration --> all[Apply the complete stack including databases]
-    all --> deploy[Run optional extra deployment tasks]
-    deploy --> health[Run health tasks]
-    health --> record[Save the successful release]
-    all -. Failure .-> rollback[Restore the previous application]
-    health -. Failure .-> rollback
-```
-
-Declare the database prerequisite targets and migration task in `workspace.deployment`. Targets identify resource URNs, which are Pulumi's unique resource names. They can contain `{stack}` and `{project}` placeholders. Premise inspects the full preview graph before the targeted update.
-
-```yaml
-workspace:
-  deployment:
-    records: .premise-releases
-    record_outputs: [deploymentId, appURL]
-    prerequisites:
-      - "urn:pulumi:{stack}::{project}::*::db-*"
-    migrations:
-      - project: web
-        task: migrate
-        outputs: {DATABASE_URL: databaseURL}
-    applications:
-      - project: web
-        health: health
-        rollback: rollback
-        outputs: {APP_URL: appURL}
-    recovery:
-      first_deploy: {project: web, task: cleanup}
-```
-
-Include all resources that the database needs in the prerequisite declaration. Premise includes required provider and parent resources. It rejects dependencies outside the selected set. Do not include application resources before the migration barrier.
+### Query saved state
 
 ```sh
-pm deploy plan --env stage
-pm deploy run --env stage --release COMMIT_SHA --artifact web=IMMUTABLE_ARTIFACT_ID
+pm infra query --env stage --output databaseUrl --show-secrets
+pm infra query --env stage --resource uploads --property arn
+pm infra query --env preview --branch feature/login --resource uploads --property id
+pm infra query --env stage --resource uploads --property urn --json
 ```
 
-The executor follows this order through initialization, updates, task hooks, and health checks. Pulumi deploys apps by default. Add a `deploy` task only for work outside Pulumi.
+Queries read the selected stack's saved state without applying or refreshing resources.
+Select exactly one output or resource. Resource selectors accept a logical name or full URN.
+If a logical name matches several resources, use the full URN or add `--type`.
+Properties include `id`, `urn`, `type`, and dotted output paths.
+A missing or ambiguous selection returns a nonzero exit code.
 
-Omit `migrations` when the project has no migration task. An app declares a `deploy` task only when Pulumi does not deploy it:
+Strings print as plain text. Other values print as JSON. `--json` also quotes string values.
+Secret values require `--show-secrets`. Treat its output as a credential and keep it out of logs.
+
+### Declare optional migrations
+
+Each application declares its own `migrate` task in its `mise.toml`.
+Premise discovers this task without running it. Applications without the task produce no migration job.
+
+```toml
+# apps/api/mise.toml
+[tasks.migrate]
+run = "./scripts/migrate"
+```
+
+Premise runs `mise run migrate -- ENVIRONMENT` from the application directory.
+The script receives the environment as its first argument. `PM_BRANCH` identifies a preview branch.
+The application owns its migration tool, credentials, migration history, and resource queries:
+
+```sh
+#!/usr/bin/env bash
+set -euo pipefail
+scope=(--env "$1")
+if [[ "$1" == preview ]]; then scope+=(--branch "$PM_BRANCH"); fi
+export DATABASE_URL
+DATABASE_URL="$(pm infra query "${scope[@]}" --output databaseUrl --show-secrets)"
+exec bun run db:migrate
+```
+
+Premise does not map infrastructure outputs to migration inputs or load fnox automatically for these tasks.
+Use [secret management](../secret-management.md) explicitly for local application credentials.
+CI supplies the variables that the application task needs.
+
+### Order provisioning, migrations, and deployment
+
+Declare database prerequisite targets and application contracts under `workspace`:
 
 ```yaml
-applications:
-  - project: web
-    deploy: deploy
-    health: health
-    rollback: rollback
-    outputs: {APP_URL: appURL}
+infra:
+  directory: infra
+  # Include resource dependencies that must exist before migrations.
+  prerequisites: ["*::database"]
+  # Keep backend and environment declarations from the earlier example.
+deployment:
+  applications:
+    - project: api
+      health: health
+      rollback: rollback
+    - project: worker
+      health: health
+      rollback: rollback
+    - project: website
+      health: health
+      rollback: rollback
+  # Optional: serialize these tasks when they share migration history.
+  migration_groups:
+    shared-history: [api, worker]
+  recovery:
+    first_deploy: {project: api, task: cleanup}
 ```
 
-Keep this declaration inside `workspace.deployment`, with the recovery and record settings above. The infrastructure program must not deploy the same app. Use `--backend NAME` to select another declared backend for an operation.
-
-Migration tasks receive declared stack outputs and application values in their environment. They also receive `PM_ENV`, `PM_BRANCH`, `PM_STACK`, `PM_RELEASE`, and `PM_ARTIFACTS`. The migration tool owns schema history and locking. See [Secret management](../secret-management.md) for local fnox profiles and CI variables.
-
-#### Recover from failure
+Independent migrating applications get separate jobs by default.
+An explicit group runs its members in order within one job.
+A migrating application requires declared prerequisites. Premise does not infer database resources from arbitrary code.
+Prerequisite selection includes the required providers and component parents. Other dependencies require explicit targets.
 
 ```mermaid
 flowchart TD
-    fail[Deployment fails] --> previous{Previous successful release?}
-    previous -->|Yes| restore[Client rollback tasks restore pinned applications]
-    previous -->|No| cleanup[Client first_deploy recovery task]
-    restore --> result[Keep last success and record the failed run]
-    cleanup --> result
+  Start["Acquire environment ownership"] --> DB["Apply prerequisite resources"]
+  DB --> M1["Migration group 1"]
+  DB --> M2["Migration group 2"]
+  M1 --> Gate["All migrations succeeded"]
+  M2 --> Gate
+  Gate --> Apply["Apply full stack, including databases"]
+  Apply --> Deploy["Optional application deploy tasks"]
+  Deploy --> Health["Health checks"]
+  Health --> Record["Remember successful release and artifacts"]
+  Record --> Unlock["Release ownership"]
 ```
 
-The client must keep migrations compatible with the running application. Premise does not infer a down migration. A database recovery task can restore a backup or perform client-defined compensation.
-
-After a rollout or health failure, Premise runs the declared rollback tasks. They receive the previous successful release and artifact identities. `PM_PREVIOUS_OUTPUTS` supplies declared non-secret deployment identities, such as the previous Vercel deployment ID. A task that changes Pulumi resources must preview its targeted recovery first. It must not reapply old database definitions or rerun old migrations.
-
-Declare `first_deploy` recovery for a rollout without a previous release. Optional `provision`, `migration`, and `database` hooks handle other failure phases. Recovery does not fetch application secrets automatically. A hook resolves any required values explicitly. Failed recovery reports both errors and preserves the previous successful record.
-
-The release record stores the previous successful release and artifact IDs. Pulumi state describes the current resources, including partial changes after failure. It cannot identify which full deployment passed migrations and health checks. Program, stack, and backend fields prevent restoring a record from another destination. The record does not copy Pulumi configuration or resource state.
-
-The record directory contains `last-success.json` and `last-run.json` under `PROGRAM/STACK`. This keeps different programs separate when they share a backend. It contains no secret output values. Store the directory durably across CI runners. The composite action restores and saves records in a GCS prefix. `records-url` can select a prefix separate from the state backend. The action appends the program and stack names to that prefix.
-
-The deployment holds a local lock through both updates, migrations and recovery. CI concurrency must serialize that whole sequence with cancellation disabled. Pulumi's backend lock covers each update separately. It does not lock the migration task.
-
-#### Compose template components
-
-```mermaid
-flowchart LR
-    neon[Neon database template] --> db[Generated database component]
-    vercel[Vercel app template] --> web[Generated web component]
-    vercel --> admin[Generated admin component]
-    local[Client-authored component] --> main[Client environment program]
-    db --> main
-    web --> main
-    admin --> main
-    db -. Database outputs .-> web
-    db -. Database outputs .-> admin
-```
-
-Registry templates contain Go project components built with published Pulumi providers. A Neon database template and a Vercel application template are separate components. Neither is a new provider. Premise renders their names and declared questionnaire substitutions when it scaffolds each project.
-
-```text
-registry/
-  premise.yaml                         # template declarations and questions
-  templates/neon-db/
-    component.go                       # Go ComponentResource using Neon SDK
-    go.mod, go.sum, mise.toml
-  templates/vercel-app/
-    component.go                       # Go ComponentResource using Vercel SDK
-    go.mod, go.sum, mise.toml
-
-client/
-  premise.yaml                         # projects, bindings, optional task hooks
-  apps/web/                            # project Mise tasks and app source
-  apps/admin/
-  infra/environment/
-    Pulumi.yaml                        # one Go program, not one program per app
-    main.go                            # imports and composes the components
-    go.mod, go.sum, mise.toml
-    fnox.toml                          # program's selected secret references
-    Pulumi.dev.yaml                    # normal Pulumi configuration, when used
-  infra/components/database/           # generated Neon component
-  infra/components/web-deployment/     # generated Vercel component instance
-  infra/components/admin-deployment/   # another instance of the same template
-  infra/components/client/             # component authored by the client
-```
-
-Generate the Vercel template twice with distinct names and Go module paths. Import both modules and give their constructors distinct Pulumi resource names. You can also instantiate one rendered component twice. Bind each app’s source path separately. Connect the database output to both apps through normal Pulumi outputs.
+An application can set `deploy: deploy` when the full infrastructure update does not deploy it.
+The health and rollback tasks remain explicit. Task arguments use the same environment contract as migrations.
 
 ```sh
-pm g REGISTRY:neon-db --answer name=database
-pm g REGISTRY:vercel-app --answer name=web-deployment
-pm g REGISTRY:vercel-app --answer name=admin-deployment
-pm infra bind web environment --artifact .
-pm infra bind admin environment --artifact .
-pm infra init --env preview
-pm infra plan --env preview
-pm infra apply --env preview --yes
+pm deploy plan --env stage --json
+pm deploy run --env stage --release COMMIT_SHA \
+  --artifact api=IMMUTABLE_REFERENCE,worker=IMMUTABLE_REFERENCE,website=IMMUTABLE_REFERENCE
 ```
 
-The client owns `main.go`, imports, and component wiring. Templates can supply the initial program. `pm infra test` runs its declared test tasks. The [GCS fixture](../../e2e/testdata/pulumi/README.md) exercises the infrastructure CLI against a private live bucket.
+Artifact references identify retained builds, image digests, or provider deployment IDs.
+The client publishes and retains those artifacts. Premise stores references and does not upload local build directories.
+Keep the previous release's artifacts available until recovery no longer needs them.
 
-### API
+### Recover from failure
 
-| API                                            | Responsibility                                             |
-| ---------------------------------------------- | ---------------------------------------------------------- |
-| `InfraStack(options)`                          | Resolve a persistent or branch-specific stack identity.    |
-| `ResolveInfrastructure(root, options)`         | Select the program, backend, config, and resource targets. |
-| `RunInfra(ctx, root, operation, options, ...)` | Invoke Pulumi init, plan, apply, output, or destroy.       |
-| `BindInfra(root, app, program, artifact)`      | Save an app path binding to one program.                   |
-| `TestInfrastructure(ctx, root, project, ...)`  | Run project-owned infra tests.                             |
-| `PlanDeployment` / `ResolveDeploymentPlan`     | Report task order and recovery-record destination.         |
-| `RunDeployment(ctx, root, options, ...)`       | Apply infra with optional task hooks and failure recovery. |
+A failed migration prevents the full update. Applied migrations remain in place.
+Clients must make migrations backward compatible and own database repair.
+For a partial update or failed health check, Premise refreshes state and invokes client rollback tasks.
+First-release cleanup runs when no successful release exists.
+Optional `recovery.provision`, `recovery.migration`, and `recovery.database` tasks handle client-specific repairs.
 
-Provider authentication uses `InfrastructureProvider(name)`, `InfraProvider.EnsureEnvironment(ci)`, and `InfraProvider.Authenticate(...)`. `AuthenticateInfrastructure` runs declared native providers before the root fallback. `EnsureInfrastructureEnvironment` checks required variables before infrastructure work.
+Tasks receive `PM_ENV`, `PM_BRANCH`, `PM_STACK`, `PM_RUN_ID`, `PM_RELEASE`, and JSON `PM_ARTIFACTS`.
+Recovery also receives `PM_FAILED_PHASE`, `PM_PREVIOUS_RELEASE`, JSON `PM_PREVIOUS_ARTIFACTS`, and JSON `PM_PREVIOUS_OUTPUTS`.
+Use these references to restore the application. Do not undo compatible schema migrations automatically.
 
-Infra commands take an optional project. Omitting it selects the complete stack. A component filter uses its declared resource targets inside that stack. `pm deploy run` updates the complete environment, so it does not take a component filter.
+Successful metadata lives under `BACKEND/.premise-releases/PROJECT/STACK` by default.
+Set `deployment.records` to another `s3://` or `gs://` prefix when needed.
+The destination must support conditional object writes and deletion. The AWS CLI or gcloud must be available through Mise.
+An explicit local directory supports tests and local operation. Remote-backend CI rejects runner-local records.
 
-## Implementation Details
+```text
+.premise-releases/PROJECT/STACK/
+├── lock.json                  Owner of the entire deployment
+├── last-success.json          Release and retained artifact references
+├── last-run.json              Original outcome and recovery outcome
+└── runs/
+    ├── RUN_ID.json            Phase state and previous recovery references
+    └── RUN_ID/migrations/
+        └── GROUP.json         One worker's outcome
+```
 
-### Environment identities
+These records describe application releases. Pulumi resource state does not store this application contract.
+A failed release cannot replace the previous successful record. Records contain no application credentials.
+The shared lock covers every phase and blocks overlapping standalone infrastructure changes.
+Failed recovery retains ownership so another release cannot hide the failure.
 
-| Environment | Pulumi stack               | Lifetime                                       |
-| ----------- | -------------------------- | ---------------------------------------------- |
-| `dev`       | `dev`                      | Persistent development infrastructure.         |
-| `stage`     | `stage`                    | Persistent release validation infrastructure.  |
-| `prod`      | `prod`                     | Persistent production infrastructure.          |
-| `preview`   | `preview-BRANCH_SLUG-HASH` | One isolated stack per feature branch.         |
-| `--shared`  | `shared`                   | Optional resources outside environment stacks. |
+For an interrupted run, stop every worker before repair.
+Inspect its run and migration records. A migration still marked `running` blocks automatic recovery.
+Use `pm deploy recover --env ENV --run-id ID` when workers report completion.
+If a stopped worker left a running marker, add `--workers-stopped` only after every worker stops.
+After manual repair, `pm deploy unlock --env ENV --run-id ID` releases only that run's lock.
+For previews, also pass the original `--branch`.
 
-`InfraStack` lowercases the branch, replaces unsupported characters with hyphens, limits the slug to 40 characters, and appends the first five SHA-256 bytes of the original branch. Thus `feature/a` and `feature-a` have separate stacks. Repeated pushes use the same identity; deletion supplies the original branch to destroy it. The CLI infers the current branch when `--env preview` omits `--branch`.
+### Run CI phases
 
-Initialization selects or creates that stack and supplies `premise:environment`, `premise:branch`, `premise:stack`, `premise:bindings`, and the program's `artifacts` map. These are runtime parameters for the same program. Provider accounts, project IDs, and regions remain provider configuration. Declared authentication providers use `pm infra auth`.
+`deployment.yml` is the reusable job graph. Each job selects the same commit, backend, environment, and run ID.
+Fresh runners restore declared stack configuration. Migration workers write separate outcomes to shared storage.
+The full update waits for all workers. A zero-migration deployment skips the matrix and continues directly.
+Recovery waits for all migration jobs, including failed jobs.
 
-The same program creates previews from feature-branch pushes. The configuration supplies branch identity and environment parameters. A new PR or branch-specific program is not required.
+The CLI exposes `deploy start`, `provision`, `migrate --group NAME`, `apply`, `complete`, and `recover`.
+`deploy run` calls these same phases locally. The action exposes matching `deploy-*` commands.
+CI must not run `deploy run` after the migration matrix because it repeats the deployment lifecycle.
 
-The generated workflow pins action and binary version `v0.5.0-rc.243` because it supplies the deployment interface introduced here. Move both pins together after a compatible stable release.
+`on-deploy.yml` remains manual. Feature pushes create previews through `on-commit.yml`.
+Merge and branch-deletion events clean previews through `on-merge.yml`.
+Pull-request validation does not deploy. Cleanup never publishes a release.
 
-The generated `on-deploy.yml` accepts only manual dispatches. `on-commit.yml` creates feature-branch previews. `on-merge.yml` removes previews after a merge or branch deletion. Set `PREMISE_DEPLOY_ENABLED=true` to enable infrastructure deployment. Configure backend selection and provider credentials as described in [Provider setup](../providers/README.md). Mise installs the project-selected tools. `pm infra auth --ci` authenticates declared providers before the optional root `ci:auth` fallback. The preview stack name includes a stable branch hash. Further pushes update the same stack. Set `PREMISE_SECRETS_PROVIDER` to select a native encryption provider for new stacks; existing stacks retain their provider. See [state encryption](../providers/pulumi.md).
+## API
 
-A same-repository PR merge invokes cleanup with its head branch identity. Branch deletion also invokes cleanup, including branches without a merged PR. Cleanup is safe to repeat when the preview stack has already been removed. It removes only that preview stack. Shared resources, project containers and the state backend remain. Cleanup uses the default branch's program, so retain compatible resource definitions there.
+| API                                     | Responsibility                                                             |
+| --------------------------------------- | -------------------------------------------------------------------------- |
+| `InitializeWorkspaceWithInfrastructure` | Stage workspace files and create or adopt a client program.                |
+| `ResolveStackName`                      | Resolve persistent, preview, or explicitly shared stack identity.          |
+| `ResolveInfrastructure`                 | Resolve program directory, backend, and environment configuration.         |
+| `RunInfra`                              | Run pinned Pulumi operations and respect deployment ownership.             |
+| `QueryInfrastructure`                   | Select a non-secret or explicitly requested secret value from saved state. |
+| `PlanMigrations`                        | Discover optional application tasks and ordered groups.                    |
+| `ResolveDeploymentPlan`                 | Describe phases, migration jobs, and durable record destinations.          |
+| `RunDeploymentPhase`                    | Execute one phase using the shared run identity.                           |
+| `RunDeployment`                         | Run phases locally and attempt client recovery after failure.              |
 
-### Interrupted deployments
+`core/pulumix.go` owns CLI invocation and Pulumi plan/state wire formats.
+`core/providers` owns provider authentication, credentials, and object storage operations.
+Core imports no cloud resource SDK. Client fixture modules own their published provider dependencies.
 
-A cancelled process can leave partial resource changes or an interrupted lock. It does not guarantee that recovery tasks ran. Inspect the stack, migration history and last-run record before retrying.
+## Validation
 
-If a stored lock remains, identify its interrupted run before removing it. Do not overwrite a successful release record to clear a failure. Restore the previous app with its pinned inputs and current database state. Record any manual repairs and remaining resources.
-
-### Secret environment
-
-Declare application `secrets` keys on the program. Premise reads local fnox profiles locally and CI variables in CI. Use distinct keys for distinct apps. The program assigns them to components and marks resource inputs with `pulumi.ToSecret`. See [Secret management](../secret-management.md).
-
-## References
-
-- [Secret management](../secret-management.md)
-- [Pulumi targeted updates](https://www.pulumi.com/docs/iac/operations/stack-management/targeted-updates/)
-- [Pulumi state and backends](https://www.pulumi.com/docs/iac/concepts/state-and-backends/)
+Premise's end-to-end harness exercises real Go and TypeScript programs, saved-state queries, PostgreSQL migrations, and automatic artifact recovery.
+The live S3 test creates two isolated preview buckets and managed objects. It checks state reuse and cleanup isolation.
+Cloud checks require explicit test credentials. A skipped check is not live validation.
+See the [S3 fixture](../../e2e/testdata/pulumi/README.md) and [deployment fixture](../../e2e/testdata/deploy/README.md).

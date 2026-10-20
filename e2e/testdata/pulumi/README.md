@@ -1,43 +1,40 @@
-# GCS infrastructure smoke test
+# Live S3 infrastructure test
 
-This fixture contains a local template registry and a small Premise client:
+The client owns a small Go Pulumi program that imports the published AWS provider.
+It creates a private bucket and one managed object for each preview stack.
 
 ```text
-registry/templates/bucket/   Go Pulumi program: one private bucket and one object
-client/premise.yaml         Dummy workspace with one app
-client/apps/dummy/artifact/  The file that pm infra bind supplies to the program
+client/
+├── premise.yaml
+├── mise.toml
+├── infra/
+│   ├── Pulumi.yaml
+│   ├── go.mod
+│   ├── go.sum
+│   └── main.go
+└── apps/dummy/artifact/hello.txt
 ```
 
-`TestInfraGCS` copies the client into a temporary directory, generates the bucket
-program from the local registry, and runs real `pm infra` commands. It checks
-binding, preview, apply, output, uploaded contents, repeated apply, remote state
-from a fresh directory, and destruction. Cleanup runs even when an assertion fails
-and confirms that the test bucket returns HTTP 404. It repeats destruction to
-check that merge cleanup followed by branch deletion is safe. The existing state bucket is
-preserved.
+The Go harness calls real `pm infra` commands. It checks preview, apply, resource and output queries,
+object content through AWS, repeated apply, and saved state from another checkout.
+It creates two previews, destroys one, and proves that the other bucket and object still exist.
+It destroys both and repeats cleanup. The existing backend bucket remains.
 
-The template uses the published GCP provider. It needs no Neon/Vercel accounts,
-application secrets, JavaScript runner, or action-script extraction.
-
-To run locally, authenticate both gcloud and Application Default Credentials:
+Use a dedicated test account and an existing S3 backend:
 
 ```sh
-gcloud auth login
-gcloud auth application-default login
-export GCP_PROJECT_ID=your-test-project
-export PULUMI_BACKEND_URL=gs://your-existing-state-bucket/premise-e2e
+aws sso login --profile premise-test
+export AWS_PROFILE=premise-test
+export AWS_REGION=us-east-1
+export PREMISE_TEST_AWS_ACCOUNT=123456789012
+export PULUMI_BACKEND_URL=s3://EXISTING_STATE_BUCKET/premise-e2e
 mise run e2e:infra
 ```
 
-The identity needs permission to create/delete buckets and objects in the test
-project and to read/write the state prefix. The bucket is private and lives in
-`US`. Every run uses a unique preview stack. `PREMISE_BIN` can select a published
-CLI binary; otherwise the test builds the current checkout. The test explicitly sets
-`PULUMI_CONFIG_PASSPHRASE=""` for its disposable stack; it needs no passphrase CI
-secret.
+The harness checks the actual caller account before resource creation.
+The identity needs bucket/object permissions for disposable resources and read/write access to the backend prefix.
+`PREMISE_BIN` selects a published CLI binary. Without it, the test builds the checkout.
+Normal `go test ./...` skips this test. A skip does not prove live behavior.
 
-The normal `go test ./...` run skips this cloud test. Unit tests in
-`core/infra_test.go`, `core/deploy_test.go`, and `core/secrets_test.go` cover stack
-selection, validation, target safety, migration/recovery ordering and secret
-handling. Deployment tests use fake subprocesses; the bucket smoke test does not
-claim to prove a live database migration or application rollback.
+This bucket test does not prove migrations or application rollback.
+The separate [deployment fixture](../deploy/README.md) checks those behaviors.

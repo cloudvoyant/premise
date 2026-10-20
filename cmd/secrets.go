@@ -1,10 +1,6 @@
 package cmd
 
 import (
-	"fmt"
-	"os/exec"
-	"strings"
-
 	"github.com/cloudvoyant/premise/core"
 	"github.com/spf13/cobra"
 )
@@ -98,21 +94,7 @@ func secretCommandOptions(command *cobra.Command) (root, project, environment, b
 	project, _ = command.Flags().GetString("project")
 	branch, _ = command.Flags().GetString("branch")
 	if environment == "preview" && branch == "" {
-		branch, err = currentFeatureBranch(command, root)
+		branch, err = core.CurrentFeatureBranch(command.Context(), root)
 	}
 	return
-}
-
-func currentFeatureBranch(command *cobra.Command, root string) (string, error) {
-	git := exec.CommandContext(command.Context(), "git", "symbolic-ref", "--short", "HEAD")
-	git.Dir = root
-	output, err := git.Output()
-	if err != nil {
-		return "", fmt.Errorf("preview requires --branch outside a feature-branch checkout")
-	}
-	branch := strings.TrimSpace(string(output))
-	if branch == "main" || branch == "master" {
-		return "", fmt.Errorf("preview requires a feature branch")
-	}
-	return branch, nil
 }

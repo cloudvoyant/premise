@@ -41,9 +41,7 @@ func ContractTasks(kind string) ([]string, error) {
 	if _, err := KindDirectory(kind); err != nil {
 		return nil, err
 	}
-	if kind == "infra" || kind == "infra-component" {
-		return []string{"install", "build", "test", "lint", "lint:fix", "format", "format:check"}, nil
-	}
+
 	tasks := append([]string{}, commonTasks...)
 	if kind == "app" {
 		tasks = append(tasks, appTasks...)

@@ -7,4 +7,4 @@ monorepo_root = true
 _.path = ["{{config_root}}/bin"]
 
 [monorepo]
-config_roots = ["apps/*", "libs/*", "infra/*", "infra/components/*"]
+config_roots = ["apps/*", "libs/*"]

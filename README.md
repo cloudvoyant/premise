@@ -77,8 +77,16 @@ pm update v0.2.1
 
 ## Pulumi environments and application secrets
 
-Use the environment stack commands for infrastructure and the ordered deployment executor for provisioning, migration, full updates and recovery. Application secrets use fnox through Mise. Deployment administration credentials use provider-supported OAuth or CI secrets.
+Clients own their Pulumi programs under `infra/` and choose the language and tool version:
 
-See [infrastructure deployment](docs/modules/infrastructure.md) and [secret management](docs/secret-management.md) for configuration, commands and recovery.
+```sh
+pm init --infra --infra-language go --pulumi-version 3.268.0
+mise run infra:install
+pm infra init --env preview --branch feature/example
+pm infra plan --env preview --branch feature/example
+```
 
-Provider authentication and tool setup are documented in [Provider setup](docs/providers/README.md).
+Configure an existing remote backend before initialization. One program serves separate environment and branch-preview stacks.
+Applications expose optional migration tasks. Premise orders prerequisites, migrations, full updates, health checks, and recovery.
+Local application secrets use fnox through Mise. Deployment credentials use OAuth or protected CI secrets.
+See [infrastructure deployment](docs/modules/infrastructure.md) and [secret management](docs/secret-management.md).

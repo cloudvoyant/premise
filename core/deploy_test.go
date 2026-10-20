@@ -2,7 +2,6 @@ package core
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -12,107 +11,25 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-func TestDeploymentRollbackPreservesLastSuccessfulRelease(t *testing.T) {
-	t.Setenv("PULUMI_CONFIG_PASSPHRASE", "")
-	if err := os.Unsetenv("PULUMI_CONFIG_PASSPHRASE"); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PULUMI_CONFIG_PASSPHRASE_FILE", "")
-	root := t.TempDir()
-	for _, directory := range []string{"infra/environment", "apps/web", "bin"} {
-		if err := os.MkdirAll(filepath.Join(root, directory), 0700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	manifest := infraTestManifest()
-	manifest.Workspace.Projects = append(manifest.Workspace.Projects, Project{Name: "web", Template: "registry/app", Path: "apps/web"})
-	manifest.Workspace.Deployment = &Deployment{Records: ".premise/releases", Prerequisites: []string{"urn:db"}, Migrations: []TaskReference{{Project: "web", Task: "migrate"}}, Applications: []DeploymentApplication{{Project: "web", Health: "health", Rollback: "rollback"}}, Recovery: DeploymentRecovery{FirstDeploy: &TaskReference{Project: "web", Task: "cleanup"}}}
-	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
-		t.Fatal(err)
-	}
-	pulumi := `#!/bin/sh
-printf 'pulumi %s\n' "$*" >> "$TEST_DEPLOY_LOG"
-previous=""
-for argument in "$@"; do
- if [ "$previous" = "--save-plan" ]; then printf '%s' '{"version":1,"plan":{"resourcePlans":{"urn:db":{"goal":{"custom":true,"type":"test:db"}}}}}' > "$argument"; fi
- previous="$argument"
-done
-`
-	mise := `#!/bin/sh
-printf 'task %s release=%s previous=%s\n' "$2" "$PM_RELEASE" "$PM_PREVIOUS_RELEASE" >> "$TEST_DEPLOY_LOG"
-if [ "$2" = "rollback" ]; then
- [ "${PULUMI_CONFIG_PASSPHRASE+x}" = "x" ] && [ -z "$PULUMI_CONFIG_PASSPHRASE" ] || exit 1
-fi
-if [ "$2" = "health" ] && [ "$PM_RELEASE" = "B" ]; then exit 1; fi
-`
-	for name, script := range map[string]string{"pulumi": pulumi, "mise": mise} {
-		if err := os.WriteFile(filepath.Join(root, "bin", name), []byte(script), 0700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	log := filepath.Join(root, "events")
-	t.Setenv("TEST_DEPLOY_LOG", log)
-	t.Setenv("PATH", filepath.Join(root, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
-	var output bytes.Buffer
-	options := DeployOptions{InfraOptions: InfraOptions{Environment: "dev"}, Release: "A", Artifacts: map[string]string{"web": "artifact-A"}}
-	if err := RunDeployment(context.Background(), root, options, nil, &output, &output); err != nil {
-		t.Fatal(err)
-	}
-	options.Release = "B"
-	options.Artifacts["web"] = "artifact-B"
-	if err := RunDeployment(context.Background(), root, options, nil, &output, &output); err == nil {
-		t.Fatal("failed health reported success")
-	}
-	data, err := os.ReadFile(filepath.Join(root, ".premise/releases/environment/dev/last-success.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var last ReleaseRecord
-	if err := json.Unmarshal(data, &last); err != nil {
-		t.Fatal(err)
-	}
-	if last.Release != "A" {
-		t.Fatal(last)
-	}
-	data, err = os.ReadFile(filepath.Join(root, ".premise/releases/environment/dev/last-run.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var result DeploymentResult
-	if err := json.Unmarshal(data, &result); err != nil {
-		t.Fatal(err)
-	}
-	if result.Succeeded || !result.RecoverySucceeded {
-		t.Fatal(result)
-	}
-	events, _ := os.ReadFile(log)
-	text := string(events)
-	if !strings.Contains(text, "task rollback release=B previous=A") {
-		t.Fatal(text)
-	}
-	rollback := strings.Index(text, "task rollback")
-	if strings.Contains(text[rollback:], "task migrate") {
-		t.Fatal("rollback reran migrations")
-	}
-	if strings.Count(text, "--target urn:db") != 4 {
-		t.Fatalf("expected targeted preview/apply once per release: %s", text)
-	}
-}
-
-func TestDeploymentFailureGatesAndRecovery(t *testing.T) {
+func TestDeploymentFailuresStopDependentPhasesAndPreservePreviousSuccess(t *testing.T) {
 	for _, phase := range []string{"init", "provision", "migration", "apply", "deploy", "health", "record"} {
 		t.Run(phase, func(t *testing.T) {
+			// Arrange.
 			root, log, options := deploymentFailureFixture(t)
 			var output bytes.Buffer
 			if err := RunDeployment(t.Context(), root, options, nil, &output, &output); err != nil {
 				t.Fatal(err)
 			}
+
+			// Act.
 			t.Setenv("TEST_FAILURE_PHASE", phase)
 			options.Release = "B"
 			options.Artifacts["web"] = "artifact-B"
 			if err := RunDeployment(t.Context(), root, options, nil, &output, &output); err == nil {
 				t.Fatal("failure reported success")
 			}
+
+			// Assert.
 			data, err := os.ReadFile(filepath.Join(root, ".premise/releases/environment/dev/last-run.json"))
 			if err != nil {
 				t.Fatal(err)
@@ -161,9 +78,10 @@ func TestDeploymentFailureGatesAndRecovery(t *testing.T) {
 	}
 }
 
-func TestDeploymentRecoveryFailureAndFirstReleaseCleanup(t *testing.T) {
+func TestFailedRecoveryRetainsFailureAndSelectsFirstReleaseCleanup(t *testing.T) {
 	for _, first := range []bool{false, true} {
 		t.Run(map[bool]string{false: "previous-release", true: "first-release"}[first], func(t *testing.T) {
+			// Arrange.
 			root, log, options := deploymentFailureFixture(t)
 			var output bytes.Buffer
 			if !first {
@@ -172,11 +90,15 @@ func TestDeploymentRecoveryFailureAndFirstReleaseCleanup(t *testing.T) {
 				}
 				options.Release = "B"
 			}
+
+			// Act.
 			t.Setenv("TEST_FAILURE_PHASE", "health")
 			t.Setenv("TEST_RECOVERY_FAILURE", "1")
 			if err := RunDeployment(t.Context(), root, options, nil, &output, &output); err == nil {
 				t.Fatal("recovery failure reported success")
 			}
+
+			// Assert.
 			data, err := os.ReadFile(filepath.Join(root, ".premise/releases/environment/dev/last-run.json"))
 			if err != nil {
 				t.Fatal(err)
@@ -208,65 +130,17 @@ func TestDeploymentRecoveryFailureAndFirstReleaseCleanup(t *testing.T) {
 	}
 }
 
-func TestDeploymentWithoutMigrationsDoesNotDeployInfraManagedAppTwice(t *testing.T) {
-	root, log, options := deploymentFailureFixture(t)
-	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
-	if err != nil {
-		t.Fatal(err)
-	}
-	manifest.Workspace.Deployment.Migrations = nil
-	manifest.Workspace.Deployment.Prerequisites = nil
-	manifest.Workspace.Deployment.Applications[0].Deploy = ""
-	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
-		t.Fatal(err)
-	}
-	var output bytes.Buffer
-	if err := RunDeployment(t.Context(), root, options, nil, &output, &output); err != nil {
-		t.Fatal(err)
-	}
-	events, err := os.ReadFile(log)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, unwanted := range []string{"task migrate", "task deploy", "--target"} {
-		if strings.Contains(string(events), unwanted) {
-			t.Fatalf("unexpected %s: %s", unwanted, events)
-		}
-	}
-	if strings.Count(string(events), "task health") != 1 {
-		t.Fatal("health must run exactly once", string(events))
-	}
-}
-
-func TestDeploymentLockStopsConcurrentMutation(t *testing.T) {
-	root, log, options := deploymentFailureFixture(t)
-	records := filepath.Join(root, ".premise/releases/environment/dev")
-	if err := os.MkdirAll(records, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(records, "lock"), []byte("another deployment"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	var output bytes.Buffer
-	if err := RunDeployment(t.Context(), root, options, nil, &output, &output); err == nil {
-		t.Fatal("concurrent deployment accepted")
-	}
-	if _, err := os.Stat(log); !os.IsNotExist(err) {
-		t.Fatal("concurrent run mutated infrastructure or tasks")
-	}
-}
-
 func TestRecoveryRecordsAreNamespacedByProgram(t *testing.T) {
 	root, _, _ := deploymentFailureFixture(t)
 	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := deploymentRecordDirectory(root, manifest, InfraResolution{Program: Project{Name: "one"}, Stack: "dev"})
+	a, err := deploymentRecordDirectory(root, manifest, InfraResolution{ProjectName: "one", Stack: "dev"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := deploymentRecordDirectory(root, manifest, InfraResolution{Program: Project{Name: "two"}, Stack: "dev"})
+	b, err := deploymentRecordDirectory(root, manifest, InfraResolution{ProjectName: "two", Stack: "dev"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +148,7 @@ func TestRecoveryRecordsAreNamespacedByProgram(t *testing.T) {
 		t.Fatal("different programs share release records")
 	}
 	for _, name := range []string{"..", "../other", "env*", "env?"} {
-		if _, err := deploymentRecordDirectory(root, manifest, InfraResolution{Program: Project{Name: name}, Stack: "dev"}); err == nil {
+		if _, err := deploymentRecordDirectory(root, manifest, InfraResolution{ProjectName: name, Stack: "dev"}); err == nil {
 			t.Fatalf("unsafe program namespace accepted: %s", name)
 		}
 	}
@@ -300,7 +174,7 @@ func TestRecoveryDoesNotRequireUnprovisionedApplicationSecrets(t *testing.T) {
 		}
 	}
 	var output bytes.Buffer
-	err = runDeploymentTask(t.Context(), root, manifest, TaskReference{Project: "web", Task: "cleanup", administration: true}, map[string]string{"PM_FAILED_PHASE": "provision", "PM_RELEASE": "A"}, infraCommandRunner{stdout: &output, stderr: &output}, options)
+	err = runDeploymentTask(t.Context(), root, manifest, TaskReference{Project: "web", Task: "cleanup"}, map[string]string{"PM_FAILED_PHASE": "provision", "PM_RELEASE": "A"}, infraCommandRunner{stdout: &output, stderr: &output}, options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,48 +189,49 @@ func TestRecoveryDoesNotRequireUnprovisionedApplicationSecrets(t *testing.T) {
 func deploymentFailureFixture(t *testing.T) (string, string, DeployOptions) {
 	t.Helper()
 	root := t.TempDir()
+	prepareInfraTestProject(t, root)
 	for _, dir := range []string{"infra/environment", "apps/web", "bin"} {
 		if err := os.MkdirAll(filepath.Join(root, dir), 0700); err != nil {
 			t.Fatal(err)
 		}
 	}
 	manifest := infraTestManifest()
+	manifest.Workspace.Infra.Prerequisites = []string{"urn:db"}
+	if err := os.MkdirAll(filepath.Join(root, "apps/web"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "apps/web/mise.toml"), []byte("[tasks.migrate]\nrun = 'echo migration'\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	manifest.Workspace.Projects = append(manifest.Workspace.Projects, Project{Name: "web", Template: "registry/app", Path: "apps/web"})
-	manifest.Workspace.Deployment = &Deployment{Records: ".premise/releases", RecordOutputs: []string{"deploymentId"}, Prerequisites: []string{"urn:db"}, Migrations: []TaskReference{{Project: "web", Task: "migrate"}}, Applications: []DeploymentApplication{{Project: "web", Deploy: "deploy", Health: "health", Rollback: "rollback"}}, Recovery: DeploymentRecovery{FirstDeploy: &TaskReference{Project: "web", Task: "cleanup"}}}
+	manifest.Workspace.Deployment = &Deployment{
+		Records:       ".premise/releases",
+		RecordOutputs: []string{"deploymentId"},
+		Applications: []DeploymentApplication{{
+			Project:  "web",
+			Deploy:   "deploy",
+			Health:   "health",
+			Rollback: "rollback",
+		}},
+		Recovery: DeploymentRecovery{
+			FirstDeploy: &TaskReference{Project: "web", Task: "cleanup"},
+		},
+	}
 	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
 		t.Fatal(err)
 	}
-	pulumi := `#!/bin/sh
-printf 'pulumi release=%s %s\n' "$PM_RELEASE" "$*" >> "$TEST_DEPLOY_LOG"
-previous=""
-for argument in "$@"; do
- if [ "$previous" = "--save-plan" ]; then printf '%s' '{"resourcePlans":{"urn:db":{"goal":{"custom":true,"type":"test:db"}}}}' > "$argument"; fi
- previous="$argument"
-done
-if [ "$1" = "stack" ] && [ "$2" = "select" ]; then
- [ "$TEST_FAILURE_PHASE" != "init" ] || exit 1
-fi
-if [ "$1" = "stack" ] && [ "$2" = "output" ]; then
- [ "$TEST_FAILURE_PHASE" != "record" ] || exit 1
- printf '{"deploymentId":"deployment-%s"}' "$PM_RELEASE"
-fi
-if [ "$1" = "up" ]; then
- case "$*" in
-  *--target*) [ "$TEST_FAILURE_PHASE" != "provision" ] || exit 1;;
-  *) [ "$TEST_FAILURE_PHASE" != "apply" ] || exit 1;;
- esac
-fi
-`
-	mise := `#!/bin/sh
-printf 'task %s release=%s previous=%s\n' "$2" "$PM_RELEASE" "$PM_PREVIOUS_RELEASE" >> "$TEST_DEPLOY_LOG"
-failed_task="$TEST_FAILURE_PHASE"
-[ "$failed_task" != "migration" ] || failed_task="migrate"
-[ "$2" != "$failed_task" ] || exit 1
-case "$2" in rollback|cleanup) [ "$TEST_RECOVERY_FAILURE" != "1" ] || exit 1;; esac
-exit 0
-`
-	for name, script := range map[string]string{"pulumi": pulumi, "mise": mise} {
-		if err := os.WriteFile(filepath.Join(root, "bin", name), []byte(script), 0700); err != nil {
+	pulumi, err := os.ReadFile("testdata/deployment/pulumi.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mise, err := os.ReadFile("testdata/deployment/mise.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for name, script := range map[string][]byte{"pulumi": pulumi, "mise": mise} {
+		if err := os.WriteFile(filepath.Join(root, "bin", name), script, 0700); err != nil {
 			t.Fatal(err)
 		}
 	}

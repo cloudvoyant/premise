@@ -3,7 +3,6 @@ package core
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/cloudvoyant/premise/core/providers"
 )
 
 // ProjectSecrets declares application keys and fnox profiles, never secret values.
@@ -31,7 +32,7 @@ type ProjectSecrets struct {
 // It never prints secret values or provider diagnostics.
 func LoadProjectSecrets(ctx context.Context, root, project, environment, branch string) (map[string]string, error) {
 	if runningInCI() {
-		if _, err := InfraStack(InfraOptions{Environment: environment, Branch: branch}); err != nil {
+		if _, err := ResolveStackName(InfraOptions{Environment: environment, Branch: branch}); err != nil {
 			return nil, err
 		}
 		manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
@@ -167,27 +168,8 @@ func SyncProjectSecrets(ctx context.Context, root, project, environment, branch,
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		var command *exec.Cmd
-		if ci == "github" {
-			command = exec.CommandContext(ctx, "gh", "secret", "set", key, "--repo", repository, "--env", environment)
-		} else {
-			probe := exec.CommandContext(ctx, "glab", "variable", "get", key, "--repo", repository, "--scope", environment)
-			probe.Dir = root
-			var diagnostics bytes.Buffer
-			probe.Stderr = &diagnostics
-			operation := "update"
-			if err := probe.Run(); err != nil {
-				if !strings.Contains(diagnostics.String(), "404") {
-					return fmt.Errorf("inspect CI secret %s failed", key)
-				}
-				operation = "set"
-			}
-			command = exec.CommandContext(ctx, "glab", "variable", operation, key, "--repo", repository, "--scope", environment, "--masked", "--raw")
-		}
-		command.Dir = root
-		command.Stdin = strings.NewReader(values[key])
-		if err := command.Run(); err != nil {
-			return fmt.Errorf("sync CI secret %s failed; previous keys can already be updated", key)
+		if err := providers.SyncCISecret(ctx, root, ci, repository, environment, key, values[key]); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -197,12 +179,7 @@ func SyncProjectSecrets(ctx context.Context, root, project, environment, branch,
 
 var secretKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-var deploymentSecretKeys = map[string]bool{
-	"NEON_API_KEY": true, "NEON_API_TOKEN": true, "VERCEL_TOKEN": true,
-	"VERCEL_API_TOKEN": true, "GH_TOKEN": true, "GITHUB_TOKEN": true,
-	"GITLAB_TOKEN": true, "PULUMI_ACCESS_TOKEN": true,
-	"PULUMI_CONFIG_PASSPHRASE": true,
-}
+var deploymentSecretKeys = providers.AdministrationSecretKeys()
 
 type secretReader interface {
 	Read(context.Context, string, string, string, []string) (map[string]string, error)
@@ -210,42 +187,7 @@ type secretReader interface {
 type commandSecretReader struct{}
 
 func (commandSecretReader) Read(ctx context.Context, directory, config, profile string, keys []string) (map[string]string, error) {
-	command := exec.CommandContext(ctx, "mise", "exec", "fnox@1.39.0", "--", "fnox", "--config", config, "--profile", profile, "--no-defaults", "--no-daemon", "--non-interactive", "--if-missing", "error", "env", "--json", "--keys", strings.Join(keys, ","))
-	command.Dir = directory
-	// Avoid accidental profile/config overrides and verbose provider logs.
-	for _, entry := range appSecretEnvironment(os.Environ(), nil) {
-		if !strings.HasPrefix(entry, "FNOX_") && !strings.HasPrefix(entry, "RUST_LOG=") {
-			command.Env = append(command.Env, entry)
-		}
-	}
-	var output bytes.Buffer
-	command.Stdout = &output
-	// Provider diagnostics can contain credentials; report the key, never their text.
-	if err := command.Run(); err != nil {
-		return nil, errors.New("resolve application secrets: fnox failed")
-	}
-	var result struct {
-		Schema  int               `json:"schema"`
-		Set     map[string]string `json:"set"`
-		Files   map[string]string `json:"files"`
-		Remove  []string          `json:"remove"`
-		Missing []string          `json:"missing"`
-		Leases  []string          `json:"leases"`
-	}
-	if err := json.Unmarshal(output.Bytes(), &result); err != nil || result.Schema != 1 {
-		return nil, errors.New("invalid fnox environment response")
-	}
-	if len(result.Files) > 0 || len(result.Leases) > 0 || len(result.Missing) > 0 {
-		return nil, errors.New("pm secrets requires resolved scalar secrets; use fnox exec for files or leases")
-	}
-	// This adapter returns scalar values, not a complete process environment. Refuse
-	// inherited variables that fnox would remove rather than silently forwarding them.
-	for _, key := range result.Remove {
-		if os.Getenv(key) != "" && !deploymentSecretKeys[key] && !strings.HasPrefix(key, "FNOX_") && key != "RUST_LOG" {
-			return nil, fmt.Errorf("fnox requires removing inherited %s; unset it or use fnox exec", key)
-		}
-	}
-	return result.Set, nil
+	return (providers.Fnox{Environment: appSecretEnvironment(os.Environ(), nil)}).Read(ctx, directory, config, profile, keys)
 }
 
 func validateProjectSecrets(project Project) error {
@@ -299,7 +241,7 @@ func loadProjectSecrets(ctx context.Context, root, name, environment, branch str
 		if profile == "" {
 			return nil, fmt.Errorf("project %s has no secret profile for %s", name, environment)
 		}
-		stack, err := InfraStack(InfraOptions{Environment: environment, Branch: branch})
+		stack, err := ResolveStackName(InfraOptions{Environment: environment, Branch: branch})
 		if err != nil {
 			return nil, err
 		}

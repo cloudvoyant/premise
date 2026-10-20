@@ -1,0 +1,5 @@
+[tasks.health]
+run = "../../bin/tasks health"
+
+[tasks.rollback]
+run = "../../bin/tasks rollback"

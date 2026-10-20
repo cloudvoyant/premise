@@ -2,7 +2,6 @@ package e2e_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -15,106 +14,121 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-// TestInfraGCS exercises the real CLI, a local template and a disposable GCS bucket.
-func TestInfraGCS(t *testing.T) {
-	if os.Getenv("PREMISE_TEST_GCS") != "1" {
-		t.Skip("set PREMISE_TEST_GCS=1 to create and destroy a live test bucket")
+func TestInfraS3CreatesIsolatedBucketsAndPreservesOtherPreviewOnCleanup(t *testing.T) {
+	// Arrange.
+	if os.Getenv("PREMISE_TEST_S3") != "1" {
+		t.Skip("set PREMISE_TEST_S3=1 with an explicit AWS test account and remote backend")
 	}
-	for _, key := range []string{"GCP_PROJECT_ID", "PULUMI_BACKEND_URL"} {
-		if os.Getenv(key) == "" {
-			t.Fatalf("%s is required", key)
-		}
+	account := os.Getenv("PREMISE_TEST_AWS_ACCOUNT")
+	if account == "" || !strings.HasPrefix(os.Getenv("PULUMI_BACKEND_URL"), "s3://") {
+		t.Fatal("PREMISE_TEST_AWS_ACCOUNT and an existing s3:// PULUMI_BACKEND_URL are required")
 	}
-	if !strings.HasPrefix(os.Getenv("PULUMI_BACKEND_URL"), "gs://") {
-		t.Fatal("PULUMI_BACKEND_URL must select an existing GCS state bucket")
-	}
-	for _, tool := range []string{"mise", "pulumi", "gcloud"} {
+	for _, tool := range []string{"mise", "aws"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Fatal(err)
 		}
 	}
-	binary := os.Getenv("PREMISE_BIN")
-	if binary == "" {
-		binary = filepath.Join(t.TempDir(), "pm")
-		gcsCommand(t, repositoryRoot(t), "go", "build", "-o", binary, ".")
+	if actual := strings.TrimSpace(infraCommand(t, repositoryRoot(t), "aws", "sts", "get-caller-identity", "--query", "Account", "--output", "text")); actual != account {
+		t.Fatalf("AWS caller account %s does not match explicitly selected test account %s", actual, account)
 	}
-	t.Setenv("PULUMI_HOME", t.TempDir())
-	t.Setenv("PULUMI_CONFIG_PASSPHRASE", "")
-	fixture := filepath.Join(repositoryRoot(t), "e2e/testdata/pulumi")
+	binary := premiseBinary(t)
 	client := filepath.Join(t.TempDir(), "client")
-	copyGCSFixture(t, filepath.Join(fixture, "client"), client)
-	gcsCommand(t, client, binary, "g", filepath.Join(fixture, "registry")+":bucket", "--answer", "name=environment")
-	gcsCommand(t, client, binary, "infra", "bind", "dummy", "environment", "--artifact", "artifact")
-	gcsCommand(t, client, binary, "infra", "test", "environment")
-
-	branch := fmt.Sprintf("feature/gcs-%d", time.Now().UnixNano())
-	scope := []string{"--env", "preview", "--branch", branch}
-	infra := func(operation string, args ...string) string {
-		arguments := append([]string{"infra", operation}, scope...)
-		return gcsCommand(t, client, binary, append(arguments, args...)...)
+	copyInfraFixture(t, filepath.Join(repositoryRoot(t), "e2e/testdata/pulumi/client"), client)
+	infraCommand(t, client, "mise", "run", "infra:install")
+	branches := []string{fmt.Sprintf("feature/s3-a-%d", time.Now().UnixNano()), fmt.Sprintf("feature/s3-b-%d", time.Now().UnixNano())}
+	buckets := make([]string, len(branches))
+	operation := func(root, branch, name string, args ...string) string {
+		arguments := []string{"infra", name, "--env", "preview", "--branch", branch}
+		return infraCommand(t, root, binary, append(arguments, args...)...)
 	}
-	infra("init", "--secrets-provider", "passphrase")
-	var bucket string
 	t.Cleanup(func() {
-		// Cleanup has its own context so a failed assertion cannot cancel destruction.
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		defer cancel()
-		// Merge cleanup may be followed by the same branch's deletion event.
-		for attempt := 1; attempt <= 2; attempt++ {
-			command := exec.CommandContext(ctx, binary, append([]string{"infra", "destroy"}, scope...)...)
-			command.Dir = client
-			if output, err := command.CombinedOutput(); err != nil {
-				t.Errorf("cleanup attempt %d failed for branch %s, bucket %s: %v\n%s", attempt, branch, bucket, err, output)
-				return
+		for i, branch := range branches {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			for attempt := 0; attempt < 2; attempt++ {
+				command := exec.CommandContext(ctx, binary, "infra", "destroy", "--env", "preview", "--branch", branch)
+				command.Dir = client
+				command.Env = append(os.Environ(), "MISE_TRUSTED_CONFIG_PATHS="+client)
+				if output, err := command.CombinedOutput(); err != nil {
+					t.Errorf("cleanup %s: %v\n%s", branch, err, output)
+					break
+				}
 			}
-		}
-		if bucket != "" {
-			check := exec.CommandContext(ctx, "gcloud", "storage", "buckets", "describe", "gs://"+bucket)
-			if output, err := check.CombinedOutput(); err == nil || !strings.Contains(string(output), "404") {
-				t.Errorf("could not confirm bucket %s was deleted: %v\n%s", bucket, err, output)
+			if buckets[i] != "" {
+				check := exec.CommandContext(ctx, "aws", "s3api", "head-bucket", "--bucket", buckets[i])
+				if output, err := check.CombinedOutput(); err == nil || !strings.Contains(string(output), "404") {
+					t.Errorf("could not verify deletion of %s: %v\n%s", buckets[i], err, output)
+				}
 			}
+			cancel()
 		}
 	})
-	infra("plan")
-	infra("apply", "--yes")
-	outputs := map[string]string{}
-	if err := json.Unmarshal([]byte(infra("output")), &outputs); err != nil {
-		t.Fatal(err)
-	}
-	bucket = outputs["bucketName"]
-	if bucket == "" || outputs["objectName"] != "hello.txt" {
-		t.Fatalf("unexpected stack outputs: %v", outputs)
-	}
-	object := "gs://" + bucket + "/" + outputs["objectName"]
-	if got := gcsCommand(t, client, "gcloud", "storage", "cat", object); got != "Hello from the Premise GCS fixture.\n" {
-		t.Fatalf("bound artifact content = %q", got)
-	}
-	infra("apply", "--yes")
 
-	// A fresh source directory must recover the same remote stack and bucket.
+	// Act.
+	for i, branch := range branches {
+		operation(client, branch, "init")
+		operation(client, branch, "plan")
+		operation(client, branch, "apply", "--yes")
+		buckets[i] = strings.TrimSpace(operation(client, branch, "query", "--output", "bucketName"))
+		arn := strings.TrimSpace(operation(client, branch, "query", "--resource", "storage", "--property", "arn"))
+		if buckets[i] == "" || !strings.HasSuffix(arn, ":s3:::"+buckets[i]) {
+			t.Fatalf("unexpected bucket/ARN: %q %q", buckets[i], arn)
+		}
+		if exported := strings.TrimSpace(operation(client, branch, "query", "--output", "bucketArn")); exported != arn {
+			t.Fatalf("resource ARN %q differs from export %q", arn, exported)
+		}
+		object := infraCommand(t, client, "aws", "s3", "cp", "s3://"+buckets[i]+"/hello.txt", "-")
+		if object != "Hello from the Premise S3 fixture.\n" {
+			t.Fatalf("unexpected object content: %q", object)
+		}
+	}
+	operation(client, branches[0], "apply", "--yes")
 	fresh := filepath.Join(t.TempDir(), "client")
-	copyGCSFixture(t, client, fresh)
-	gcsCommand(t, fresh, binary, append([]string{"infra", "init"}, scope...)...)
-	var recovered map[string]string
-	if err := json.Unmarshal([]byte(gcsCommand(t, fresh, binary, append([]string{"infra", "output"}, scope...)...)), &recovered); err != nil {
-		t.Fatal(err)
+	copyInfraFixture(t, client, fresh)
+	operation(fresh, branches[0], "init")
+	recovered := strings.TrimSpace(operation(fresh, branches[0], "query", "--output", "bucketName"))
+	operation(fresh, branches[0], "plan")
+	operation(client, branches[0], "destroy")
+
+	// Assert.
+	if buckets[0] == buckets[1] {
+		t.Fatal("different preview stacks share a bucket")
 	}
-	if recovered["bucketName"] != bucket {
-		t.Fatalf("fresh client recovered %q, want %q", recovered["bucketName"], bucket)
+	if recovered != buckets[0] {
+		t.Fatalf("fresh checkout recovered %q, want %q", recovered, buckets[0])
 	}
-	gcsCommand(t, fresh, binary, append([]string{"infra", "plan"}, scope...)...)
-	t.Logf("Verified generation, binding, preview/apply/reapply, object contents and remote state: %s", object)
+	if object := infraCommand(t, client, "aws", "s3", "cp", "s3://"+buckets[1]+"/hello.txt", "-"); object != "Hello from the Premise S3 fixture.\n" {
+		t.Fatal("destroying one preview changed the other")
+	}
+	t.Logf("Verified real S3 buckets, managed objects, ARN queries, remote state, and preview isolation: %s, %s", buckets[0], buckets[1])
 }
 
 // Private helpers ------------------------------------------------------------
 
-func gcsCommand(t *testing.T, directory, name string, arguments ...string) string {
+func premiseBinary(t *testing.T) string {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	if binary := os.Getenv("PREMISE_BIN"); binary != "" {
+		resolved, err := exec.LookPath(binary)
+		if err != nil {
+			t.Fatal(err)
+		}
+		absolute, err := filepath.Abs(resolved)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return absolute
+	}
+	binary := filepath.Join(t.TempDir(), "pm")
+	infraCommand(t, repositoryRoot(t), "go", "build", "-o", binary, ".")
+	return binary
+}
+
+func infraCommand(t *testing.T, directory, name string, arguments ...string) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	command := exec.CommandContext(ctx, name, arguments...)
 	command.Dir = directory
-	// Keep JSON stdout separate from Pulumi's progress and diagnostic output.
+	command.Env = append(os.Environ(), "MISE_TRUSTED_CONFIG_PATHS="+directory)
 	var diagnostics strings.Builder
 	command.Stderr = &diagnostics
 	output, err := command.Output()
@@ -124,14 +138,13 @@ func gcsCommand(t *testing.T, directory, name string, arguments ...string) strin
 	return string(output)
 }
 
-func copyGCSFixture(t *testing.T, source, destination string) {
+func copyInfraFixture(t *testing.T, source, destination string) {
 	t.Helper()
 	err := filepath.WalkDir(source, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		// Copy source only; stack files and local Pulumi state must not travel.
-		if entry.Name() == ".pulumi" || (strings.HasPrefix(entry.Name(), "Pulumi.") && entry.Name() != "Pulumi.yaml") {
+		if entry.Name() == ".pulumi" || entry.Name() == "node_modules" || (strings.HasPrefix(entry.Name(), "Pulumi.") && entry.Name() != "Pulumi.yaml") {
 			if entry.IsDir() {
 				return filepath.SkipDir
 			}
@@ -143,13 +156,20 @@ func copyGCSFixture(t *testing.T, source, destination string) {
 		}
 		target := filepath.Join(destination, relative)
 		if entry.IsDir() {
-			return os.MkdirAll(target, 0o755)
+			return os.MkdirAll(target, 0755)
+		}
+		if !entry.Type().IsRegular() {
+			return fmt.Errorf("fixture contains a non-regular file: %s", path)
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(target, data, 0o644)
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, info.Mode().Perm())
 	})
 	if err != nil {
 		t.Fatal(err)

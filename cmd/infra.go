@@ -26,50 +26,75 @@ func InfraCommand() *cobra.Command {
 		InfraPlanCommand(),
 		InfraApplyCommand(),
 		InfraOutputCommand(),
+		InfraQueryCommand(),
 		InfraDestroyCommand(),
-		InfraBindCommand(),
-		InfraTestCommand(),
 	)
+	return command
+}
+
+// InfraQueryCommand creates the query command for saved resource data.
+func InfraQueryCommand() *cobra.Command {
+	var query core.InfraQuery
+	command := &cobra.Command{
+		Use:   "query",
+		Short: "Read a saved resource property or exported stack output",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			root, err := premiseRoot()
+			if err != nil {
+				return err
+			}
+			options, err := resolvedInfraCommandOptions(cmd, root)
+			if err != nil {
+				return err
+			}
+			return core.QueryInfrastructure(cmd.Context(), root, options, query, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
+	addInfraFlags(command)
+	command.Flags().StringVar(&query.Output, "output", "", "Exported stack output name")
+	command.Flags().StringVar(&query.Resource, "resource", "", "Resource logical name or full Pulumi URN")
+	command.Flags().StringVar(&query.Type, "type", "", "Exact resource type to disambiguate a logical name")
+	command.Flags().StringVar(&query.Property, "property", "", "Resource property path, id, urn, or type")
+	command.Flags().BoolVar(&query.JSON, "json", false, "Encode the selected value as JSON")
+	command.Flags().BoolVar(&query.ShowSecrets, "show-secrets", false, "Explicitly decrypt and print the selected secret value")
 	return command
 }
 
 // InfraInitCommand creates the init command.
 func InfraInitCommand() *cobra.Command {
 	command := &cobra.Command{
-		Use:   "init [project]",
+		Use:   "init",
 		Short: "Initialize an environment stack",
-		Args:  cobra.MaximumNArgs(1),
+		Args:  cobra.NoArgs,
 		RunE:  func(cmd *cobra.Command, args []string) error { return runInfraCommand(cmd, args, "init") },
 	}
 	addInfraFlags(command)
-	command.Flags().Bool("all", false, "Select the complete environment program")
 	return command
 }
 
 // InfraPlanCommand creates the plan command.
 func InfraPlanCommand() *cobra.Command {
 	command := &cobra.Command{
-		Use:     "plan [project]",
+		Use:     "plan",
 		Aliases: []string{"preview"},
 		Short:   "Preview an environment update",
-		Args:    cobra.MaximumNArgs(1),
+		Args:    cobra.NoArgs,
 		RunE:    func(cmd *cobra.Command, args []string) error { return runInfraCommand(cmd, args, "plan") },
 	}
 	addInfraFlags(command)
-	command.Flags().Bool("all", false, "Select the complete environment program")
 	return command
 }
 
 // InfraApplyCommand creates the apply command.
 func InfraApplyCommand() *cobra.Command {
 	command := &cobra.Command{
-		Use:   "apply [project]",
+		Use:   "apply",
 		Short: "Apply an environment update",
-		Args:  cobra.MaximumNArgs(1),
+		Args:  cobra.NoArgs,
 		RunE:  func(cmd *cobra.Command, args []string) error { return runInfraCommand(cmd, args, "apply") },
 	}
 	addInfraFlags(command)
-	command.Flags().Bool("all", false, "Select the complete environment program")
 	command.Flags().Bool("yes", false, "Approve the Pulumi update non-interactively")
 	return command
 }
@@ -77,68 +102,25 @@ func InfraApplyCommand() *cobra.Command {
 // InfraOutputCommand creates the output command.
 func InfraOutputCommand() *cobra.Command {
 	command := &cobra.Command{
-		Use:   "output [project]",
+		Use:   "output",
 		Short: "Read environment stack outputs as JSON",
-		Args:  cobra.MaximumNArgs(1),
+		Args:  cobra.NoArgs,
 		RunE:  func(cmd *cobra.Command, args []string) error { return runInfraCommand(cmd, args, "output") },
 	}
 	addInfraFlags(command)
-	command.Flags().Bool("all", false, "Select the complete environment program")
 	return command
 }
 
 // InfraDestroyCommand creates the destroy command.
 func InfraDestroyCommand() *cobra.Command {
 	command := &cobra.Command{
-		Use:   "destroy [project]",
+		Use:   "destroy",
 		Short: "Destroy an environment stack",
-		Args:  cobra.MaximumNArgs(1),
+		Args:  cobra.NoArgs,
 		RunE:  func(cmd *cobra.Command, args []string) error { return runInfraCommand(cmd, args, "destroy") },
 	}
 	addInfraFlags(command)
-	command.Flags().Bool("all", false, "Select the complete environment program")
 	command.Flags().Bool("yes", false, "Approve the Pulumi update non-interactively")
-	return command
-}
-
-// InfraBindCommand creates the bind command.
-func InfraBindCommand() *cobra.Command {
-	command := &cobra.Command{
-		Use:   "bind <app> <infra-project>",
-		Short: "Bind an app artifact to its declared infrastructure program",
-		Args:  cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			root, err := premiseRoot()
-			if err != nil {
-				return err
-			}
-			artifact, _ := cmd.Flags().GetString("artifact")
-			return core.BindInfra(root, args[0], args[1], artifact)
-		},
-	}
-	command.Flags().String("artifact", "dist", "Artifact directory relative to the app")
-	return command
-}
-
-// InfraTestCommand creates the test command.
-func InfraTestCommand() *cobra.Command {
-	command := &cobra.Command{
-		Use:   "test [project]",
-		Short: "Run infrastructure program and local component tests without deploying",
-		Args:  cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			root, err := premiseRoot()
-			if err != nil {
-				return err
-			}
-			project := ""
-			if len(args) == 1 {
-				project = args[0]
-			}
-			return core.TestInfrastructure(cmd.Context(), root, project, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
-		},
-	}
-
 	return command
 }
 
@@ -201,11 +183,6 @@ func runInfraCommand(cmd *cobra.Command, args []string, operation string) error 
 	if err != nil {
 		return err
 	}
-	if len(args) == 1 {
-		options.Project = args[0]
-	} else {
-		options.All = true
-	}
 	return core.RunInfra(cmd.Context(), root, operation, options, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
 
@@ -214,7 +191,6 @@ func addInfraFlags(command *cobra.Command) {
 	command.Flags().String("branch", "", "Branch identity required for preview environments")
 	command.Flags().Bool("shared", false, "Select only shared infrastructure")
 	command.Flags().String("backend", "", "Named saved backend; defaults to environment/workspace selection")
-	command.Flags().String("secrets-provider", "", "Pulumi encryption provider for newly created stacks (for example gcpkms://...)")
 }
 
 func infraCommandOptions(command *cobra.Command) core.InfraOptions {
@@ -222,16 +198,14 @@ func infraCommandOptions(command *cobra.Command) core.InfraOptions {
 	branch, _ := command.Flags().GetString("branch")
 	shared, _ := command.Flags().GetBool("shared")
 	backend, _ := command.Flags().GetString("backend")
-	secretsProvider, _ := command.Flags().GetString("secrets-provider")
-	all, _ := command.Flags().GetBool("all")
 	yes, _ := command.Flags().GetBool("yes")
-	return core.InfraOptions{Environment: environment, Branch: branch, Shared: shared, Backend: backend, SecretsProvider: secretsProvider, All: all, Yes: yes}
+	return core.InfraOptions{Environment: environment, Branch: branch, Shared: shared, Backend: backend, Yes: yes}
 }
 
 func resolvedInfraCommandOptions(command *cobra.Command, root string) (core.InfraOptions, error) {
 	options := infraCommandOptions(command)
 	if options.Environment == "preview" && options.Branch == "" {
-		branch, err := currentFeatureBranch(command, root)
+		branch, err := core.CurrentFeatureBranch(command.Context(), root)
 		if err != nil {
 			return options, err
 		}

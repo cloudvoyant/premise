@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -20,6 +21,28 @@ type InteractiveQuestionnaire struct{}
 var _ Questionnaire = InteractiveQuestionnaire{}
 
 // Public API -----------------------------------------------------------------
+
+// AskInfrastructureSetup collects the optional workspace infrastructure choices.
+func AskInfrastructureSetup(root string) (bool, InfrastructureSetup, error) {
+	var enabled bool
+	var setup InfrastructureSetup
+	if err := huh.NewConfirm().Title("Does this workspace need infrastructure?").Value(&enabled).Run(); err != nil || !enabled {
+		return enabled, setup, err
+	}
+	_, exists, err := existingPulumiLanguage(filepath.Join(root, "infra", "Pulumi.yaml"))
+	if err != nil {
+		return false, setup, err
+	}
+	if !exists {
+		if err := huh.NewSelect[string]().Title("Pulumi language:").Options(huh.NewOptions("go", "typescript", "python", "javascript", "yaml", "csharp", "java")...).Value(&setup.Language).Run(); err != nil {
+			return false, setup, err
+		}
+	}
+	if err := huh.NewInput().Title("Pulumi version (leave empty to keep the existing pin or tested default):").Value(&setup.PulumiVersion).Run(); err != nil {
+		return false, setup, err
+	}
+	return true, setup, nil
+}
 
 func (InteractiveQuestionnaire) Ask(questions []Question) (map[string]string, error) {
 	answers := make(map[string]string, len(questions))

@@ -1,0 +1,112 @@
+name: Validate published infrastructure RC
+
+"on":
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact published Premise RC tag
+        type: string
+        required: true
+      s3:
+        description: Also create disposable live S3 resources
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: premise-infra-validation
+  cancel-in-progress: false
+
+jobs:
+  local:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.version }}
+          persist-credentials: false
+      - name: Verify the published RC and exact source commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RC_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RC_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]
+          gh release view "$RC_VERSION" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft \
+            --jq 'select(.isDraft == false) | .tagName' | grep -Fx "$RC_VERSION"
+          test "$(git describe --tags --exact-match)" = "$RC_VERSION"
+      - name: Install the RC binary with its matching released action
+        uses: ./
+        with:
+          setup-only: true
+          release: none
+          premise-version: ${{ inputs.version }}
+          install-premise: pre-built
+      - name: Select the published binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "PREMISE_BIN=$(command -v pm)" >> "$GITHUB_ENV"
+          pm version current
+      - name: Prepare PostgreSQL tools
+        shell: bash
+        run: pg_config --bindir >> "$GITHUB_PATH"
+      - name: Exercise real language setup, resource queries, migrations, and rollback
+        env:
+          PREMISE_TEST_PULUMI: "1"
+          PREMISE_TEST_POSTGRES: "1"
+        run: >-
+          go test ./e2e -count=1 -timeout 25m -v
+          -run 'Test(WorkspaceWithoutInfrastructure|LegacyInfrastructureBindings|Infrastructure|ConflictingInfrastructure|InfraQueries|Deployment|MigrationFailure|SharedMigrationGroup|PartialInfrastructure|SingleMigrating|InterruptedMigration)'
+
+  s3:
+    if: inputs.s3
+    needs: local
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    environment: preview
+    env:
+      AWS_REGION: ${{ vars.PREMISE_AWS_REGION }}
+      PREMISE_TEST_AWS_ACCOUNT: ${{ vars.PREMISE_TEST_AWS_ACCOUNT }}
+      PULUMI_BACKEND_URL: ${{ vars.PREMISE_TEST_S3_BACKEND }}
+    steps:
+      - name: Require dedicated test configuration
+        shell: bash
+        env:
+          TEST_ROLE: ${{ vars.PREMISE_TEST_AWS_ROLE }}
+        run: |
+          set -euo pipefail
+          : "${TEST_ROLE:?Set PREMISE_TEST_AWS_ROLE to the dedicated OIDC test role}"
+          : "${AWS_REGION:?Set PREMISE_AWS_REGION}"
+          : "${PREMISE_TEST_AWS_ACCOUNT:?Set the dedicated test account ID}"
+          [[ "$PULUMI_BACKEND_URL" == s3://* ]]
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.version }}
+          persist-credentials: false
+      - name: Install the matching released action and CLI
+        uses: ./
+        with:
+          setup-only: true
+          release: none
+          premise-version: ${{ inputs.version }}
+          install-premise: pre-built
+      - uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.PREMISE_TEST_AWS_ROLE }}
+          aws-region: ${{ vars.PREMISE_AWS_REGION }}
+          allowed-account-ids: ${{ vars.PREMISE_TEST_AWS_ACCOUNT }}
+      - name: Exercise live S3 infrastructure with the published binary
+        env:
+          PREMISE_TEST_S3: "1"
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PREMISE_BIN
+          PREMISE_BIN="$(command -v pm)"
+          mise run e2e:infra

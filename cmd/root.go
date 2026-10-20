@@ -20,7 +20,7 @@ projects converged on their templates, and runs lifecycle tasks in CI.`,
 
 // Execute runs the root command.
 func Execute(miseTemplate string, assets ...core.WorkflowAsset) {
-	workspaceScaffold = core.WorkspaceScaffold{MiseTemplate: miseTemplate, WorkflowAssets: assets}
+	rootCmd.AddCommand(InitCommand(core.WorkspaceScaffold{MiseTemplate: miseTemplate, WorkflowAssets: assets}))
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
@@ -32,7 +32,6 @@ func init() {
 		DeployCommand(),
 		GenerateCommand(),
 		InfraCommand(),
-		InitCommand(),
 		InstallCommand(),
 		ProjectsCommand(),
 		ReleaseCommand(),
@@ -43,7 +42,3 @@ func init() {
 		VersionCommand(),
 	)
 }
-
-// Private helpers ------------------------------------------------------------
-
-var workspaceScaffold core.WorkspaceScaffold

@@ -1,9 +1,10 @@
 workspace:
-  name: dummy-client
+  name: s3-client
+  kind: monorepo
   schema-version: "0.2"
   providers: { ci: github, tools: mise, tasks: mise, infra: pulumi, versioning: svu }
   infra:
-    providers: [gcp]
+    directory: infra
   projects:
     - name: dummy
       template: fixture:dummy

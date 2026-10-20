@@ -30,3 +30,11 @@ Put execution helpers under `Private helpers`. Do not build commands in a loop.
 
 Put Usage before API sections. Use short sentences, working examples, and diagrams
 for flows. Keep each module focused on its own commands and responsibilities.
+
+# Tests
+
+Prioritize command end-to-end tests, then module integration tests. Avoid unit
+tests that only mirror implementation details. Keep reusable files and scripts
+in test fixtures. Organize tests into Arrange, Act, and Assert sections with
+blank lines between them. Name each test for both its behavior and its expected
+outcome.

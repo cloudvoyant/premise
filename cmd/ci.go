@@ -6,6 +6,7 @@ import (
 	"io"
 
 	core "github.com/cloudvoyant/premise/core"
+	"github.com/cloudvoyant/premise/core/backends"
 	"github.com/spf13/cobra"
 )
 
@@ -25,6 +26,7 @@ func CICommand() *cobra.Command {
 // CIPlanCommand creates the plan command.
 func CIPlanCommand() *cobra.Command {
 	var flowName string
+	var environment, branch string
 	var asJSON, githubOutput bool
 	command := &cobra.Command{
 		Use:  "plan",
@@ -50,6 +52,24 @@ func CIPlanCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if environment != "" {
+				if environment == "preview" && branch == "" {
+					branch, err = core.CurrentFeatureBranch(cmd.Context(), root)
+					if err != nil {
+						return err
+					}
+				}
+				if _, err := core.ResolveStackName(core.InfraOptions{Environment: environment, Branch: branch}); err != nil {
+					return err
+				}
+			}
+			plan.Environment, plan.Branch = environment, branch
+			if manifest.Workspace.Deployment != nil {
+				plan.Migrations, err = core.PlanMigrations(root, manifest)
+				if err != nil {
+					return err
+				}
+			}
 			if githubOutput {
 				return writeCIGitHubOutput(cmd.OutOrStdout(), plan)
 			}
@@ -61,6 +81,8 @@ func CIPlanCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&flowName, "flow", "on-commit", "CI flow")
+	command.Flags().StringVar(&environment, "env", "", "Deployment environment for optional migration jobs")
+	command.Flags().StringVar(&branch, "branch", "", "Preview branch identity")
 	command.Flags().BoolVar(&asJSON, "json", false, "emit JSON")
 	command.Flags().BoolVar(&githubOutput, "github-output", false, "emit GitHub Actions output values")
 	return command
@@ -87,7 +109,7 @@ func CIFlowCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := registerPackageManagerBackends(); err != nil {
+			if err := backends.RegisterPackageManagers(); err != nil {
 				return err
 			}
 			if rootOnly && skipRoot {
@@ -122,6 +144,10 @@ func writeCIGitHubOutput(output io.Writer, plan core.CISchedule) error {
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(output, "mode=%s\nrunner=%s\nnative=%t\nmatrix=%s\n", plan.Mode, plan.Runner, plan.HasNative, matrix)
+	migrations, err := json.Marshal(core.MigrationMatrix{Include: plan.Migrations})
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(output, "mode=%s\nrunner=%s\nnative=%t\nmatrix=%s\nhas_migrations=%t\nmigration_matrix=%s\n", plan.Mode, plan.Runner, plan.HasNative, matrix, len(plan.Migrations) > 0, migrations)
 	return err
 }

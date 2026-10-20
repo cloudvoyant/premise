@@ -46,7 +46,7 @@ func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 	project := filepath.Join(workspace, "apps", "difflab-cli")
 	assertFileContains(t, filepath.Join(project, "package.json"), `"name":"@difflab/difflab-cli"`)
 	assertFileContains(t, filepath.Join(project, "package.json"), `"format:check"`)
-	for _, name := range []string{"on-commit.yml", "on-merge.yml", "on-deploy.yml"} {
+	for _, name := range []string{"on-commit.yml", "on-merge.yml", "on-deploy.yml", "deployment.yml"} {
 		path := filepath.Join(workspace, ".github", "workflows", name)
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -73,6 +73,14 @@ func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 			preview, ok := workflow.Jobs["deploy-preview"]
 			if !ok || !strings.Contains(preview.Condition, "github.event_name == 'push'") {
 				t.Fatal("automatic preview deployment must run only on feature pushes")
+			}
+		case "deployment.yml":
+			assertFileContains(t, path, "cancel-in-progress: false")
+			assertFileContains(t, path, "fail-fast: false")
+			for _, job := range []string{"provision", "migrate", "finish", "recover"} {
+				if _, ok := workflow.Jobs[job]; !ok {
+					t.Fatalf("deployment graph is missing %s", job)
+				}
 			}
 		case "on-merge.yml":
 			if _, ok := workflow.Jobs["cleanup-preview"]; !ok {
@@ -127,8 +135,7 @@ func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 		if name == "on-merge.yml" || name == "on-deploy.yml" {
 			if name == "on-deploy.yml" {
 				assertFileContains(t, path, "install-premise: pre-built")
-				assertFileContains(t, path, "command: deploy")
-				assertFileContains(t, path, "cancel-in-progress: false")
+				assertFileContains(t, path, "uses: ./.github/workflows/deployment.yml")
 			} else {
 				assertFileContains(t, path, "cloudvoyant/premise@v0")
 			}
