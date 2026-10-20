@@ -1,3 +1,4 @@
+import { artifactRelease } from "../lib/release";
 import { createFileRoute } from "@tanstack/react-router";
 import postgres from "postgres";
 
@@ -19,7 +20,12 @@ export const Route = createFileRoute("/api/health")({
       GET: async () => {
         const api = await databaseMessage(process.env.API_DATABASE_URL!);
         const worker = await databaseMessage(process.env.WORKER_DATABASE_URL!);
-        return Response.json({ release: process.env.PREMISE_RELEASE, api, worker });
+        return Response.json({
+          release: process.env.PREMISE_RELEASE,
+          artifact: artifactRelease,
+          api,
+          worker,
+        });
       },
     },
   },

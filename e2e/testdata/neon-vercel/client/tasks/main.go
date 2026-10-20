@@ -147,6 +147,10 @@ func prepare() error {
 		if err := copySource(filepath.Join(root, "apps/web"), target); err != nil {
 			return err
 		}
+		marker := "export const artifactRelease = '" + release + "'\n"
+		if err := os.WriteFile(filepath.Join(target, "src/lib/release.ts"), []byte(marker), 0644); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -332,7 +336,11 @@ func health(environment string) error {
 	if err != nil {
 		return err
 	}
-	if body["release"] != os.Getenv("PM_RELEASE") {
+	release := os.Getenv("PM_RELEASE")
+	if release == "" || body["artifact"] != release[len(release)-1:] {
+		return fmt.Errorf("application serves the wrong immutable source artifact")
+	}
+	if body["release"] != release {
 		return fmt.Errorf("application serves %s instead of the requested release", body["release"])
 	}
 	scenario, _, err := settings()
@@ -388,6 +396,9 @@ func assertRelease(environment string) error {
 		return err
 	}
 	expected := os.Getenv("EXPECTED_RELEASE")
+	if expected == "" || body["artifact"] != expected[len(expected)-1:] {
+		return fmt.Errorf("serving source artifact does not match the retained release")
+	}
 	expectedData := "preserved-row"
 	if scenario, _, err := settings(); err == nil && scenario == "none" {
 		expectedData = "unmigrated"

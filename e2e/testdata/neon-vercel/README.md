@@ -31,6 +31,7 @@ client/
 
 Each run deploys A, then attempts B from another set of runners.
 Preparation restores both immutable source snapshots from the checked-out RC.
+Each snapshot contains a different compiled source marker, A or B. Health checks verify that marker as well as the runtime release identity, so changing an environment variable alone cannot pass rollback validation.
 Only application tasks request secret database outputs with `pm infra query --show-secrets`.
 Database URLs never enter release records or source snapshots.
 

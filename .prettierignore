@@ -8,3 +8,5 @@ CHANGELOG.md
 
 .output/
 .vercel/
+
+.releases/
