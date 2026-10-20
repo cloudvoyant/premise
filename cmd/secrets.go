@@ -11,20 +11,20 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-// NewSecretsCommand creates the secrets command.
-func NewSecretsCommand() *cobra.Command {
+// SecretsCommand creates the secrets command.
+func SecretsCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "secrets",
 		Short: "Pull local secrets or copy application values to CI",
 		Args:  cobra.NoArgs,
 		RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
-	command.AddCommand(NewSecretsPullCommand(), NewSecretsExecCommand(), NewSecretsSyncCommand())
+	command.AddCommand(SecretsPullCommand(), SecretsExecCommand(), SecretsSyncCommand())
 	return command
 }
 
-// NewSecretsPullCommand creates the pull command.
-func NewSecretsPullCommand() *cobra.Command {
+// SecretsPullCommand creates the pull command.
+func SecretsPullCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "pull",
 		Short: "Write local application env files from fnox",
@@ -41,8 +41,8 @@ func NewSecretsPullCommand() *cobra.Command {
 	return command
 }
 
-// NewSecretsExecCommand creates the exec command.
-func NewSecretsExecCommand() *cobra.Command {
+// SecretsExecCommand creates the exec command.
+func SecretsExecCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "exec -- command [args...]",
 		Short: "Run a command with environment-scoped application values",
@@ -59,8 +59,8 @@ func NewSecretsExecCommand() *cobra.Command {
 	return command
 }
 
-// NewSecretsSyncCommand creates the sync command.
-func NewSecretsSyncCommand() *cobra.Command {
+// SecretsSyncCommand creates the sync command.
+func SecretsSyncCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "sync",
 		Short: "Copy local fnox application values to CI secrets",

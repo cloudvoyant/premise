@@ -11,8 +11,8 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-// NewRunCommand creates the run command.
-func NewRunCommand() *cobra.Command {
+// RunCommand creates the run command.
+func RunCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "run <task|project:task> [args...]",
 		Short: "Run a workspace or generated-project task",

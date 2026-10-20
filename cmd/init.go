@@ -10,8 +10,8 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-// NewInitCommand creates the init command.
-func NewInitCommand() *cobra.Command {
+// InitCommand creates the init command.
+func InitCommand() *cobra.Command {
 	var projectKind string
 	command := &cobra.Command{
 		Use:   "init",

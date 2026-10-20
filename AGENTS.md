@@ -19,9 +19,10 @@ branch-deletion fallback.
 
 # Cobra commands
 
-Define each subcommand with a named `New...Command() *cobra.Command` function
-under `Public API`. Create the command, configure its flags, attach its children,
-and return it in that function. Keep flag values local to each command instance.
+Define each subcommand with a named function such as `InfraCommand() *cobra.Command`
+under `Public API`. Do not prefix these functions with `New`. Create the command,
+configure its flags, attach its children, and return it in that function.
+Keep flag values local to each command instance.
 Keep one `init` in `cmd/root.go` that only registers top-level commands explicitly.
 Put execution helpers under `Private helpers`. Do not build commands in a loop.
 

@@ -10,19 +10,19 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-// NewTemplateCommand creates the template command.
-func NewTemplateCommand() *cobra.Command {
+// TemplateCommand creates the template command.
+func TemplateCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "template",
 		Short: "Create and test premise templates",
 		Args:  cobra.NoArgs,
 	}
-	command.AddCommand(NewTemplateDetectCommand(), NewTemplateInitCommand(), NewTemplateListCommand(), NewTemplateTestCommand())
+	command.AddCommand(TemplateDetectCommand(), TemplateInitCommand(), TemplateListCommand(), TemplateTestCommand())
 	return command
 }
 
-// NewTemplateInitCommand creates the init command.
-func NewTemplateInitCommand() *cobra.Command {
+// TemplateInitCommand creates the init command.
+func TemplateInitCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "init [app|lib]",
 		Short: "Initialize a live template",
@@ -58,8 +58,8 @@ func NewTemplateInitCommand() *cobra.Command {
 	return command
 }
 
-// NewTemplateDetectCommand creates the detect command.
-func NewTemplateDetectCommand() *cobra.Command {
+// TemplateDetectCommand creates the detect command.
+func TemplateDetectCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "detect",
 		Short: "Print the repository lifecycle kind",
@@ -81,8 +81,8 @@ func NewTemplateDetectCommand() *cobra.Command {
 	return command
 }
 
-// NewTemplateListCommand creates the ls command.
-func NewTemplateListCommand() *cobra.Command {
+// TemplateListCommand creates the ls command.
+func TemplateListCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:     "ls",
 		Aliases: []string{"list"},
@@ -107,8 +107,8 @@ func NewTemplateListCommand() *cobra.Command {
 	return command
 }
 
-// NewTemplateTestCommand creates the test command.
-func NewTemplateTestCommand() *cobra.Command {
+// TemplateTestCommand creates the test command.
+func TemplateTestCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "test",
 		Short: "Execute every template task contract",

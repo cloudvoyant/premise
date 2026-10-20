@@ -10,19 +10,19 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-// NewVersionCommand creates the version command.
-func NewVersionCommand() *cobra.Command {
+// VersionCommand creates the version command.
+func VersionCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "version",
 		Short: "Calculate repository-derived release versions",
 		Args:  cobra.NoArgs,
 	}
-	command.AddCommand(NewVersionCurrentCommand(), NewVersionNextCommand(), NewVersionBumpCommand(), NewVersionRCCommand())
+	command.AddCommand(VersionCurrentCommand(), VersionNextCommand(), VersionBumpCommand(), VersionRCCommand())
 	return command
 }
 
-// NewVersionCurrentCommand creates the current command.
-func NewVersionCurrentCommand() *cobra.Command {
+// VersionCurrentCommand creates the current command.
+func VersionCurrentCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "current",
 		Short: "Print the current version",
@@ -35,8 +35,8 @@ func NewVersionCurrentCommand() *cobra.Command {
 	return command
 }
 
-// NewVersionNextCommand creates the next command.
-func NewVersionNextCommand() *cobra.Command {
+// VersionNextCommand creates the next command.
+func VersionNextCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "next",
 		Short: "Print the next version based on git history",
@@ -49,8 +49,8 @@ func NewVersionNextCommand() *cobra.Command {
 	return command
 }
 
-// NewVersionBumpCommand creates the bump command.
-func NewVersionBumpCommand() *cobra.Command {
+// VersionBumpCommand creates the bump command.
+func VersionBumpCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "bump patch|minor|major",
 		Short: "Print the next patch, minor, or major version",
@@ -69,8 +69,8 @@ func NewVersionBumpCommand() *cobra.Command {
 	return command
 }
 
-// NewVersionRCCommand creates the rc command.
-func NewVersionRCCommand() *cobra.Command {
+// VersionRCCommand creates the rc command.
+func VersionRCCommand() *cobra.Command {
 	var identifier string
 	command := &cobra.Command{
 		Use:   "rc",

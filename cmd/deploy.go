@@ -10,8 +10,8 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-// NewDeployCommand creates the deploy command.
-func NewDeployCommand() *cobra.Command {
+// DeployCommand creates the deploy command.
+func DeployCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "deploy",
 		Short: "Provision, migrate, deploy and recover an environment",
@@ -21,12 +21,12 @@ func NewDeployCommand() *cobra.Command {
 	addInfraFlags(command)
 	command.Flags().String("release", "", "Immutable release revision")
 	command.Flags().StringToString("artifact", nil, "Project=pinned artifact identity")
-	command.AddCommand(NewDeployRunCommand(), NewDeployPlanCommand())
+	command.AddCommand(DeployRunCommand(), DeployPlanCommand())
 	return command
 }
 
-// NewDeployRunCommand creates the run command.
-func NewDeployRunCommand() *cobra.Command {
+// DeployRunCommand creates the run command.
+func DeployRunCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "run",
 		Short: "Provision, migrate, deploy and recover an environment",
@@ -39,8 +39,8 @@ func NewDeployRunCommand() *cobra.Command {
 	return command
 }
 
-// NewDeployPlanCommand creates the plan command.
-func NewDeployPlanCommand() *cobra.Command {
+// DeployPlanCommand creates the plan command.
+func DeployPlanCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "plan",
 		Short: "Show ordered deployment without effects",

@@ -11,18 +11,18 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-// NewProjectsCommand creates the projects command.
-func NewProjectsCommand() *cobra.Command {
+// ProjectsCommand creates the projects command.
+func ProjectsCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:  "projects",
 		Args: cobra.NoArgs,
 	}
-	command.AddCommand(NewProjectsListCommand())
+	command.AddCommand(ProjectsListCommand())
 	return command
 }
 
-// NewProjectsListCommand creates the ls command.
-func NewProjectsListCommand() *cobra.Command {
+// ProjectsListCommand creates the ls command.
+func ProjectsListCommand() *cobra.Command {
 	var flowName, projectType, platformMode, eligibility string
 	var asJSON bool
 	command := &cobra.Command{

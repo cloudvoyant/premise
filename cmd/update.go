@@ -16,8 +16,8 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-// NewUpdateCommand creates the update command.
-func NewUpdateCommand() *cobra.Command {
+// UpdateCommand creates the update command.
+func UpdateCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "update [version]",
 		Short: "Update the premise CLI",

@@ -13,8 +13,8 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-// NewGenerateCommand creates the generate command.
-func NewGenerateCommand() *cobra.Command {
+// GenerateCommand creates the generate command.
+func GenerateCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:     "generate [template]",
 		Aliases: []string{"g"},

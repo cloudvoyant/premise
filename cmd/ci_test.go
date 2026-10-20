@@ -24,8 +24,8 @@ func TestCIPlanInstancesKeepTheirOwnFlagValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(root)
-	first := NewCIPlanCommand()
-	second := NewCIPlanCommand()
+	first := CIPlanCommand()
+	second := CIPlanCommand()
 	if err := first.Flags().Set("flow", "not-a-flow"); err != nil {
 		t.Fatal(err)
 	}

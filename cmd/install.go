@@ -12,8 +12,8 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-// NewInstallCommand creates the install command.
-func NewInstallCommand() *cobra.Command {
+// InstallCommand creates the install command.
+func InstallCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:     "install",
 		Aliases: []string{"i"},

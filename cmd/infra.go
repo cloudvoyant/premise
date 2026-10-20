@@ -12,8 +12,8 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-// NewInfraCommand creates the infra command.
-func NewInfraCommand() *cobra.Command {
+// InfraCommand creates the infra command.
+func InfraCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "infra",
 		Short: "Configure, preview, and apply Pulumi infrastructure",
@@ -21,20 +21,20 @@ func NewInfraCommand() *cobra.Command {
 		RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
 	command.AddCommand(
-		NewInfraAuthCommand(),
-		NewInfraInitCommand(),
-		NewInfraPlanCommand(),
-		NewInfraApplyCommand(),
-		NewInfraOutputCommand(),
-		NewInfraDestroyCommand(),
-		NewInfraBindCommand(),
-		NewInfraTestCommand(),
+		InfraAuthCommand(),
+		InfraInitCommand(),
+		InfraPlanCommand(),
+		InfraApplyCommand(),
+		InfraOutputCommand(),
+		InfraDestroyCommand(),
+		InfraBindCommand(),
+		InfraTestCommand(),
 	)
 	return command
 }
 
-// NewInfraInitCommand creates the init command.
-func NewInfraInitCommand() *cobra.Command {
+// InfraInitCommand creates the init command.
+func InfraInitCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "init [project]",
 		Short: "Initialize an environment stack",
@@ -46,8 +46,8 @@ func NewInfraInitCommand() *cobra.Command {
 	return command
 }
 
-// NewInfraPlanCommand creates the plan command.
-func NewInfraPlanCommand() *cobra.Command {
+// InfraPlanCommand creates the plan command.
+func InfraPlanCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:     "plan [project]",
 		Aliases: []string{"preview"},
@@ -60,8 +60,8 @@ func NewInfraPlanCommand() *cobra.Command {
 	return command
 }
 
-// NewInfraApplyCommand creates the apply command.
-func NewInfraApplyCommand() *cobra.Command {
+// InfraApplyCommand creates the apply command.
+func InfraApplyCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "apply [project]",
 		Short: "Apply an environment update",
@@ -74,8 +74,8 @@ func NewInfraApplyCommand() *cobra.Command {
 	return command
 }
 
-// NewInfraOutputCommand creates the output command.
-func NewInfraOutputCommand() *cobra.Command {
+// InfraOutputCommand creates the output command.
+func InfraOutputCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "output [project]",
 		Short: "Read environment stack outputs as JSON",
@@ -87,8 +87,8 @@ func NewInfraOutputCommand() *cobra.Command {
 	return command
 }
 
-// NewInfraDestroyCommand creates the destroy command.
-func NewInfraDestroyCommand() *cobra.Command {
+// InfraDestroyCommand creates the destroy command.
+func InfraDestroyCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "destroy [project]",
 		Short: "Destroy an environment stack",
@@ -101,8 +101,8 @@ func NewInfraDestroyCommand() *cobra.Command {
 	return command
 }
 
-// NewInfraBindCommand creates the bind command.
-func NewInfraBindCommand() *cobra.Command {
+// InfraBindCommand creates the bind command.
+func InfraBindCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "bind <app> <infra-project>",
 		Short: "Bind an app artifact to its declared infrastructure program",
@@ -120,8 +120,8 @@ func NewInfraBindCommand() *cobra.Command {
 	return command
 }
 
-// NewInfraTestCommand creates the test command.
-func NewInfraTestCommand() *cobra.Command {
+// InfraTestCommand creates the test command.
+func InfraTestCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "test [project]",
 		Short: "Run infrastructure program and local component tests without deploying",
@@ -142,8 +142,8 @@ func NewInfraTestCommand() *cobra.Command {
 	return command
 }
 
-// NewInfraAuthCommand creates the auth command.
-func NewInfraAuthCommand() *cobra.Command {
+// InfraAuthCommand creates the auth command.
+func InfraAuthCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "auth",
 		Short: "Authenticate declared infrastructure providers",

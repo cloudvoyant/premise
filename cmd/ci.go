@@ -11,19 +11,19 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-// NewCICommand creates the ci command.
-func NewCICommand() *cobra.Command {
+// CICommand creates the ci command.
+func CICommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "ci",
 		Short: "Run convention-driven CI flows",
 		Args:  cobra.NoArgs,
 	}
-	command.AddCommand(NewCIFlowCommand(), NewCIPlanCommand())
+	command.AddCommand(CIFlowCommand(), CIPlanCommand())
 	return command
 }
 
-// NewCIPlanCommand creates the plan command.
-func NewCIPlanCommand() *cobra.Command {
+// CIPlanCommand creates the plan command.
+func CIPlanCommand() *cobra.Command {
 	var flowName string
 	var asJSON, githubOutput bool
 	command := &cobra.Command{
@@ -66,8 +66,8 @@ func NewCIPlanCommand() *cobra.Command {
 	return command
 }
 
-// NewCIFlowCommand creates the flow command.
-func NewCIFlowCommand() *cobra.Command {
+// CIFlowCommand creates the flow command.
+func CIFlowCommand() *cobra.Command {
 	var environment, project, channel, version, outputDir, platform, releaseModeFlag string
 	var rootOnly, skipRoot bool
 	command := &cobra.Command{

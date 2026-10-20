@@ -11,8 +11,8 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-// NewReleaseCommand creates the release command.
-func NewReleaseCommand() *cobra.Command {
+// ReleaseCommand creates the release command.
+func ReleaseCommand() *cobra.Command {
 	var dryRun, buildOnly bool
 	command := &cobra.Command{
 		Use:   "release",
@@ -50,12 +50,12 @@ func NewReleaseCommand() *cobra.Command {
 	}
 	command.Flags().BoolVar(&dryRun, "dry-run", false, "plan the release without changing anything")
 	command.Flags().BoolVar(&buildOnly, "build", false, "build release artifacts without publishing")
-	command.AddCommand(NewReleasePublishCommand(), NewReleasePackagesCommand())
+	command.AddCommand(ReleasePublishCommand(), ReleasePackagesCommand())
 	return command
 }
 
-// NewReleasePublishCommand creates the publish command.
-func NewReleasePublishCommand() *cobra.Command {
+// ReleasePublishCommand creates the publish command.
+func ReleasePublishCommand() *cobra.Command {
 	var channel, expectedVersion, filesDir string
 	command := &cobra.Command{
 		Use:   "publish",
@@ -83,8 +83,8 @@ func NewReleasePublishCommand() *cobra.Command {
 	return command
 }
 
-// NewReleasePackagesCommand creates the packages command.
-func NewReleasePackagesCommand() *cobra.Command {
+// ReleasePackagesCommand creates the packages command.
+func ReleasePackagesCommand() *cobra.Command {
 	var channel, expectedVersion string
 	command := &cobra.Command{
 		Use:   "packages",

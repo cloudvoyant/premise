@@ -28,19 +28,19 @@ func Execute(miseTemplate string, assets ...core.WorkflowAsset) {
 
 func init() {
 	rootCmd.AddCommand(
-		NewCICommand(),
-		NewDeployCommand(),
-		NewGenerateCommand(),
-		NewInfraCommand(),
-		NewInitCommand(),
-		NewInstallCommand(),
-		NewProjectsCommand(),
-		NewReleaseCommand(),
-		NewRunCommand(),
-		NewSecretsCommand(),
-		NewTemplateCommand(),
-		NewUpdateCommand(),
-		NewVersionCommand(),
+		CICommand(),
+		DeployCommand(),
+		GenerateCommand(),
+		InfraCommand(),
+		InitCommand(),
+		InstallCommand(),
+		ProjectsCommand(),
+		ReleaseCommand(),
+		RunCommand(),
+		SecretsCommand(),
+		TemplateCommand(),
+		UpdateCommand(),
+		VersionCommand(),
 	)
 }
 
