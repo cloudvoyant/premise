@@ -68,6 +68,7 @@ jobs:
         env:
           PREMISE_TEST_PULUMI: "1"
           PREMISE_TEST_POSTGRES: "1"
+          MISE_FETCH_REMOTE_VERSIONS_TIMEOUT: 30s
         run: >-
           go test ./e2e -count=1 -timeout 25m -v
           -run 'Test(WorkspaceWithoutInfrastructure|LegacyInfrastructureBindings|Infrastructure|ConflictingInfrastructure|ConflictingRetroactive|InfraQueries|Deployment|MigrationFailure|SharedMigrationGroup|PartialInfrastructure|SingleMigrating|InterruptedMigration)'

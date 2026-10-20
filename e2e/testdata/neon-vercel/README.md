@@ -3,6 +3,7 @@
 The client owns `infra/` and imports the published Neon and Vercel providers.
 The web application comes from the Premise Bun TanStack Start template.
 `template-source.json` records its source commit. The fixture adds a database health route and the Nitro adapter required by Vercel.
+It updates TanStack Start to `1.168.60` and Router to `1.170.41` for the [published security fix](https://tanstack.com/blog/tanstack-start-security-update-cve-2026-102989). The dependency lockfile records the patched server core.
 
 ## Usage
 
