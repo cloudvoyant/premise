@@ -198,8 +198,25 @@ func query(environment string, selection ...string) (string, error) {
 }
 
 func sql(connection, statement string) (string, error) {
+	address, err := url.Parse(connection)
+	if err != nil || address.User == nil || address.Hostname() == "" || address.Scheme != "postgresql" {
+		return "", fmt.Errorf("infrastructure did not return a PostgreSQL connection URL")
+	}
+	password, _ := address.User.Password()
+	port := address.Port()
+	if port == "" {
+		port = "5432"
+	}
 	command := exec.Command("psql", "-qAt", "-v", "ON_ERROR_STOP=1", "-c", statement)
-	command.Env = append(os.Environ(), "PGDATABASE="+connection)
+	command.Env = append(os.Environ(),
+		"PGHOST="+address.Hostname(),
+		"PGPORT="+port,
+		"PGUSER="+address.User.Username(),
+		"PGPASSWORD="+password,
+		"PGDATABASE="+strings.TrimPrefix(address.Path, "/"),
+		"PGSSLMODE=require",
+		"PGCONNECT_TIMEOUT=20",
+	)
 	// libpq credentials remain in the process environment; diagnostics can include them.
 	output, err := command.Output()
 	if err != nil {
