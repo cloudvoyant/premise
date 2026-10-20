@@ -241,10 +241,10 @@ jobs:
         with:
           ref: main
           persist-credentials: false
-      - uses: cloudvoyant/premise@v0.5.0-rc.248
+      - uses: cloudvoyant/premise@v0.5.0-rc.255
         with:
           setup-only: true
-          premise-version: v0.5.0-rc.248
+          premise-version: v0.5.0-rc.255
           install-premise: pre-built
       - uses: google-github-actions/setup-gcloud@v3
         if: vars.GCP_WORKLOAD_IDENTITY_PROVIDER != ''
@@ -256,7 +256,7 @@ jobs:
       - name: Authenticate infrastructure providers
         run: pm infra auth --ci --env-file "$GITHUB_ENV"
       - name: Destroy the merged or deleted branch preview
-        uses: cloudvoyant/premise@v0.5.0-rc.248
+        uses: cloudvoyant/premise@v0.5.0-rc.255
         with:
           command: infra-destroy
           release: none

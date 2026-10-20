@@ -75,7 +75,7 @@ jobs:
         with:
           ref: ${{ inputs.revision }}
           persist-credentials: false
-      - uses: cloudvoyant/premise@v0.5.0-rc.248
+      - uses: cloudvoyant/premise@v0.5.0-rc.255
         with:
           setup-only: true
           release: none
@@ -152,7 +152,7 @@ jobs:
         with:
           ref: ${{ needs.provision.outputs.revision }}
           persist-credentials: false
-      - uses: cloudvoyant/premise@v0.5.0-rc.248
+      - uses: cloudvoyant/premise@v0.5.0-rc.255
         with:
           setup-only: true
           release: none
@@ -198,7 +198,7 @@ jobs:
         with:
           ref: ${{ needs.provision.outputs.revision }}
           persist-credentials: false
-      - uses: cloudvoyant/premise@v0.5.0-rc.248
+      - uses: cloudvoyant/premise@v0.5.0-rc.255
         with:
           setup-only: true
           release: none
@@ -242,7 +242,7 @@ jobs:
         with:
           ref: ${{ needs.provision.outputs.revision }}
           persist-credentials: false
-      - uses: cloudvoyant/premise@v0.5.0-rc.248
+      - uses: cloudvoyant/premise@v0.5.0-rc.255
         with:
           setup-only: true
           release: none
