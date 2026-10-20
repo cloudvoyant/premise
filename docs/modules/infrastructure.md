@@ -311,6 +311,14 @@ If a stopped worker left a running marker, add `--workers-stopped` only after ev
 After manual repair, `pm deploy unlock --env ENV --run-id ID` releases only that run's lock.
 For previews, also pass the original `--branch`.
 
+### Add infrastructure later
+
+`pm init` without infrastructure omits `on-deploy.yml` and does not add a Pulumi tool pin.
+Run `pm infra setup --language go` in that workspace to create the official starter, add infrastructure configuration, and add the missing manual workflow.
+Use `--pulumi-version VERSION` to select the tool pin. Omit `--language` to adopt an existing `infra/Pulumi.yaml` program.
+Setup preserves existing programs, client tasks, tool pins, and workflows. Repeating it adds only missing files.
+Configure a remote backend before using `pm infra init --env ENV`; setup does not create cloud resources or initialize stacks.
+
 ### Run CI phases
 
 `deployment.yml` is the reusable job graph. Each job selects the same commit, backend, environment, and run ID.
@@ -328,12 +336,14 @@ CI must not run `deploy run` after the migration matrix because it repeats the d
 `on-deploy.yml` remains manual. Feature pushes create previews through `on-commit.yml`.
 Merge and branch-deletion events clean previews through `on-merge.yml`.
 Pull-request validation does not deploy. Cleanup never publishes a release.
+Package publication and credential preflight do not select GitHub environments. Store publication tokens as repository or organization CI secrets. Environment-scoped jobs are for actual infrastructure deployments.
 
 ## API
 
 | API                                     | Responsibility                                                             |
 | --------------------------------------- | -------------------------------------------------------------------------- |
 | `InitializeWorkspaceWithInfrastructure` | Stage workspace files and create or adopt a client program.                |
+| `SetupInfrastructure`                   | Add infrastructure to an existing workspace and preserve client files.     |
 | `ResolveStackName`                      | Resolve persistent, preview, or explicitly shared stack identity.          |
 | `ResolveInfrastructure`                 | Resolve program directory, backend, and environment configuration.         |
 | `RunInfra`                              | Run pinned Pulumi operations and respect deployment ownership.             |

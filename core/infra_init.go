@@ -55,47 +55,11 @@ func InitializeWorkspaceWithInfrastructure(ctx context.Context, root string, sca
 		return "", err
 	}
 
-	language, exists, err := existingPulumiLanguage(filepath.Join(root, "infra", "Pulumi.yaml"))
-	if err != nil {
+	if err := ensureWorkflowAssets(stage, infrastructureWorkflows(scaffold.WorkflowAssets)); err != nil {
 		return "", err
 	}
-	if exists {
-		if setup.Language != "" && pulumiRuntimeName(setup.Language) != pulumiRuntimeName(language) {
-			return "", fmt.Errorf("infra/Pulumi.yaml uses %s; --infra-language %s would change the existing program", language, setup.Language)
-		}
-	} else {
-		if setup.Language == "" {
-			return "", fmt.Errorf("choose --infra-language for a new Pulumi project")
-		}
-		language, err = pulumiLanguageLabel(setup.Language)
-		if err != nil {
-			return "", err
-		}
-		if _, err := os.Stat(filepath.Join(root, "infra")); err == nil {
-			return "", fmt.Errorf("infra/ already exists without Pulumi.yaml; initialize that project before adopting it")
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return "", err
-		}
-	}
-	if err := configureInfrastructureTools(filepath.Join(stage, "mise.toml"), language, setup.PulumiVersion); err != nil {
+	if err := stageInfrastructureProgram(ctx, root, stage, "infra", setup, stdin, stdout, stderr); err != nil {
 		return "", err
-	}
-	if !exists {
-		home, err := os.MkdirTemp("", "premise-pulumi-bootstrap-*")
-		if err != nil {
-			return "", err
-		}
-		defer os.RemoveAll(home)
-		runner := miseRunner{
-			Stdin: stdin, Stdout: stdout, Stderr: stderr,
-			RemoveEnvironment: []string{"PULUMI_ACCESS_TOKEN", "PULUMI_BACKEND_URL"},
-		}
-		starter := "https://github.com/pulumi/templates/tree/master/" + language
-		if err := runner.run(ctx, stage, []string{"MISE_TRUSTED_CONFIG_PATHS=" + stage, "PULUMI_HOME=" + home}, "exec", "--", "pulumi", "new", starter,
-			"--generate-only", "--non-interactive", "--yes", "--name", filepath.Base(root),
-			"--dir", filepath.Join(stage, "infra")); err != nil {
-			return "", fmt.Errorf("initialize %s Pulumi project: %w", language, err)
-		}
 	}
 	manifest := NewManifest(filepath.Base(root))
 	manifest.Workspace.Kind = ProjectKindMonorepo
@@ -108,15 +72,140 @@ func InitializeWorkspaceWithInfrastructure(ctx context.Context, root string, sca
 	if err := SaveManifest(filepath.Join(stage, ManifestFilename), manifest); err != nil {
 		return "", err
 	}
-	if err := commitInfrastructureWorkspace(root, stage, originalMise); err != nil {
+	if err := commitInfrastructureWorkspace(root, stage, map[string][]byte{"mise.toml": originalMise}); err != nil {
 		return "", err
 	}
 	return filepath.Join(root, ManifestFilename), nil
 }
 
+// SetupInfrastructure adds a client-owned program and missing deployment workflows.
+// Existing configuration, programs, tool pins, and workflows remain client-owned.
+func SetupInfrastructure(ctx context.Context, root string, scaffold WorkspaceScaffold, setup InfrastructureSetup, stdin io.Reader, stdout, stderr io.Writer) error {
+	manifestPath := filepath.Join(root, ManifestFilename)
+	manifest, err := LoadManifest(manifestPath)
+	if err != nil {
+		return err
+	}
+	if manifest.Workspace.Kind != ProjectKindMonorepo {
+		return fmt.Errorf("infrastructure setup requires a monorepo workspace")
+	}
+	directory := "infra"
+	if manifest.Workspace.Infra != nil && manifest.Workspace.Infra.Directory != "" {
+		directory = manifest.Workspace.Infra.Directory
+	}
+	if err := rejectSymlinkComponents(root, filepath.Join(root, directory)); err != nil {
+		return err
+	}
+	var missing []WorkflowAsset
+	for _, asset := range infrastructureWorkflows(scaffold.WorkflowAssets) {
+		path := filepath.Join(root, asset.Path)
+		if err := rejectSymlinkComponents(root, path); err != nil {
+			return err
+		}
+		if info, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			missing = append(missing, asset)
+		} else if err != nil {
+			return err
+		} else if !info.Mode().IsRegular() {
+			return fmt.Errorf("workflow %s must be a regular file", asset.Path)
+		}
+	}
+	if err := preflightWorkspace(root, missing); err != nil {
+		return err
+	}
+	stage, err := os.MkdirTemp("", "premise-infra-setup-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(stage)
+	originals := map[string][]byte{}
+	for _, relative := range []string{ManifestFilename, "mise.toml"} {
+		data, err := os.ReadFile(filepath.Join(root, relative))
+		if err != nil {
+			return err
+		}
+		originals[relative] = data
+		if err := os.WriteFile(filepath.Join(stage, relative), data, 0o644); err != nil {
+			return err
+		}
+	}
+	if err := stageInfrastructureProgram(ctx, root, stage, directory, setup, stdin, stdout, stderr); err != nil {
+		return err
+	}
+	if manifest.Workspace.Infra == nil {
+		manifest.Workspace.Infra = &Infrastructure{
+			Directory:    directory,
+			Environments: map[string]InfraEnvironment{"dev": {}, "stage": {}, "prod": {}, "preview": {}},
+		}
+		if err := SaveManifest(filepath.Join(stage, ManifestFilename), manifest); err != nil {
+			return err
+		}
+	}
+	if err := ensureWorkflowAssets(stage, missing); err != nil {
+		return err
+	}
+	return commitInfrastructureWorkspace(root, stage, originals)
+}
+
 // Private helpers ------------------------------------------------------------
 
 const defaultPulumiVersion = "3.268.0"
+
+func stageInfrastructureProgram(ctx context.Context, root, stage, directory string, setup InfrastructureSetup, stdin io.Reader, stdout, stderr io.Writer) error {
+	language, exists, err := existingPulumiLanguage(filepath.Join(root, directory, "Pulumi.yaml"))
+	if err != nil {
+		return err
+	}
+	if exists {
+		if setup.Language != "" && pulumiRuntimeName(setup.Language) != pulumiRuntimeName(language) {
+			return fmt.Errorf("%s uses %s; language %s would change the existing program", filepath.Join(directory, "Pulumi.yaml"), language, setup.Language)
+		}
+	} else {
+		if setup.Language == "" {
+			return fmt.Errorf("choose a Pulumi language with --infra-language during init or --language during infra setup")
+		}
+		language, err = pulumiLanguageLabel(setup.Language)
+		if err != nil {
+			return err
+		}
+		if _, err := os.Stat(filepath.Join(root, directory)); err == nil {
+			return fmt.Errorf("%s/ already exists without Pulumi.yaml; initialize that project before adopting it", directory)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	if err := configureInfrastructureTools(filepath.Join(stage, "mise.toml"), language, setup.PulumiVersion, directory); err != nil {
+		return err
+	}
+	if !exists {
+		home, err := os.MkdirTemp("", "premise-pulumi-bootstrap-*")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(home)
+		runner := miseRunner{
+			Stdin: stdin, Stdout: stdout, Stderr: stderr,
+			RemoveEnvironment: []string{"PULUMI_ACCESS_TOKEN", "PULUMI_BACKEND_URL"},
+		}
+		starter := "https://github.com/pulumi/templates/tree/master/" + language
+		if err := runner.run(ctx, stage, []string{"MISE_TRUSTED_CONFIG_PATHS=" + stage, "PULUMI_HOME=" + home}, "exec", "--", "pulumi", "new", starter,
+			"--generate-only", "--non-interactive", "--yes", "--name", filepath.Base(root),
+			"--dir", filepath.Join(stage, directory)); err != nil {
+			return fmt.Errorf("initialize %s Pulumi project: %w", language, err)
+		}
+	}
+	return nil
+}
+
+func infrastructureWorkflows(assets []WorkflowAsset) []WorkflowAsset {
+	var workflows []WorkflowAsset
+	for _, asset := range assets {
+		if asset.InfrastructureOnly {
+			workflows = append(workflows, asset)
+		}
+	}
+	return workflows
+}
 
 func existingPulumiLanguage(path string) (string, bool, error) {
 	data, err := os.ReadFile(path)
@@ -153,7 +242,7 @@ func pulumiRuntimeName(language string) string {
 	}
 }
 
-func configureInfrastructureTools(path, language, version string) error {
+func configureInfrastructureTools(path, language, version, directory string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -192,7 +281,7 @@ func configureInfrastructureTools(path, language, version string) error {
 		configuration.Root["tasks"] = tasks
 	}
 	if _, exists := tasks["infra:install"]; !exists {
-		tasks["infra:install"] = map[string]any{"dir": "infra", "run": "mise exec -- pulumi install"}
+		tasks["infra:install"] = map[string]any{"dir": directory, "run": "mise exec -- pulumi install"}
 	}
 	encoded, err := encodeMiseConfig(configuration)
 	if err != nil {
@@ -201,7 +290,7 @@ func configureInfrastructureTools(path, language, version string) error {
 	return os.WriteFile(path, encoded, 0o644)
 }
 
-func commitInfrastructureWorkspace(root, stage string, originalMise []byte) error {
+func commitInfrastructureWorkspace(root, stage string, originals map[string][]byte) error {
 	var files []string
 	if err := filepath.WalkDir(stage, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil || entry.IsDir() {
@@ -218,7 +307,7 @@ func commitInfrastructureWorkspace(root, stage string, originalMise []byte) erro
 		if err := rejectSymlinkComponents(root, destination); err != nil {
 			return err
 		}
-		if _, err := os.Lstat(destination); err == nil && relative != "mise.toml" {
+		if _, err := os.Lstat(destination); err == nil && originals[relative] == nil {
 			return fmt.Errorf("workspace file %s already exists", relative)
 		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
@@ -235,8 +324,10 @@ func commitInfrastructureWorkspace(root, stage string, originalMise []byte) erro
 			for _, path := range created {
 				os.Remove(path)
 			}
-			if originalMise != nil {
-				os.WriteFile(filepath.Join(root, "mise.toml"), originalMise, 0o644)
+			for relative, original := range originals {
+				if original != nil {
+					os.WriteFile(filepath.Join(root, relative), original, 0o644)
+				}
 			}
 		}
 	}()
@@ -252,7 +343,7 @@ func commitInfrastructureWorkspace(root, stage string, originalMise []byte) erro
 		if err := os.WriteFile(path, data, 0o644); err != nil {
 			return err
 		}
-		if relative != "mise.toml" || originalMise == nil {
+		if originals[relative] == nil {
 			created = append(created, path)
 		}
 	}

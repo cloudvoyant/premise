@@ -13,7 +13,7 @@ import (
 // Public API -----------------------------------------------------------------
 
 // InfraCommand creates the infra command.
-func InfraCommand() *cobra.Command {
+func InfraCommand(scaffold core.WorkspaceScaffold) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "infra",
 		Short: "Configure, preview, and apply Pulumi infrastructure",
@@ -21,6 +21,7 @@ func InfraCommand() *cobra.Command {
 		RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
 	command.AddCommand(
+		InfraSetupCommand(scaffold),
 		InfraAuthCommand(),
 		InfraInitCommand(),
 		InfraPlanCommand(),
@@ -29,6 +30,30 @@ func InfraCommand() *cobra.Command {
 		InfraQueryCommand(),
 		InfraDestroyCommand(),
 	)
+	return command
+}
+
+// InfraSetupCommand creates the setup command for an existing workspace.
+func InfraSetupCommand(scaffold core.WorkspaceScaffold) *cobra.Command {
+	var setup core.InfrastructureSetup
+	command := &cobra.Command{
+		Use:   "setup",
+		Short: "Add a Pulumi program and missing deployment workflows",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			root, err := premiseRoot()
+			if err != nil {
+				return err
+			}
+			if err := core.SetupInfrastructure(cmd.Context(), root, scaffold, setup, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "Infrastructure setup complete. Configure a backend before initializing an environment stack.")
+			return nil
+		},
+	}
+	command.Flags().StringVar(&setup.Language, "language", "", "Official Pulumi language starter; existing programs supply their runtime")
+	command.Flags().StringVar(&setup.PulumiVersion, "pulumi-version", "", "Pulumi version to pin; defaults to the existing pin or tested version")
 	return command
 }
 

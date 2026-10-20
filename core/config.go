@@ -28,6 +28,8 @@ var (
 type WorkflowAsset struct {
 	Path    string
 	Content string
+	// InfrastructureOnly omits deployment workflows from ordinary workspace setup.
+	InfrastructureOnly bool
 }
 
 // WorkspaceScaffold contains the embedded files used to initialize a workspace.
@@ -276,6 +278,13 @@ func InitializeTemplateRegistry(root string) (string, error) {
 }
 
 func InitializeWorkspace(root, workspaceMiseTemplate string, workflowAssets ...WorkflowAsset) (string, error) {
+	var workflows []WorkflowAsset
+	for _, asset := range workflowAssets {
+		if !asset.InfrastructureOnly {
+			workflows = append(workflows, asset)
+		}
+	}
+	workflowAssets = workflows
 	if strings.TrimSpace(workspaceMiseTemplate) == "" {
 		return "", errors.New("workspace mise template is empty")
 	}

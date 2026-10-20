@@ -53,7 +53,10 @@ sequenceDiagram
 
 For tandem PR validation, push a commit containing `[publish-rc]`. Wait for publication, then test the exact published RC in the dependent repository.
 
-### API
+#Package publication and its credential preflight use repository or organization CI secrets. They do not select a GitHub deployment environment.
+A library release on merge must not create a `production` deployment. Deployment environments belong to application infrastructure jobs.
+
+## API
 
 | API                                                  | Use                                                                    |
 | ---------------------------------------------------- | ---------------------------------------------------------------------- |

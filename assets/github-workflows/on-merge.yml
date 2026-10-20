@@ -126,7 +126,6 @@ jobs:
        (needs.plan.outputs.mode != 'single' &&
         needs.matrix.result == 'success'))
     runs-on: ubuntu-22.04
-    environment: production
     permissions:
       contents: read
     steps:
@@ -201,7 +200,6 @@ jobs:
       always() && needs.publish-release.result == 'success' &&
       needs.publish-release.outputs.version != ''
     runs-on: ubuntu-22.04
-    environment: production
     permissions:
       contents: read
       id-token: write

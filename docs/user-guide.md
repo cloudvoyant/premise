@@ -77,6 +77,16 @@ mise run infra:install
 ```
 
 If `infra/Pulumi.yaml` already exists, use `pm init --infra` to adopt it.
+If you already initialized Premise without infrastructure, add it later:
+
+```sh
+pm infra setup --language go
+# Adopt an existing program instead:
+pm infra setup
+```
+
+Setup adds the missing `on-deploy.yml`, preserves existing files and tool pins, and leaves backend configuration to you.
+Without infrastructure, initialization omits that manual deployment workflow.
 The file selects the language runtime. Root `mise.toml` selects Pulumi and runtime versions.
 Use ordinary language imports to share resource declarations across environment stacks.
 
@@ -115,6 +125,7 @@ pm infra destroy --env preview
 ```
 
 After you enable `PREMISE_DEPLOY_ENABLED` and configure provider credentials, `on-commit.yml` deploys feature-branch previews. `on-merge.yml` cleans them up after a same-repository PR merge or branch deletion. `on-deploy.yml` runs only when started manually. Persistent environments require interactive confirmation for destruction.
+Publishing a library on merge does not create a GitHub deployment or select a `production` environment. Publication tokens belong in repository or organization secrets.
 
 ## Deploy with migrations
 

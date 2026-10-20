@@ -70,7 +70,7 @@ jobs:
           PREMISE_TEST_POSTGRES: "1"
         run: >-
           go test ./e2e -count=1 -timeout 25m -v
-          -run 'Test(WorkspaceWithoutInfrastructure|LegacyInfrastructureBindings|Infrastructure|ConflictingInfrastructure|InfraQueries|Deployment|MigrationFailure|SharedMigrationGroup|PartialInfrastructure|SingleMigrating|InterruptedMigration)'
+          -run 'Test(WorkspaceWithoutInfrastructure|LegacyInfrastructureBindings|Infrastructure|ConflictingInfrastructure|ConflictingRetroactive|InfraQueries|Deployment|MigrationFailure|SharedMigrationGroup|PartialInfrastructure|SingleMigrating|InterruptedMigration)'
 
   s3:
     if: inputs.s3
