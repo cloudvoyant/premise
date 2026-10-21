@@ -110,5 +110,6 @@ The normal Go suite checks infrastructure selection, target validation, deployme
 ordering, recovery, and secret handling. Most deployment tests use fake Pulumi
 processes. For a live check, run `mise run e2e:infra` with a test GCP project and an
 existing GCS state backend. The [GCS fixture](../e2e/testdata/pulumi/README.md)
-generates a local Go template into a dummy Premise client, uploads one file,
-recovers remote state, and deletes the test resources.
+uses a local Go Pulumi program in a dummy Premise client. It creates only GCS
+buckets, recovers remote state, and verifies cleanup. Run it separately on demand;
+it is not part of CI.

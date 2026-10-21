@@ -54,7 +54,7 @@ func TestSecretProfilesDoNotFallbackOrFetchOtherKeys(t *testing.T) {
 func TestSecretDeclarationsRejectAdministrationKeysAndUnsafePaths(t *testing.T) {
 	for _, settings := range []*ProjectSecrets{
 		{Config: "../fnox.toml", Profiles: map[string]string{"dev": "dev"}, Keys: []string{"DATABASE_URL"}},
-		{Config: "fnox.toml", Profiles: map[string]string{"dev": "dev"}, Keys: []string{"VERCEL_TOKEN"}},
+		{Config: "fnox.toml", Profiles: map[string]string{"dev": "dev"}, Keys: []string{"GH_TOKEN"}},
 		{Config: "fnox.toml", Profiles: map[string]string{"dev": "dev"}, Keys: []string{"DATABASE_URL"}, File: "../.env.local"},
 	} {
 		if err := validateProjectSecrets(Project{Secrets: settings}); err == nil {
@@ -82,7 +82,7 @@ func TestPrivateSecretFilesAndDotenvEncoding(t *testing.T) {
 }
 
 func TestAppEnvironmentDropsAdminTokens(t *testing.T) {
-	result := appSecretEnvironment([]string{"VERCEL_TOKEN=admin", "NEON_API_KEY=admin", "DATABASE_URL=old", "PATH=/bin"}, map[string]string{"DATABASE_URL": "new"})
+	result := appSecretEnvironment([]string{"GH_TOKEN=admin", "AWS_SECRET_ACCESS_KEY=admin", "DATABASE_URL=old", "PATH=/bin"}, map[string]string{"DATABASE_URL": "new"})
 	joined := strings.Join(result, "\n")
 	if strings.Contains(joined, "admin") || strings.Contains(joined, "old") || !strings.Contains(joined, "DATABASE_URL=new") {
 		t.Fatal("incorrect secret injection")
@@ -105,7 +105,7 @@ func TestSecretRedactionAcrossOutputWrites(t *testing.T) {
 func TestFnoxResolverDoesNotReceiveAdministrationCredentials(t *testing.T) {
 	root := t.TempDir()
 	script := `#!/bin/sh
-[ -z "$NEON_API_KEY" ] && [ -z "$VERCEL_TOKEN" ] && [ -z "$PULUMI_CONFIG_PASSPHRASE" ] || exit 1
+[ -z "$AWS_SECRET_ACCESS_KEY" ] && [ -z "$GH_TOKEN" ] && [ -z "$PULUMI_CONFIG_PASSPHRASE" ] || exit 1
 [ -z "$FNOX_PROFILE" ] && [ -z "$RUST_LOG" ] || exit 1
 printf '{"schema":1,"set":{"APP_SECRET":"application-value"}}\n'
 `
@@ -113,7 +113,7 @@ printf '{"schema":1,"set":{"APP_SECRET":"application-value"}}\n'
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
-	for _, key := range []string{"NEON_API_KEY", "VERCEL_TOKEN", "PULUMI_CONFIG_PASSPHRASE", "FNOX_PROFILE", "RUST_LOG"} {
+	for _, key := range []string{"AWS_SECRET_ACCESS_KEY", "GH_TOKEN", "PULUMI_CONFIG_PASSPHRASE", "FNOX_PROFILE", "RUST_LOG"} {
 		t.Setenv(key, "administration-only")
 	}
 	value, err := (commandSecretReader{}).Read(t.Context(), root, "fnox.toml", "dev", []string{"APP_SECRET"})

@@ -26,10 +26,6 @@ func InfrastructureProvider(name string) (InfraProvider, bool) {
 	switch name {
 	case "gcp":
 		return providers.GCP{}, true
-	case "neon":
-		return providers.Neon{}, true
-	case "vercel":
-		return providers.Vercel{}, true
 	default:
 		return nil, false
 	}

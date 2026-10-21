@@ -10,34 +10,46 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	core "github.com/cloudvoyant/premise/core"
 )
 
 // Public API -----------------------------------------------------------------
 
-func TestInfraS3CreatesIsolatedBucketsAndPreservesOtherPreviewOnCleanup(t *testing.T) {
+func TestInfraGCSCreatesIsolatedBucketsAndPreservesOtherPreviewOnCleanup(t *testing.T) {
 	// Arrange.
-	if os.Getenv("PREMISE_TEST_S3") != "1" {
-		t.Skip("set PREMISE_TEST_S3=1 with an explicit AWS test account and remote backend")
+	if os.Getenv("PREMISE_TEST_GCS") != "1" {
+		t.Skip("set PREMISE_TEST_GCS=1 with an explicit GCP test project and GCS backend")
 	}
 	t.Setenv("PULUMI_HOME", t.TempDir())
-	account := os.Getenv("PREMISE_TEST_AWS_ACCOUNT")
+	project := os.Getenv("PREMISE_TEST_GCP_PROJECT")
 	backend := os.Getenv("PULUMI_BACKEND_URL")
-	if account == "" || (!strings.HasPrefix(backend, "s3://") && !strings.HasPrefix(backend, "gs://")) {
-		t.Fatal("PREMISE_TEST_AWS_ACCOUNT and an existing s3:// or gs:// PULUMI_BACKEND_URL are required")
+	if project == "" || !strings.HasPrefix(backend, "gs://") {
+		t.Fatal("PREMISE_TEST_GCP_PROJECT and an existing gs:// PULUMI_BACKEND_URL are required")
 	}
-	for _, tool := range []string{"mise", "aws"} {
+	for _, tool := range []string{"mise", "gcloud"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if actual := strings.TrimSpace(infraCommand(t, repositoryRoot(t), "aws", "sts", "get-caller-identity", "--query", "Account", "--output", "text")); actual != account {
-		t.Fatalf("AWS caller account %s does not match explicitly selected test account %s", actual, account)
+	if actual := strings.TrimSpace(infraCommand(t, repositoryRoot(t), "gcloud", "projects", "describe", project, "--format=value(projectId)")); actual != project {
+		t.Fatalf("GCP project %q does not match explicitly selected test project %q", actual, project)
 	}
 	binary := premiseBinary(t)
 	client := filepath.Join(t.TempDir(), "client")
 	copyInfraFixture(t, filepath.Join(repositoryRoot(t), "e2e/testdata/pulumi/client"), client)
+	manifest, err := core.LoadManifest(filepath.Join(client, core.ManifestFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.Workspace.Infra.Environments = map[string]core.InfraEnvironment{
+		"preview": {Config: map[string]string{"gcp:project": project}},
+	}
+	if err := core.SaveManifest(filepath.Join(client, core.ManifestFilename), manifest); err != nil {
+		t.Fatal(err)
+	}
 	infraCommand(t, client, "mise", "run", "infra:install")
-	branches := []string{fmt.Sprintf("feature/s3-a-%d", time.Now().UnixNano()), fmt.Sprintf("feature/s3-b-%d", time.Now().UnixNano())}
+	branches := []string{fmt.Sprintf("feature/gcs-a-%d", time.Now().UnixNano()), fmt.Sprintf("feature/gcs-b-%d", time.Now().UnixNano())}
 	buckets := make([]string, len(branches))
 	operation := func(root, branch, name string, args ...string) string {
 		arguments := []string{"infra", name, "--env", "preview", "--branch", branch}
@@ -56,7 +68,7 @@ func TestInfraS3CreatesIsolatedBucketsAndPreservesOtherPreviewOnCleanup(t *testi
 				}
 			}
 			if buckets[i] != "" {
-				check := exec.CommandContext(ctx, "aws", "s3api", "head-bucket", "--bucket", buckets[i])
+				check := exec.CommandContext(ctx, "gcloud", "storage", "buckets", "describe", "gs://"+buckets[i])
 				if output, err := check.CombinedOutput(); err == nil || !strings.Contains(string(output), "404") {
 					t.Errorf("could not verify deletion of %s: %v\n%s", buckets[i], err, output)
 				}
@@ -71,17 +83,14 @@ func TestInfraS3CreatesIsolatedBucketsAndPreservesOtherPreviewOnCleanup(t *testi
 		operation(client, branch, "plan")
 		operation(client, branch, "apply", "--yes")
 		buckets[i] = strings.TrimSpace(operation(client, branch, "query", "--output", "bucketName"))
-		arn := strings.TrimSpace(operation(client, branch, "query", "--resource", "storage", "--property", "arn"))
-		if buckets[i] == "" || !strings.HasSuffix(arn, ":s3:::"+buckets[i]) {
-			t.Fatalf("unexpected bucket/ARN: %q %q", buckets[i], arn)
+		id := strings.TrimSpace(operation(client, branch, "query", "--resource", "storage", "--property", "id"))
+		if buckets[i] == "" || id != buckets[i] {
+			t.Fatalf("unexpected bucket/ID: %q %q", buckets[i], id)
 		}
-		if exported := strings.TrimSpace(operation(client, branch, "query", "--output", "bucketArn")); exported != arn {
-			t.Fatalf("resource ARN %q differs from export %q", arn, exported)
+		if exported := strings.TrimSpace(operation(client, branch, "query", "--output", "bucketUrl")); exported != "gs://"+buckets[i] {
+			t.Fatalf("unexpected bucket URL: %q", exported)
 		}
-		object := infraCommand(t, client, "aws", "s3", "cp", "s3://"+buckets[i]+"/hello.txt", "-")
-		if object != "Hello from the Premise S3 fixture.\n" {
-			t.Fatalf("unexpected object content: %q", object)
-		}
+		infraCommand(t, client, "gcloud", "storage", "buckets", "describe", "gs://"+buckets[i])
 	}
 	operation(client, branches[0], "apply", "--yes")
 	fresh := filepath.Join(t.TempDir(), "client")
@@ -98,10 +107,8 @@ func TestInfraS3CreatesIsolatedBucketsAndPreservesOtherPreviewOnCleanup(t *testi
 	if recovered != buckets[0] {
 		t.Fatalf("fresh checkout recovered %q, want %q", recovered, buckets[0])
 	}
-	if object := infraCommand(t, client, "aws", "s3", "cp", "s3://"+buckets[1]+"/hello.txt", "-"); object != "Hello from the Premise S3 fixture.\n" {
-		t.Fatal("destroying one preview changed the other")
-	}
-	t.Logf("Verified real S3 buckets, managed objects, ARN queries, remote state, and preview isolation: %s, %s", buckets[0], buckets[1])
+	infraCommand(t, client, "gcloud", "storage", "buckets", "describe", "gs://"+buckets[1])
+	t.Logf("Verified real GCS buckets, resource queries, remote state, and preview cleanup isolation: %s, %s", buckets[0], buckets[1])
 }
 
 // Private helpers ------------------------------------------------------------

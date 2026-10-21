@@ -21,9 +21,6 @@ var onDeployWorkflow string
 //go:embed assets/github-workflows/on-merge.yml
 var onMergeWorkflow string
 
-//go:embed assets/github-workflows/deployment.yml
-var deploymentWorkflow string
-
 func main() {
 	cmd.Execute(workspaceMiseTemplate,
 		core.WorkflowAsset{Path: ".github/workflows/on-commit.yml", Content: onCommitWorkflow},
@@ -33,9 +30,5 @@ func main() {
 			InfrastructureOnly: true,
 		},
 		core.WorkflowAsset{Path: ".github/workflows/on-merge.yml", Content: onMergeWorkflow},
-		core.WorkflowAsset{
-			Path:    ".github/workflows/deployment.yml",
-			Content: deploymentWorkflow,
-		},
 	)
 }

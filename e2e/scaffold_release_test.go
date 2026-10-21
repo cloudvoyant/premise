@@ -46,7 +46,7 @@ func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 	project := filepath.Join(workspace, "apps", "difflab-cli")
 	assertFileContains(t, filepath.Join(project, "package.json"), `"name":"@difflab/difflab-cli"`)
 	assertFileContains(t, filepath.Join(project, "package.json"), `"format:check"`)
-	for _, name := range []string{"on-commit.yml", "on-merge.yml", "deployment.yml"} {
+	for _, name := range []string{"on-commit.yml", "on-merge.yml"} {
 		path := filepath.Join(workspace, ".github", "workflows", name)
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -63,14 +63,6 @@ func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 			t.Fatal(err)
 		}
 		switch name {
-		case "deployment.yml":
-			assertFileContains(t, path, "cancel-in-progress: false")
-			assertFileContains(t, path, "fail-fast: false")
-			for _, job := range []string{"provision", "migrate", "finish", "recover"} {
-				if _, ok := workflow.Jobs[job]; !ok {
-					t.Fatalf("deployment graph is missing %s", job)
-				}
-			}
 		case "on-merge.yml":
 			for _, job := range []string{"preflight-packages", "publish-release", "publish-packages"} {
 				if workflow.Jobs[job].Environment != nil {

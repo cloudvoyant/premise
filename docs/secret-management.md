@@ -4,16 +4,16 @@ An application secret is a value that the application needs. A deployment creden
 
 ## Ownership
 
-| Value                                      | Source                                                                   | Consumer                                   |
-| ------------------------------------------ | ------------------------------------------------------------------------ | ------------------------------------------ |
-| Stored application secrets                 | GCP Secret Manager through fnox                                          | Local application and local migration task |
-| Database connection for a preview          | Secret output from its Pulumi stack                                      | Migration task and server-side application |
-| Neon and Vercel administration credentials | Provider-supported OAuth or CI secrets                                   | Declared deployment and recovery tasks     |
-| GCP authentication                         | Local Application Default Credentials or CI workload identity            | fnox, Pulumi and durable record storage    |
-| Pulumi state protection                    | Backend access controls and storage encryption; empty passphrase for now | Pulumi configuration and state             |
-| Project IDs and environment labels         | Committed non-secret configuration                                       | Environment resolver                       |
+| Value                              | Source                                                                   | Consumer                                   |
+| ---------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------ |
+| Stored application secrets         | GCP Secret Manager through fnox                                          | Local application and local migration task |
+| Database connection for a preview  | Secret output from its Pulumi stack                                      | Migration task and server-side application |
+| Cloud administration credentials   | Provider-supported OAuth or CI secrets                                   | Declared deployment and recovery tasks     |
+| GCP authentication                 | Local Application Default Credentials or CI workload identity            | fnox, Pulumi and durable record storage    |
+| Pulumi state protection            | Backend access controls and storage encryption; empty passphrase for now | Pulumi configuration and state             |
+| Project IDs and environment labels | Committed non-secret configuration                                       | Environment resolver                       |
 
-Vercel receives application values during deployment. It does not own the source values for `pm secrets pull`. Do not put deployment credentials in an application fnox profile. Do not put database credentials in a browser bundle.
+Deployment platforms receive application values during deployment. They do not own the source values for `pm secrets pull`. Do not put deployment credentials in an application fnox profile. Do not put database credentials in a browser bundle.
 
 ## Configure application secrets
 

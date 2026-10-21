@@ -1,7 +1,0 @@
-name: premise-neon-vercel-example
-runtime: go
-packages:
-  neon:
-    source: terraform-provider
-    version: 1.4.0
-    parameters: [kislerdm/neon, 0.18.0]

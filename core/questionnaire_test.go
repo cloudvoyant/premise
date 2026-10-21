@@ -41,10 +41,10 @@ func TestScaffoldPreservesSourceAndOmitsGeneratedSecrets(t *testing.T) {
 
 func TestOnlyDeclaredGeneratedPulumiSDKIsExcluded(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "Pulumi.yaml"), []byte("name: example\npackages:\n  neon:\n    source: terraform-provider\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "Pulumi.yaml"), []byte("name: example\npackages:\n  example:\n    source: terraform-provider\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if !generatedPulumiSDKDirectory(root, filepath.Join(root, "sdks/neon")) {
+	if !generatedPulumiSDKDirectory(root, filepath.Join(root, "sdks/example")) {
 		t.Fatal("declared generated SDK copied")
 	}
 	if generatedPulumiSDKDirectory(root, filepath.Join(root, "sdks/client-owned")) {

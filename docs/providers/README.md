@@ -5,7 +5,7 @@ Declare the cloud services that your infrastructure uses. Pulumi still owns reso
 ```yaml
 workspace:
   infra:
-    providers: [gcp, neon, vercel]
+    providers: [gcp]
 ```
 
 ## Usage
@@ -27,7 +27,7 @@ pm deploy run --env stage --release COMMIT_SHA --artifact web=ARTIFACT_ID
 
 `--env-file` appends credential file paths for later jobs steps. It never writes token values. Other runners can pass the returned paths through their own environment mechanism. Existing standard credential files also work.
 
-Premise supports native GCP authentication and checks Neon and Vercel token variables. For unsupported providers, declare `ci:auth` in the root `mise.toml`. Premise runs native authentication first, then this optional fallback. Project or global Mise tasks cannot supply the fallback. A failed native operation or fallback stops the job.
+Premise supports native GCP authentication. For unsupported providers, declare `ci:auth` in the root `mise.toml`. Premise runs native authentication first, then this optional fallback. Project or global Mise tasks cannot supply the fallback. A failed native operation or fallback stops the job.
 
 ```toml
 [tasks."ci:auth"]
@@ -49,12 +49,10 @@ The action does not copy runner-local record directories between jobs.
 
 ## Providers
 
-| Provider     | Native authentication                             | Guide               |
-| ------------ | ------------------------------------------------- | ------------------- |
-| Google Cloud | Local OAuth, CI workload identity or existing ADC | [GCP](gcp.md)       |
-| Neon         | Standard CI token check                           | [Neon](neon.md)     |
-| Vercel       | Standard CI token check                           | [Vercel](vercel.md) |
-| AWS          | Runner credentials or root fallback               | [AWS](aws.md)       |
-| Azure        | Runner credentials or root fallback               | [Azure](azure.md)   |
+| Provider     | Native authentication                             | Guide             |
+| ------------ | ------------------------------------------------- | ----------------- |
+| Google Cloud | Local OAuth, CI workload identity or existing ADC | [GCP](gcp.md)     |
+| AWS          | Runner credentials or root fallback               | [AWS](aws.md)     |
+| Azure        | Runner credentials or root fallback               | [Azure](azure.md) |
 
 See [Pulumi state protection](pulumi.md) for the current empty-passphrase decision and encryption follow-up.

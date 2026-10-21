@@ -1,2 +1,2 @@
-name: premise-s3-fixture
+name: premise-gcs-fixture
 runtime: go

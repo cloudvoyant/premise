@@ -10,33 +10,25 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-func TestInfrastructureProviderEnvironment(t *testing.T) {
-	for _, name := range []string{"gcp", "neon", "vercel"} {
-		t.Run(name, func(t *testing.T) {
-			for _, key := range []string{"GOOGLE_APPLICATION_CREDENTIALS", "NEON_API_KEY", "VERCEL_API_TOKEN"} {
-				t.Setenv(key, "")
-			}
-			provider, ok := InfrastructureProvider(name)
-			if !ok {
-				t.Fatal("missing provider")
-			}
-			if err := provider.EnsureEnvironment(true); err == nil || !strings.Contains(err.Error(), "docs/providers/"+name+".md") {
-				t.Fatalf("missing helpful failure: %v", err)
-			}
-			switch name {
-			case "gcp":
-				path := filepath.Join(t.TempDir(), "adc.json")
-				os.WriteFile(path, []byte("{}"), 0600)
-				t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", path)
-			case "neon":
-				t.Setenv("NEON_API_KEY", "ci-value")
-			case "vercel":
-				t.Setenv("VERCEL_API_TOKEN", "ci-value")
-			}
-			if err := provider.EnsureEnvironment(true); err != nil {
-				t.Fatal(err)
-			}
-		})
+func TestGCPEnvironmentRequiresCredentialsAndAcceptsExistingADC(t *testing.T) {
+	// Arrange.
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "")
+	provider, ok := InfrastructureProvider("gcp")
+	if !ok {
+		t.Fatal("missing GCP provider")
+	}
+
+	// Act and assert.
+	if err := provider.EnsureEnvironment(true); err == nil || !strings.Contains(err.Error(), "docs/providers/gcp.md") {
+		t.Fatalf("missing helpful failure: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "adc.json")
+	if err := os.WriteFile(path, []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", path)
+	if err := provider.EnsureEnvironment(true); err != nil {
+		t.Fatal(err)
 	}
 }
 

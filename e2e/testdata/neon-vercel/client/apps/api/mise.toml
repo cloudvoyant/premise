@@ -1,8 +1,0 @@
-[tasks.health]
-run = '../../bin/cloud-tasks health'
-[tasks.rollback]
-run = '../../bin/cloud-tasks rollback'
-[tasks.cleanup]
-run = '../../bin/cloud-tasks cleanup'
-[tasks.migrate]
-run = '../../bin/cloud-tasks migrate'

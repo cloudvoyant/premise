@@ -210,8 +210,6 @@ jobs:
     env:
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
       GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
-      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
-      VERCEL_API_TOKEN: ${{ secrets.VERCEL_API_TOKEN }}
     steps:
       - uses: actions/checkout@v6
         with:

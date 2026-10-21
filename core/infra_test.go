@@ -141,9 +141,9 @@ func TestPrerequisiteCoverageIncludesProvider(t *testing.T) {
 }
 
 func TestPrerequisitePatternsMatchPulumiTypesWithSlashes(t *testing.T) {
-	branch := "urn:pulumi:preview-feature::environment::neon:index/branch:Branch::db-branch"
-	database := "urn:pulumi:preview-feature::environment::neon:index/database:Database::db-database"
-	app := "urn:pulumi:preview-feature::environment::vercel:index/deployment:Deployment::app-deployment"
+	branch := "urn:pulumi:preview-feature::environment::fixture:database/branch:Branch::db-branch"
+	database := "urn:pulumi:preview-feature::environment::fixture:database/instance:Instance::db-database"
+	app := "urn:pulumi:preview-feature::environment::fixture:application/deployment:Deployment::app-deployment"
 	resources := map[string]infraResourcePlan{
 		branch:   {Goal: &infraPlanGoal{Custom: true}},
 		database: {Goal: &infraPlanGoal{Custom: true, Dependencies: []string{branch}}},
@@ -164,11 +164,11 @@ func TestPrerequisitePatternsMatchPulumiTypesWithSlashes(t *testing.T) {
 func TestInfrastructureRuntimeSecretsDoNotLeakThroughLogs(t *testing.T) {
 	directory := t.TempDir()
 	script := filepath.Join(directory, "pulumi")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s\\n' \"$APP_MARKER\" \"$VERCEL_TOKEN\"\nprintf '%s\\n' \"$APP_MARKER\" >&2\n"), 0700); err != nil {
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s\\n' \"$APP_MARKER\" \"$GH_TOKEN\"\nprintf '%s\\n' \"$APP_MARKER\" >&2\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("VERCEL_TOKEN", "administration-token-test")
+	t.Setenv("GH_TOKEN", "administration-token-test")
 	var output, diagnostics bytes.Buffer
 	r := infraCommandRunner{stdout: &output, stderr: &diagnostics, secrets: map[string]string{"APP_MARKER": "runtime-secret-test"}}
 	if err := r.run(context.Background(), directory, map[string]string{"APP_MARKER": "runtime-secret-test"}, "pulumi", "preview"); err != nil {

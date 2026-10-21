@@ -52,11 +52,11 @@ description = "Run end-to-end tests"
 run = "go test ./e2e"
 
 [tasks."e2e:infra"]
-description = "Create, verify, and destroy two live S3 preview fixtures"
-run = "mise exec awscli@2 -- go test ./e2e -run '^TestInfraS3' -count=1 -timeout 20m -v"
+description = "Create, verify, and destroy live GCS preview buckets"
+run = "go test ./e2e -run '^TestInfraGCS' -count=1 -timeout 20m -v"
 
 [tasks."e2e:infra".env]
-PREMISE_TEST_S3 = "1"
+PREMISE_TEST_GCS = "1"
 
 [tasks.dev]
 description = "Watch sources and rebuild bin/premise (and pm) on change"

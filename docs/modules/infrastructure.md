@@ -321,10 +321,26 @@ Configure a remote backend before using `pm infra init --env ENV`; setup does no
 
 ### Run CI phases
 
-`deployment.yml` is the reusable job graph. Each job selects the same commit, backend, environment, and run ID.
-Its optional `directory` input selects a workspace below the checkout root.
-`revision` selects the source commit. `deployment-revision` can identify a different immutable application release.
-Use `run-id` when one workflow run performs more than one deployment. Each deployment needs its own ID.
+Only three workflows are allowed: `on-commit.yml`, `on-deploy.yml`, and `on-merge.yml`.
+The commit flow keeps the established order:
+
+```mermaid
+flowchart LR
+    Plan --> Tasks[Task fan-out]
+    Tasks --> Publish[Release and package publication]
+    Publish --> Provision[Infrastructure prerequisites]
+    Provision --> Migrate[Optional migration fan-out]
+    Migrate --> Apply[Full infrastructure update and deployment]
+    Apply --> Complete[Health checks and release record]
+    Provision -. failure .-> Recover[Recover previous application artifacts]
+    Migrate -. failure .-> Recover
+    Apply -. failure .-> Recover
+```
+
+These deployment jobs live directly in `on-commit.yml` for feature-push previews and `on-deploy.yml` for manual deployments.
+Each job selects the same commit, backend, environment, and run ID.
+`on-merge.yml` owns preview cleanup, including branch deletion. It does not deploy production infrastructure.
+Infrastructure tests run separately on demand; they are not CI workflow jobs.
 Fresh runners restore declared stack configuration. Migration workers write separate outcomes to shared storage.
 The full update waits for all workers. A zero-migration deployment skips the matrix and continues directly.
 Recovery waits for all migration jobs, including failed jobs.
@@ -360,6 +376,6 @@ Core imports no cloud resource SDK. Client fixture modules own their published p
 ## Validation
 
 Premise's end-to-end harness exercises real Go and TypeScript programs, saved-state queries, PostgreSQL migrations, and automatic artifact recovery.
-The live S3 test creates two isolated preview buckets and managed objects. It checks state reuse and cleanup isolation.
+The live GCS test creates only storage buckets. It checks queries, state reuse, and preview cleanup isolation.
 Cloud checks require explicit test credentials. A skipped check is not live validation.
-See the [S3 fixture](../../e2e/testdata/pulumi/README.md) and [local deployment fixture](../../e2e/testdata/deploy/README.md) and [live Neon/Vercel fixture](../../e2e/testdata/neon-vercel/README.md).
+See the [GCS fixture](../../e2e/testdata/pulumi/README.md) and [local deployment fixture](../../e2e/testdata/deploy/README.md).
