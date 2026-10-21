@@ -34,7 +34,7 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
-      - uses: cloudvoyant/premise@v0
+      - uses: cloudvoyant/premise@v0.5.0-rc.261
         id: plan
         with:
           command: plan
@@ -43,7 +43,7 @@ jobs:
           install-premise: build
       - name: Run the root hook once before matrix rows
         if: steps.plan.outputs.mode == 'matrix'
-        uses: cloudvoyant/premise@v0
+        uses: cloudvoyant/premise@v0.5.0-rc.261
         with:
           command: flow
           flow: on-merge
@@ -64,7 +64,7 @@ jobs:
           fetch-tags: true
           persist-credentials: false
       - name: Run complete flow
-        uses: cloudvoyant/premise@v0
+        uses: cloudvoyant/premise@v0.5.0-rc.261
         with:
           command: flow
           flow: on-merge
@@ -96,7 +96,7 @@ jobs:
           fetch-tags: true
           persist-credentials: false
       - name: Run scoped complete flow
-        uses: cloudvoyant/premise@v0
+        uses: cloudvoyant/premise@v0.5.0-rc.261
         with:
           command: flow-matrix
           flow: on-merge
@@ -182,7 +182,7 @@ jobs:
             exit 1
           fi
       - name: Publish combined release
-        uses: cloudvoyant/premise@v0
+        uses: cloudvoyant/premise@v0.5.0-rc.261
         env:
           GH_TOKEN: ${{ github.token }}
         with:
@@ -208,7 +208,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Publish registry packages
-        uses: cloudvoyant/premise@v0
+        uses: cloudvoyant/premise@v0.5.0-rc.261
         env:
           GH_TOKEN: ${{ github.token }}
           CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
@@ -239,15 +239,15 @@ jobs:
         with:
           ref: main
           persist-credentials: false
-      - uses: cloudvoyant/premise@v0.5.0-rc.255
+      - uses: cloudvoyant/premise@v0.5.0-rc.261
         with:
           setup-only: true
-          premise-version: v0.5.0-rc.255
+          premise-version: v0.5.0-rc.261
           install-premise: pre-built
       - name: Authenticate infrastructure providers
         run: pm infra auth --ci --env-file "$GITHUB_ENV"
       - name: Destroy the merged or deleted branch preview
-        uses: cloudvoyant/premise@v0.5.0-rc.255
+        uses: cloudvoyant/premise@v0.5.0-rc.261
         with:
           command: infra-destroy
           release: none

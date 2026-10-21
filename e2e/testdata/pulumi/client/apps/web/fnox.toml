@@ -9,4 +9,3 @@ APP_MESSAGE = { default = "prod-example" }
 
 [profiles.preview.secrets]
 APP_MESSAGE = { default = "preview-example" }
-
