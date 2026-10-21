@@ -236,6 +236,19 @@ func PublishLanguagePackages(ctx context.Context, root string, stdout, stderr io
 	return plan, nil
 }
 
+// PreflightStablePublication validates selected registry publishers before tagging.
+// It does not create a tag, change package files, or publish packages.
+func PreflightStablePublication(ctx context.Context, root, version string) error {
+	if _, err := ValidatePackagePublicationVersion(version, "publish"); err != nil {
+		return err
+	}
+	_, plugins, err := loadReleaseBackends(root)
+	if err != nil {
+		return fmt.Errorf("resolve package managers: %w", err)
+	}
+	return preflightStablePublicationPlugins(ctx, root, version, plugins)
+}
+
 // PublishReleasePackages checks the exact tag at HEAD before invoking any
 // registry publisher. The workflow runs this only after GitHub publication.
 func PublishReleasePackages(ctx context.Context, root, channel, expectedVersion string, stdout, stderr io.Writer) (ReleasePlan, error) {
@@ -468,7 +481,7 @@ func prepareStableRelease(ctx context.Context, root string, stdout io.Writer, fu
 		return plan, nil
 	}
 	if fullPublish {
-		if err := preflightStablePublication(ctx, root, plan.Version); err != nil {
+		if err := PreflightStablePublication(ctx, root, plan.Version); err != nil {
 			return ReleasePlan{}, fmt.Errorf("preflight stable publication: %w", err)
 		}
 	}
@@ -478,14 +491,6 @@ func prepareStableRelease(ctx context.Context, root string, stdout io.Writer, fu
 	plan.ReuseTag = true
 	fmt.Fprintf(stdout, "Created stable tag: %s\n", plan.Version)
 	return plan, nil
-}
-
-func preflightStablePublication(ctx context.Context, root, version string) error {
-	_, plugins, err := loadReleaseBackends(root)
-	if err != nil {
-		return fmt.Errorf("resolve package managers: %w", err)
-	}
-	return preflightStablePublicationPlugins(ctx, root, version, plugins)
 }
 
 func preflightStablePublicationPlugins(ctx context.Context, root, version string, plugins []PackageManagerBackend) error {

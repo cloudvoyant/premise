@@ -73,12 +73,23 @@ func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 		}
 		if name == "on-merge.yml" {
 			for _, expected := range []string{
+				"command: preflight",
+				"name: Preflight registry publication before creating a release",
 				"permissions:\n  contents: write\n  id-token: write",
 				"uses: cloudvoyant/premise@v0",
 				"flow: on-merge",
 				"release: auto",
 			} {
 				assertFileContains(t, path, expected)
+			}
+		}
+		if name == "on-merge.yml" {
+			workflow, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(workflow), `if [[ -z "$CRATES_TOKEN" ]]`) {
+				t.Fatal("generated merge workflow requires Cargo credentials unconditionally")
 			}
 		}
 		if name == "on-merge.yml" || name == "on-deploy.yml" {

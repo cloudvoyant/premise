@@ -110,12 +110,42 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  publish-release:
+  preflight-packages:
     needs: [plan, single, matrix]
+    if: >-
+      always() &&
+      needs.plan.outputs.version != '' &&
+      needs.plan.result == 'success' &&
+      ((needs.plan.outputs.mode == 'single' &&
+        needs.single.result == 'success') ||
+       (needs.plan.outputs.mode != 'single' &&
+        needs.matrix.result == 'success'))
+    runs-on: ubuntu-22.04
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Preflight registry publication before creating a release
+        uses: ./
+        env:
+          CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
+        with:
+          command: preflight
+          flow: on-merge
+          release: none
+          install-premise: build
+          version: ${{ needs.plan.outputs.version }}
+
+  publish-release:
+    needs: [plan, single, matrix, preflight-packages]
     outputs:
       version: ${{ needs.plan.outputs.version }}
     if: >-
       always() && needs.plan.outputs.version != '' &&
+      needs.preflight-packages.result == 'success' &&
       needs.plan.result == 'success' &&
       ((needs.plan.outputs.mode == 'single' &&
         needs.single.result == 'success') ||

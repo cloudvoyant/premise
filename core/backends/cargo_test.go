@@ -165,6 +165,86 @@ esac
 	}
 }
 
+func TestCargoPreflightRequiresTokenOnlyForPendingPublicPackages(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		cargo          bool
+		public         bool
+		exists         bool
+		token          string
+		wantTokenError bool
+	}{
+		{name: "pending public package", cargo: true, public: true, wantTokenError: true},
+		{name: "authenticated public package", cargo: true, public: true, token: "cargo-secret"},
+		{name: "private package", cargo: true},
+		{name: "already published package", cargo: true, public: true, exists: true},
+		{name: "non-Cargo template"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			// Arrange: use the real Cargo backend with a local registry and task discovery.
+			root := t.TempDir()
+			manifest := NewManifest("cargo-fixture")
+			manifest.Workspace.Kind = core.ProjectKindTemplateRegistry
+			target := templateFixture("package", "lib")
+			manifest.TemplateRegistry = &TemplateRegistry{Templates: []Template{target}, WorkspaceFiles: []string{}}
+			if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "Cargo.toml"), []byte("[workspace]\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			directory := filepath.Join(root, filepath.FromSlash(target.Path))
+			if err := os.MkdirAll(directory, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if test.cargo {
+				content := "[package]\nname = \"package\"\nversion = \"0.1.0\"\n"
+				if !test.public {
+					content += "publish = false\n"
+				}
+				if err := os.WriteFile(filepath.Join(directory, "Cargo.toml"), []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+				if test.exists {
+					response.WriteHeader(http.StatusOK)
+				} else {
+					response.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+			originalAPI := cratesAPIBaseURL
+			cratesAPIBaseURL = server.URL
+			defer func() { cratesAPIBaseURL = originalAPI }()
+			bin := t.TempDir()
+			if err := os.WriteFile(filepath.Join(bin, "mise"), []byte("#!/bin/sh\n[ \"$*\" = 'task info publish --json' ]\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			t.Setenv("CRATES_TOKEN", test.token)
+
+			// Act: preflight must not publish or change package files.
+			err := (Cargo{}).PreflightPublication(t.Context(), root, "v1.2.3", "publish")
+
+			// Assert: only an unpublished public crate needs the registry credential.
+			if test.wantTokenError {
+				if err == nil || !strings.Contains(err.Error(), "CRATES_TOKEN is required") {
+					t.Fatalf("preflight = %v, want token error", err)
+				}
+			} else if err != nil {
+				t.Fatalf("preflight = %v", err)
+			}
+			if test.cargo {
+				content, err := os.ReadFile(filepath.Join(directory, "Cargo.toml"))
+				if err != nil || !strings.Contains(string(content), `version = "0.1.0"`) {
+					t.Fatalf("preflight changed Cargo manifest: %s, %v", content, err)
+				}
+			}
+		})
+	}
+}
+
 func TestCargoPublicationAggregatesPreflightErrorsBeforeChangingFiles(t *testing.T) {
 	root := t.TempDir()
 	manifest := NewManifest("cargo-fixture")
