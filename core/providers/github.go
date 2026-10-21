@@ -20,8 +20,21 @@ type GitHub struct{}
 
 // Public API -----------------------------------------------------------------
 
-// WriteOutputs writes scalar values and JSON matrices in step-output format.
-func (GitHub) WriteOutputs(output io.Writer, values map[string]any) error {
+// WritePlan formats task and migration matrices as GitHub Actions step outputs.
+func (provider GitHub) WritePlan(output io.Writer, plan CIPlan) error {
+	return provider.writeOutputs(output, map[string]any{
+		"mode":             plan.Mode,
+		"runner":           plan.Runner,
+		"native":           plan.HasNative,
+		"matrix":           map[string]any{"include": plan.Matrix},
+		"has_migrations":   plan.HasMigrations,
+		"migration_matrix": map[string]any{"include": plan.Migrations},
+	})
+}
+
+// Private helpers ------------------------------------------------------------
+
+func (GitHub) writeOutputs(output io.Writer, values map[string]any) error {
 	keys := make([]string, 0, len(values))
 	for key := range values {
 		keys = append(keys, key)
@@ -48,8 +61,6 @@ func (GitHub) WriteOutputs(output io.Writer, values map[string]any) error {
 	_, err := io.WriteString(output, buffer.String())
 	return err
 }
-
-// Private helpers ------------------------------------------------------------
 
 var githubSecretKeys = []string{"GH_TOKEN", "GITHUB_TOKEN"}
 

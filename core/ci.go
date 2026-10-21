@@ -31,15 +31,13 @@ func WriteCIPlanOutputs(output io.Writer, provider string, plan CISchedule) erro
 	if err != nil {
 		return err
 	}
-	return adapter.WriteOutputs(output, map[string]any{
-		"mode":   plan.Mode,
-		"runner": plan.Runner,
-		"native": plan.HasNative,
-		"matrix": struct {
-			Include []CIMatrixRow `json:"include"`
-		}{plan.Matrix},
-		"has_migrations":   len(plan.Migrations) > 0,
-		"migration_matrix": MigrationMatrix{Include: plan.Migrations},
+	return adapter.WritePlan(output, providers.CIPlan{
+		Mode:          plan.Mode,
+		Runner:        plan.Runner,
+		HasNative:     plan.HasNative,
+		Matrix:        plan.Matrix,
+		Migrations:    plan.Migrations,
+		HasMigrations: len(plan.Migrations) > 0,
 	})
 }
 

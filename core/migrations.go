@@ -17,11 +17,6 @@ type MigrationGroup struct {
 	Projects []string `json:"projects"`
 }
 
-// MigrationMatrix supplies the include rows consumed by a CI strategy.
-type MigrationMatrix struct {
-	Include []MigrationGroup `json:"include"`
-}
-
 // Public API -----------------------------------------------------------------
 
 // PlanMigrations discovers application-owned migrate tasks without running them.
