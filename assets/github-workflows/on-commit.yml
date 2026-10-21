@@ -225,8 +225,6 @@ jobs:
           install-premise: pre-built
       - name: Authenticate infrastructure providers
         run: pm infra auth --ci --env-file "$GITHUB_ENV"
-      - name: Install client dependencies
-        run: pm install
       - name: Run environment flow
         env:
           PM_ARTIFACTS: ${{ vars.PREMISE_ARTIFACT_IDENTITIES }}
