@@ -35,4 +35,4 @@ The test passes the explicit project to Pulumi and checks it through gcloud befo
 `PREMISE_BIN` selects a published CLI binary. Without it, the test builds the checkout.
 Normal `go test ./...` skips this live test. A skip does not prove live behavior.
 
-The separate local [deployment fixture](../deploy/README.md) checks migrations and application rollback without Neon or Vercel.
+The separate local [deployment fixture](../deploy/README.md) checks migrations and application rollback without cloud application services.

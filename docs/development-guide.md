@@ -32,7 +32,7 @@ core/release_backends.go # Release sequencing across selected managers
 core/backends/go.go     # Go artifact policy
 core/backends/cargo.go  # Cargo metadata, artifact, and publication policy
 core/backends/bun.go    # Bun metadata and npm publication policy
-cmd/package_manager_plugins.go # CLI composition of built-in backends
+core/backends/register.go # Registration of built-in backends
 core/ci.go             # Lifecycle selection and release-phase gating
 core/release.go        # Shared stable/RC release preparation and publication
 core/version.go        # Semantic version calculation and validation
@@ -40,7 +40,7 @@ docs/modules/          # Per-module design, API usage, and implementation detail
 go.mod                # Module manifest
 mise.toml             # Task runner and tool versions
 action.yml            # Published composite action (root — use a v0 tag while premise is in alpha)
-.github/workflows/    # Own CI + published reusable workflows
+.github/workflows/    # on-commit, on-deploy, and on-merge only
 ```
 
 ## Development Workflow
