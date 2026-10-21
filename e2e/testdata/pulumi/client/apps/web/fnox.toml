@@ -1,0 +1,12 @@
+[profiles.dev.secrets]
+APP_MESSAGE = { default = "dev-example" }
+
+[profiles.stage.secrets]
+APP_MESSAGE = { default = "stage-example" }
+
+[profiles.prod.secrets]
+APP_MESSAGE = { default = "prod-example" }
+
+[profiles.preview.secrets]
+APP_MESSAGE = { default = "preview-example" }
+

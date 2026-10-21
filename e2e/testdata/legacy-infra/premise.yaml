@@ -1,8 +1,0 @@
-workspace:
-  name: legacy-client
-  kind: monorepo
-  schema-version: "0.2"
-  projects: []
-  infra:
-    bindings:
-      web: { program: environment, artifact: dist }

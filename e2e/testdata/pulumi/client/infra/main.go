@@ -11,6 +11,7 @@ import (
 func main() {
 	pulumi.Run(func(ctx *pulumi.Context) error {
 		bucket, err := storage.NewBucket(ctx, "storage", &storage.BucketArgs{
+			ForceDestroy:             pulumi.Bool(true),
 			Project:                  pulumi.String(config.Require(ctx, "gcp:project")),
 			Location:                 pulumi.String("US"),
 			UniformBucketLevelAccess: pulumi.Bool(true),

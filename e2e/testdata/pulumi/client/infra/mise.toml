@@ -1,0 +1,2 @@
+[tasks.setup]
+run = "mise exec -- pulumi install --non-interactive"

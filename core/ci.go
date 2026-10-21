@@ -17,11 +17,31 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/cloudvoyant/premise/core/providers"
+
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 )
 
 // Public API -----------------------------------------------------------------
+
+// WriteCIPlanOutputs sends scheduling data through the selected CI runner adapter.
+func WriteCIPlanOutputs(output io.Writer, provider string, plan CISchedule) error {
+	adapter, err := providers.CIOutputProvider(provider)
+	if err != nil {
+		return err
+	}
+	return adapter.WriteOutputs(output, map[string]any{
+		"mode":   plan.Mode,
+		"runner": plan.Runner,
+		"native": plan.HasNative,
+		"matrix": struct {
+			Include []CIMatrixRow `json:"include"`
+		}{plan.Matrix},
+		"has_migrations":   len(plan.Migrations) > 0,
+		"migration_matrix": MigrationMatrix{Include: plan.Migrations},
+	})
+}
 
 // CIFlow names one convention-driven CI lifecycle.
 type CIFlow string
@@ -224,6 +244,8 @@ func ParseCIReleaseMode(value string) (CIReleaseMode, error) {
 
 // CIFlowOptions controls the narrow orchestration controls for a complete flow.
 type CIFlowOptions struct {
+	Backend   string
+	Branch    string
 	Project   string
 	Platform  string
 	OutputDir string
@@ -276,6 +298,25 @@ func RunCIFlowWithOptions(ctx context.Context, root string, flow CIFlow, environ
 	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
 	if err != nil {
 		return err
+	}
+	if flow == CIFlowOnRelease && manifest.Workspace.Infra != nil && manifest.Workspace.Deployment != nil && !options.RootOnly {
+		release := os.Getenv("PM_RELEASE")
+		artifacts, err := ParseArtifactReferences(os.Getenv("PM_ARTIFACTS"))
+		if err != nil {
+			return err
+		}
+
+		branch := options.Branch
+		if branch == "" {
+			branch = os.Getenv("PM_BRANCH")
+		}
+		if target == "preview" && branch == "" {
+			branch, err = CurrentFeatureBranch(ctx, root)
+			if err != nil {
+				return err
+			}
+		}
+		return RunDeployment(ctx, root, DeployOptions{InfraOptions: InfraOptions{Environment: target, Branch: branch, Backend: options.Backend}, Release: release, Artifacts: artifacts}, nil, stdout, stderr)
 	}
 	projects, err := SelectCIProjects(root, manifest, flow)
 	if err != nil {
@@ -813,8 +854,8 @@ func ciTarget(flow CIFlow, environment string) (string, error) {
 		if environment == "" {
 			environment = "stage"
 		}
-		if environment != "stage" && environment != "prod" {
-			return "", fmt.Errorf("invalid release environment %q: expected stage or prod", environment)
+		if environment != "dev" && environment != "stage" && environment != "prod" && environment != "preview" {
+			return "", fmt.Errorf("invalid release environment %q: expected dev, stage, prod, or preview", environment)
 		}
 		return environment, nil
 	default:

@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -31,137 +34,127 @@ type DeploymentResult struct {
 	RecoverySucceeded bool   `json:"recovery_succeeded"`
 }
 
-// DeploymentPlan exposes state and recovery destinations for CI orchestration.
-type DeploymentPlan struct {
-	Program          string           `json:"program"`
-	Stack            string           `json:"stack"`
-	Backend          string           `json:"backend"`
-	BackendURL       string           `json:"backend_url"`
-	RecordsDirectory string           `json:"records_directory"`
-	Steps            []string         `json:"steps"`
-	Migrations       []MigrationGroup `json:"migrations"`
-	MigrationMatrix  MigrationMatrix  `json:"migration_matrix"`
-	RecordsURL       string           `json:"records_url"`
-}
-
 // Public API -----------------------------------------------------------------
-
-// PlanDeployment returns ordered steps without contacting providers or secret stores.
-func PlanDeployment(root string, options InfraOptions) ([]string, error) {
-	destination, err := ResolveInfrastructure(root, options)
-	if err != nil {
-		return nil, err
-	}
-	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
-	if err != nil {
-		return nil, err
-	}
-	d := manifest.Workspace.Deployment
-	if d == nil {
-		return nil, fmt.Errorf("workspace.deployment is not configured")
-	}
-	steps := []string{"program " + destination.ProjectName + " stack " + destination.Stack + " backend " + destination.BackendName}
-	if len(manifest.Workspace.Infra.Prerequisites) > 0 {
-		steps = append(steps, "preview and apply database prerequisites")
-	}
-	groups, err := PlanMigrations(root, manifest)
-	if err != nil {
-		return nil, err
-	}
-	for _, group := range groups {
-		for _, project := range group.Projects {
-			steps = append(steps, "migrate "+project+" for "+options.Environment)
-		}
-	}
-	steps = append(steps, "preview and apply full environment stack")
-	for _, app := range d.Applications {
-		if app.Deploy != "" {
-			steps = append(steps, "deploy "+app.Project+":"+app.Deploy)
-		}
-	}
-	for _, app := range d.Applications {
-		steps = append(steps, "health "+app.Project+":"+app.Health)
-	}
-	steps = append(steps, "persist successful release; recover automatically on failure")
-	return steps, nil
-}
-
-// ResolveDeploymentPlan supplies the durable-record directory without shell YAML parsing.
-func ResolveDeploymentPlan(root string, options InfraOptions) (DeploymentPlan, error) {
-	steps, err := PlanDeployment(root, options)
-	if err != nil {
-		return DeploymentPlan{}, err
-	}
-	destination, err := ResolveInfrastructure(root, options)
-	if err != nil {
-		return DeploymentPlan{}, err
-	}
-	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
-	if err != nil {
-		return DeploymentPlan{}, err
-	}
-	store, err := deploymentRecordStore(root, manifest, destination)
-	if err != nil {
-		return DeploymentPlan{}, err
-	}
-	groups, err := PlanMigrations(root, manifest)
-	if err != nil {
-		return DeploymentPlan{}, err
-	}
-	directory := ""
-	if strings.HasPrefix(store.URL, "file://") {
-		directory = strings.TrimPrefix(store.URL, "file://")
-	}
-	return DeploymentPlan{
-		Program:          destination.ProjectName,
-		Stack:            destination.Stack,
-		Backend:          destination.BackendName,
-		BackendURL:       destination.BackendURL,
-		RecordsDirectory: directory,
-		RecordsURL:       store.URL,
-		Steps:            steps,
-		Migrations:       groups,
-		MigrationMatrix:  MigrationMatrix{Include: groups},
-	}, nil
-}
 
 // RunDeployment runs the same deployment phases used by CI jobs and recovers on failure.
 func RunDeployment(ctx context.Context, root string, options DeployOptions, stdin io.Reader, stdout, stderr io.Writer) error {
 	if options.RunID == "" {
 		options.RunID = fmt.Sprintf("local-%d", time.Now().UnixNano())
 	}
-	plan, err := ResolveDeploymentPlan(root, options.InfraOptions)
+	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
 	if err != nil {
 		return err
 	}
-	if err := RunDeploymentPhase(ctx, root, "start", options, stdin, stdout, stderr); err != nil {
+	groups, err := PlanMigrations(root, manifest)
+	if err != nil {
+		return err
+	}
+	if err := runDeploymentPhase(ctx, root, "start", options, stdin, stdout, stderr); err != nil {
 		return err
 	}
 	execute := func(phase string) error {
-		if err := RunDeploymentPhase(ctx, root, phase, options, stdin, stdout, stderr); err != nil {
+		if err := runDeploymentPhase(ctx, root, phase, options, stdin, stdout, stderr); err != nil {
 			recovery, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Minute)
 			defer cancel()
-			recoveryErr := RunDeploymentPhase(recovery, root, "recover", options, stdin, stdout, stderr)
+			recoveryErr := runDeploymentPhase(recovery, root, "recover", options, stdin, stdout, stderr)
 			return errors.Join(fmt.Errorf("deployment %s failed during %s: %w", options.RunID, phase, err), recoveryErr)
 		}
 		return nil
 	}
-	if err := execute("provision"); err != nil {
+	exists, err := InfrastructureExists(ctx, root, options.InfraOptions, stderr)
+	if err != nil {
+		return executeFailure(ctx, root, options, "inspect", err, stdin, stdout, stderr)
+	}
+	if err := execute("prepare"); err != nil {
 		return err
 	}
-	for _, group := range plan.Migrations {
-		options.Group = group.Name
-		if err := execute("migrate"); err != nil {
-			return err
+	migrate := func() error {
+		stdout, stderr := synchronizedDeploymentWriters(stdout, stderr)
+		var workers sync.WaitGroup
+		var failures []error
+		var mutex sync.Mutex
+		for _, group := range groups {
+			workers.Add(1)
+			go func(group MigrationGroup) {
+				defer workers.Done()
+				selected := options
+				selected.Group = group.Name
+				if err := runDeploymentPhase(ctx, root, "migrate", selected, stdin, stdout, stderr); err != nil {
+					mutex.Lock()
+					failures = append(failures, err)
+					mutex.Unlock()
+				}
+			}(group)
+		}
+		workers.Wait()
+		return errors.Join(failures...)
+	}
+	if exists {
+		if err := migrate(); err != nil {
+			return executeFailure(ctx, root, options, "migration", err, stdin, stdout, stderr)
 		}
 	}
-	if err := execute("apply"); err != nil {
+	if err := execute("update"); err != nil {
 		return err
 	}
+	if !exists {
+		if err := migrate(); err != nil {
+			return executeFailure(ctx, root, options, "migration", err, stdin, stdout, stderr)
+		}
+	}
+
 	return execute("complete")
 }
 
+// ParseArtifactReferences accepts the JSON map or project=reference pairs used by CI.
+func ParseArtifactReferences(value string) (map[string]string, error) {
+	artifacts := map[string]string{}
+	if strings.TrimSpace(value) == "" {
+		return artifacts, nil
+	}
+	if strings.HasPrefix(strings.TrimSpace(value), "{") {
+		err := json.Unmarshal([]byte(value), &artifacts)
+		return artifacts, err
+	}
+	entries, err := csv.NewReader(strings.NewReader(value)).Read()
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		name, reference, ok := strings.Cut(entry, "=")
+		if !ok || name == "" || reference == "" {
+			return nil, fmt.Errorf("artifact references must be project=reference pairs")
+		}
+		if _, exists := artifacts[name]; exists {
+			return nil, fmt.Errorf("duplicate artifact for %s", name)
+		}
+		artifacts[name] = reference
+	}
+	return artifacts, nil
+}
+
+// RunApplicationDeployment deploys and checks application artifacts without running migrations or updating infrastructure.
+func RunApplicationDeployment(ctx context.Context, root string, options DeployOptions, stdin io.Reader, stdout, stderr io.Writer) error {
+	if options.RunID == "" {
+		options.RunID = fmt.Sprintf("deploy-%d", time.Now().UnixNano())
+	}
+	if err := runDeploymentPhase(ctx, root, "start", options, stdin, stdout, stderr); err != nil {
+		return err
+	}
+	if err := runDeploymentPhase(ctx, root, "complete", options, stdin, stdout, stderr); err != nil {
+		return executeFailure(ctx, root, options, "deploy", err, stdin, stdout, stderr)
+	}
+	return nil
+}
+
 // Private helpers ------------------------------------------------------------
+
+func executeFailure(ctx context.Context, root string, options DeployOptions, phase string, failure error, stdin io.Reader, stdout, stderr io.Writer) error {
+	recovery, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Minute)
+	defer cancel()
+	err := runDeploymentPhase(recovery, root, "recover", options, stdin, stdout, stderr)
+	return errors.Join(fmt.Errorf("deployment %s failed during %s: %w", options.RunID, phase, failure), err)
+}
 
 func runDeploymentTask(ctx context.Context, root string, manifest Config, ref TaskReference, base map[string]string, runner infraCommandRunner, options DeployOptions) error {
 	var project Project
@@ -224,11 +217,6 @@ func recoverDeployment(ctx context.Context, runner infraRunner, d InfraResolutio
 		}
 	}
 	switch phase {
-	case "provision":
-		call(config.Recovery.Provision)
-		if previous == nil && config.Recovery.Provision == nil {
-			call(config.Recovery.FirstDeploy)
-		}
 	case "migration":
 		call(config.Recovery.Migration)
 		if previous == nil && config.Recovery.Migration == nil {

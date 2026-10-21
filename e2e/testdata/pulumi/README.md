@@ -1,6 +1,6 @@
-# Live GCS infrastructure test
+# Static app on GCS
 
-The dummy Premise client owns a small Go Pulumi program. It imports the published GCP provider and creates one private GCS bucket per preview stack. It creates no database, app deployment, or stored object.
+This is the only live infrastructure fixture. The client owns a Go Pulumi program that creates a private GCS bucket. Its application deploy task uploads a static HTML page into the bucket. No database or app hosting service is involved.
 
 ```text
 client/
@@ -8,19 +8,26 @@ client/
 ├── mise.toml
 ├── infra/
 │   ├── Pulumi.yaml
+│   ├── mise.toml         Local setup task
+│   ├── main.go
 │   ├── go.mod
-│   ├── go.sum
-│   └── main.go
-└── apps/dummy/mise.toml
+│   └── go.sum
+├── apps/web/
+│   ├── mise.toml
+│   ├── fnox.toml         Fake per-environment values
+│   └── releases/
+│       ├── A/index.html
+│       └── B/index.html
+└── tasks/static.sh
 ```
 
-The Go harness calls real `pm infra` commands: init, plan, apply, query, and destroy.
-It creates two preview buckets, reloads saved state from another checkout, and checks repeated apply.
-It destroys one preview and checks that the other bucket still exists. Cleanup destroys both, repeats destroy, and checks that both buckets are gone.
-The existing backend bucket remains.
+The Go harness runs `pm ci flow on-commit` and `pm ci flow on-release` across dev, stage, prod, and a feature-branch preview. A new environment applies infrastructure before its first migration. Existing environments migrate before applying infrastructure.
 
-Run this test separately on demand. It does not run in CI.
-Use a dedicated test project and an existing GCS state backend:
+The fake migration writes the environment and release into `schema-version.txt`. Deployment copies the retained release page to `index.html`. The test verifies the page and marker through GCS.
+
+For rollback, B uploads successfully, then its health task fails. Premise must return a failed CI flow, restore the retained A page, and leave B's migration marker intact. Each environment has its own bucket. Two named remote backends hold the selected environments. The test checks saved state in the selected backend and reuses it from a fresh checkout. Cleanup destroys the disposable buckets and checks deletion. The state bucket remains.
+
+Run separately on demand; this test does not run in CI:
 
 ```sh
 gcloud auth login
@@ -30,9 +37,12 @@ export PULUMI_BACKEND_URL=gs://EXISTING_STATE_BUCKET/premise-e2e
 mise run e2e:infra
 ```
 
-The identity needs permission to create and delete buckets in the selected project and read/write access to the backend prefix.
-The test passes the explicit project to Pulumi and checks it through gcloud before resource creation.
-`PREMISE_BIN` selects a published CLI binary. Without it, the test builds the checkout.
-Normal `go test ./...` skips this live test. A skip does not prove live behavior.
+The identity needs bucket create/delete permissions in the selected project and read/write access to the backend prefix. Fixture buckets use force-destroy so cleanup also deletes the uploaded test objects.
+`PREMISE_BIN` selects a published CLI. Without it, the test builds the checkout.
+Normal `go test ./...` skips the live test. A skip does not prove live behavior.
 
-The separate local [deployment fixture](../deploy/README.md) checks migrations and application rollback without cloud application services.
+The secrets CLI test uses this same client. It pulls dev, stage, prod, and preview values through real fnox, checks the ignored env file and mode 0600, and verifies that a failed pull preserves the file. The profile values are test literals, not cloud credentials.
+
+```sh
+PREMISE_TEST_FNOX=1 go test ./e2e -run '^TestSecretsPull' -count=1
+```

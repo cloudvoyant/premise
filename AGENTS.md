@@ -10,10 +10,20 @@ Follow the section labels used in `core/template.go`:
 
 This repository and generated Premise projects may contain only `on-commit.yml`,
 `on-deploy.yml`, and `on-merge.yml` workflows. Do not add reusable or test workflows.
-Keep the established flow: plan, task fan-out and publication, infrastructure
-prerequisites, optional migration fan-out, then deployment and recovery. Changes
-to this flow require explicit user approval. Run infrastructure validation
-separately on demand; do not add it to CI.
+Keep plan, task fan-out, and publication before the environment flow. Existing
+environments migrate before the infrastructure update; new environments migrate
+after the first apply. Clients apply database infrastructure changes separately
+before schema migrations. Deployment and recovery follow the update and required
+migrations. Changes to this flow require explicit user approval. Run live
+infrastructure validation separately on demand; do not add it to CI.
+
+Infrastructure authentication belongs to Premise provider adapters, invoked with
+`pm infra auth --ci` at the relevant pipeline steps. Do not use cloud-provider
+GitHub Actions for authentication or tool setup. Install tools through Mise.
+Keep provider logic independent of the CI runner; put runner-specific identity
+exchange and output formatting in CI adapters. Unsupported providers use the
+root `mise.toml` `ci:auth` fallback after native authentication. Pulumi reuses
+the provider credentials or CI secrets.
 
 Use released version tags for actions instead of long commit hashes where a
 compatible release exists. Keep generated workflows in `assets/github-workflows`

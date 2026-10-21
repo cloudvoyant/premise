@@ -1,0 +1,26 @@
+[tasks.build]
+run = 'test -s "releases/${PM_RELEASE:-A}/index.html"'
+
+[tasks.test]
+run = 'test -s releases/A/index.html && test -s releases/B/index.html'
+
+[tasks."format:check"]
+run = 'test -s "releases/${PM_RELEASE:-A}/index.html"'
+
+[tasks.lint]
+run = 'test -s "releases/${PM_RELEASE:-A}/index.html"'
+
+[tasks.migrate]
+run = '../../tasks/static.sh migrate'
+
+[tasks.deploy]
+run = '../../tasks/static.sh deploy'
+
+[tasks.health]
+run = '../../tasks/static.sh health'
+
+[tasks.rollback]
+run = '../../tasks/static.sh rollback'
+
+[tasks.cleanup]
+run = '../../tasks/static.sh cleanup'

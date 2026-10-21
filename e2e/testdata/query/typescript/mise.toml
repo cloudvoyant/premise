@@ -1,8 +1,0 @@
-monorepo_root = true
-[tools]
-go = "1.25.8"
-node = "24"
-pulumi = "3.268.0"
-[tasks."infra:install"]
-dir = "infra"
-run = "mise exec -- pulumi install"

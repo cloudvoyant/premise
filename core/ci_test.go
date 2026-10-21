@@ -105,7 +105,7 @@ func TestCITargets(t *testing.T) {
 		{flow: CIFlowOnRelease, want: "stage"},
 		{flow: CIFlowOnRelease, environment: "prod", want: "prod"},
 		{flow: CIFlowOnCommit, environment: "stage", wantErr: true},
-		{flow: CIFlowOnRelease, environment: "preview", wantErr: true},
+		{flow: CIFlowOnRelease, environment: "preview", want: "preview"},
 	} {
 		got, err := ciTarget(test.flow, test.environment)
 		if test.wantErr {

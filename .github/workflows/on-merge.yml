@@ -219,13 +219,6 @@ jobs:
         with:
           setup-only: true
           install-premise: build
-      - uses: google-github-actions/setup-gcloud@v3
-        if: vars.GCP_WORKLOAD_IDENTITY_PROVIDER != ''
-      - uses: aws-actions/configure-aws-credentials@v5
-        if: vars.PREMISE_AWS_ROLE != ''
-        with:
-          role-to-assume: ${{ vars.PREMISE_AWS_ROLE }}
-          aws-region: ${{ vars.PREMISE_AWS_REGION }}
       - name: Authenticate infrastructure providers
         run: pm infra auth --ci --env-file "$GITHUB_ENV"
       - name: Destroy the merged or deleted branch preview

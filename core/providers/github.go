@@ -10,9 +10,44 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 )
+
+// GitHub adapts CI outputs to GitHub Actions.
+type GitHub struct{}
+
+// Public API -----------------------------------------------------------------
+
+// WriteOutputs writes scalar values and JSON matrices in step-output format.
+func (GitHub) WriteOutputs(output io.Writer, values map[string]any) error {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	var buffer strings.Builder
+	for _, key := range keys {
+		if strings.ContainsAny(key, "=\r\n") {
+			return fmt.Errorf("invalid CI output name %q", key)
+		}
+		value, ok := values[key].(string)
+		if !ok {
+			encoded, err := json.Marshal(values[key])
+			if err != nil {
+				return err
+			}
+			value = string(encoded)
+		}
+		if strings.ContainsAny(value, "\r\n") {
+			return fmt.Errorf("CI output %q must fit on one line", key)
+		}
+		fmt.Fprintf(&buffer, "%s=%s\n", key, value)
+	}
+	_, err := io.WriteString(output, buffer.String())
+	return err
+}
 
 // Private helpers ------------------------------------------------------------
 

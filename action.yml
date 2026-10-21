@@ -7,7 +7,7 @@ branding:
 
 inputs:
   command:
-    description: "Operation: plan | flow | flow-matrix | release | packages | infra-plan | infra-destroy | deploy-plan | deploy | deploy-start | deploy-provision | deploy-migrate | deploy-apply | deploy-complete | deploy-recover"
+    description: "Operation: plan | flow | flow-matrix | release | packages | infra-setup | infra-plan | infra-apply | infra-destroy | migrate | deploy"
     required: false
     default: flow
   flow:
@@ -282,7 +282,7 @@ runs:
         PREVIEW_BRANCH: ${{ inputs.branch }}
       run: |
         set -euo pipefail
-        args=(ci plan --flow "$FLOW" --github-output)
+        args=(ci plan --flow "$FLOW" --ci-output)
         if [[ -n "$DEPLOY_ENVIRONMENT" ]]; then args+=(--env "$DEPLOY_ENVIRONMENT"); fi
         if [[ -n "$PREVIEW_BRANCH" ]]; then args+=(--branch "$PREVIEW_BRANCH"); fi
         pm "${args[@]}" >> "$GITHUB_OUTPUT"
@@ -307,6 +307,10 @@ runs:
         PREVIEW_BRANCH: ${{ inputs.branch }}
         DEPLOY_REVISION: ${{ inputs.deployment-revision || github.sha }}
         DEPLOY_ARTIFACT: ${{ inputs.artifact }}
+        PM_RELEASE: ${{ inputs.deployment-revision || github.sha }}
+        PM_ARTIFACTS: ${{ inputs.artifact }}
+        PM_BRANCH: ${{ inputs.branch }}
+        PM_INFRA_BACKEND: ${{ inputs.backend }}
         DEPLOY_RUN_ID: ${{ inputs.run-id }}
         MIGRATION_GROUP: ${{ inputs.migration-group }}
       run: |
@@ -321,6 +325,7 @@ runs:
             if [[ -n "$PROJECT" ]]; then args+=(--project "$PROJECT"); fi
             if [[ -n "$PLATFORM" ]]; then args+=(--platform "$PLATFORM"); fi
             if [[ -n "$DEPLOY_ENVIRONMENT" ]]; then args+=(--environment "$DEPLOY_ENVIRONMENT"); fi
+            if [[ -n "$INFRA_BACKEND" ]]; then args+=(--backend "$INFRA_BACKEND"); fi
             if [[ -n "$OUTPUT_DIR" ]]; then args+=(--output-dir "$OUTPUT_DIR"); fi
             if [[ -n "$VERSION" ]]; then
               args+=(--channel "$CHANNEL" --version "$VERSION")
@@ -336,28 +341,25 @@ runs:
               args+=(--files-dir "$FILES_DIR")
             fi
             ;;
-          infra-plan|infra-destroy|deploy-plan|deploy|deploy-start|deploy-provision|deploy-migrate|deploy-apply|deploy-complete|deploy-recover)
+          infra-setup|infra-plan|infra-apply|infra-destroy|migrate|deploy)
             : "${DEPLOY_ENVIRONMENT:?environment is required}"
             case "$COMMAND" in
+              infra-setup) args=(infra setup);;
               infra-plan) args=(infra plan);;
+              infra-apply) args=(infra apply --yes);;
+              migrate) args=(migrate);;
               infra-destroy) args=(infra destroy);;
-              deploy-plan) args=(deploy plan);;
-              deploy) args=(deploy run);;
-              deploy-*) args=(deploy "${COMMAND#deploy-}");;
+              deploy) args=(deploy);;
             esac
             args+=(--env "$DEPLOY_ENVIRONMENT")
             if [[ -n "$INFRA_BACKEND" ]]; then args+=(--backend "$INFRA_BACKEND"); fi
             if [[ -n "$PREVIEW_BRANCH" ]]; then args+=(--branch "$PREVIEW_BRANCH"); fi
-            if [[ "$COMMAND" == deploy || "$COMMAND" == deploy-start ]]; then
+            if [[ "$COMMAND" == deploy ]]; then
               args+=(--release "$DEPLOY_REVISION")
               if [[ -n "$DEPLOY_ARTIFACT" ]]; then args+=(--artifact "$DEPLOY_ARTIFACT"); fi
             fi
-            if [[ "$COMMAND" == deploy || "$COMMAND" == deploy-* && "$COMMAND" != deploy-plan ]]; then
-              if [[ -n "$DEPLOY_RUN_ID" ]]; then args+=(--run-id "$DEPLOY_RUN_ID"); fi
-            fi
-            if [[ "$COMMAND" == deploy-migrate ]]; then
-              args+=(--group "$MIGRATION_GROUP")
-            fi
+            if [[ "$COMMAND" == deploy && -n "$DEPLOY_RUN_ID" ]]; then args+=(--run-id "$DEPLOY_RUN_ID"); fi
+            if [[ "$COMMAND" == migrate && -n "$MIGRATION_GROUP" ]]; then args+=(--group "$MIGRATION_GROUP"); fi
             ;;
           *)
             echo "::error::invalid command '$COMMAND' (plan | flow | flow-matrix | release | packages)"

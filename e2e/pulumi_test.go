@@ -2,6 +2,7 @@ package e2e_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -16,61 +17,94 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-func TestInfraGCSCreatesIsolatedBucketsAndPreservesOtherPreviewOnCleanup(t *testing.T) {
+func TestInfraGCSCIFlowsDeployStaticAppAcrossEnvironmentsAndRecoverPreviousVersion(t *testing.T) {
 	// Arrange.
 	if os.Getenv("PREMISE_TEST_GCS") != "1" {
-		t.Skip("set PREMISE_TEST_GCS=1 with an explicit GCP test project and GCS backend")
+		t.Skip("set PREMISE_TEST_GCS=1 with GCP credentials and a remote backend")
+	}
+	project := os.Getenv("PREMISE_TEST_GCP_PROJECT")
+	if project == "" || !strings.HasPrefix(os.Getenv("PULUMI_BACKEND_URL"), "gs://") {
+		t.Fatal("select PREMISE_TEST_GCP_PROJECT and an existing gs:// PULUMI_BACKEND_URL")
 	}
 	t.Setenv("PULUMI_HOME", t.TempDir())
-	project := os.Getenv("PREMISE_TEST_GCP_PROJECT")
-	backend := os.Getenv("PULUMI_BACKEND_URL")
-	if project == "" || !strings.HasPrefix(backend, "gs://") {
-		t.Fatal("PREMISE_TEST_GCP_PROJECT and an existing gs:// PULUMI_BACKEND_URL are required")
-	}
-	for _, tool := range []string{"mise", "gcloud"} {
-		if _, err := exec.LookPath(tool); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if actual := strings.TrimSpace(infraCommand(t, repositoryRoot(t), "gcloud", "projects", "describe", project, "--format=value(projectId)")); actual != project {
-		t.Fatalf("GCP project %q does not match explicitly selected test project %q", actual, project)
-	}
+	t.Setenv("PULUMI_CONFIG_PASSPHRASE", "")
 	binary := premiseBinary(t)
+	bin := t.TempDir()
+	if err := os.Symlink(binary, filepath.Join(bin, "pm")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	client := filepath.Join(t.TempDir(), "client")
 	copyInfraFixture(t, filepath.Join(repositoryRoot(t), "e2e/testdata/pulumi/client"), client)
 	manifest, err := core.LoadManifest(filepath.Join(client, core.ManifestFilename))
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifest.Workspace.Infra.Environments = map[string]core.InfraEnvironment{
-		"preview": {Config: map[string]string{"gcp:project": project}},
+	environments := []string{"dev", "stage", "prod", "preview"}
+	backend := strings.TrimRight(os.Getenv("PULUMI_BACKEND_URL"), "/") + fmt.Sprintf("/run-%d", time.Now().UnixNano())
+	manifest.Workspace.Infra.Backend = "primary"
+	manifest.Workspace.Infra.Backends = map[string]core.InfraBackend{
+		"primary":   {URL: backend},
+		"alternate": {URL: backend + "/alternate"},
+	}
+	manifest.Workspace.Infra.Environments = map[string]core.InfraEnvironment{}
+	for _, environment := range environments {
+		selected := "primary"
+		if environment == "prod" || environment == "preview" {
+			selected = "alternate"
+		}
+		manifest.Workspace.Infra.Environments[environment] = core.InfraEnvironment{Backend: selected, Config: map[string]string{"gcp:project": project}}
 	}
 	if err := core.SaveManifest(filepath.Join(client, core.ManifestFilename), manifest); err != nil {
 		t.Fatal(err)
 	}
-	infraCommand(t, client, "mise", "run", "infra:install")
-	branches := []string{fmt.Sprintf("feature/gcs-a-%d", time.Now().UnixNano()), fmt.Sprintf("feature/gcs-b-%d", time.Now().UnixNano())}
-	buckets := make([]string, len(branches))
-	operation := func(root, branch, name string, args ...string) string {
-		arguments := []string{"infra", name, "--env", "preview", "--branch", branch}
-		return infraCommand(t, root, binary, append(arguments, args...)...)
+	t.Setenv("PULUMI_BACKEND_URL", backend+"/unselected-fallback")
+	branch := fmt.Sprintf("feature/static-%d", time.Now().UnixNano())
+	buckets := map[string]string{}
+	attempted := map[string]bool{}
+	arguments := func(environment, operation string) []string {
+		args := []string{"infra", operation, "--env", environment}
+		if environment == "preview" {
+			args = append(args, "--branch", branch)
+		}
+		return args
 	}
 	t.Cleanup(func() {
-		for i, branch := range branches {
+		for _, environment := range environments {
+			if !attempted[environment] {
+				continue
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			if buckets[environment] == "" {
+				query := exec.CommandContext(ctx, binary, append(arguments(environment, "query"), "--output", "bucketName")...)
+				query.Dir = client
+				query.Env = append(os.Environ(), "MISE_TRUSTED_CONFIG_PATHS="+client)
+				if output, err := query.Output(); err == nil {
+					buckets[environment] = strings.TrimSpace(string(output))
+				}
+			}
+
 			for attempt := 0; attempt < 2; attempt++ {
-				command := exec.CommandContext(ctx, binary, "infra", "destroy", "--env", "preview", "--branch", branch)
+				command := exec.CommandContext(ctx, binary, arguments(environment, "destroy")...)
 				command.Dir = client
 				command.Env = append(os.Environ(), "MISE_TRUSTED_CONFIG_PATHS="+client)
+				if environment != "preview" {
+					// Persistent pm destroys require a human prompt. Only test-owned stacks
+					// use Pulumi directly for unattended cleanup.
+					command = exec.CommandContext(ctx, "mise", "exec", "--", "pulumi", "destroy", "--stack", environment, "--yes", "--non-interactive")
+					command.Dir = filepath.Join(client, "infra")
+					selected := manifest.Workspace.Infra.Environments[environment].Backend
+					command.Env = append(os.Environ(), "MISE_TRUSTED_CONFIG_PATHS="+client, "PULUMI_BACKEND_URL="+manifest.Workspace.Infra.Backends[selected].URL)
+				}
 				if output, err := command.CombinedOutput(); err != nil {
-					t.Errorf("cleanup %s: %v\n%s", branch, err, output)
+					t.Errorf("cleanup %s: %v\n%s", environment, err, output)
 					break
 				}
 			}
-			if buckets[i] != "" {
-				check := exec.CommandContext(ctx, "gcloud", "storage", "buckets", "describe", "gs://"+buckets[i])
-				if output, err := check.CombinedOutput(); err == nil || !strings.Contains(string(output), "404") {
-					t.Errorf("could not verify deletion of %s: %v\n%s", buckets[i], err, output)
+			if bucket := buckets[environment]; bucket != "" {
+				output, err := exec.CommandContext(ctx, "gcloud", "storage", "buckets", "describe", "gs://"+bucket).CombinedOutput()
+				if err == nil || !strings.Contains(string(output), "404") {
+					t.Errorf("bucket %s deletion not verified: %v\n%s", bucket, err, output)
 				}
 			}
 			cancel()
@@ -78,37 +112,81 @@ func TestInfraGCSCreatesIsolatedBucketsAndPreservesOtherPreviewOnCleanup(t *test
 	})
 
 	// Act.
-	for i, branch := range branches {
-		operation(client, branch, "init")
-		operation(client, branch, "plan")
-		operation(client, branch, "apply", "--yes")
-		buckets[i] = strings.TrimSpace(operation(client, branch, "query", "--output", "bucketName"))
-		id := strings.TrimSpace(operation(client, branch, "query", "--resource", "storage", "--property", "id"))
-		if buckets[i] == "" || id != buckets[i] {
-			t.Fatalf("unexpected bucket/ID: %q %q", buckets[i], id)
-		}
-		if exported := strings.TrimSpace(operation(client, branch, "query", "--output", "bucketUrl")); exported != "gs://"+buckets[i] {
-			t.Fatalf("unexpected bucket URL: %q", exported)
-		}
-		infraCommand(t, client, "gcloud", "storage", "buckets", "describe", "gs://"+buckets[i])
+	t.Setenv("PM_RELEASE", "A")
+	references, _ := json.Marshal(map[string]string{"web": filepath.Join(client, "apps/web/releases/A/index.html")})
+	t.Setenv("PM_ARTIFACTS", string(references))
+
+	plan := infraCommand(t, client, binary, "ci", "plan", "--ci-output")
+	if !strings.Contains(plan, "has_migrations=true\n") || !strings.Contains(plan, "migration_matrix=") {
+		t.Fatal("CI provider did not emit migration scheduling outputs")
 	}
-	operation(client, branches[0], "apply", "--yes")
+	infraCommand(t, client, binary, "ci", "flow", "on-commit", "--release", "none")
+	for _, environment := range environments {
+		t.Logf("Run environment CI flow for %s", environment)
+		attempted[environment] = true
+		t.Setenv("PM_BRANCH", "")
+		if environment == "preview" {
+			t.Setenv("PM_BRANCH", branch)
+		}
+		infraCommand(t, client, binary, "ci", "flow", "on-release", "--environment", environment, "--release", "none")
+		bucket := strings.TrimSpace(infraCommand(t, client, binary, append(arguments(environment, "query"), "--output", "bucketName")...))
+		buckets[environment] = bucket
+		selected := manifest.Workspace.Infra.Environments[environment].Backend
+		scope := core.InfraOptions{Environment: environment}
+		if environment == "preview" {
+			scope.Branch = branch
+		}
+		stack, err := core.ResolveStackName(scope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		state := manifest.Workspace.Infra.Backends[selected].URL + "/.pulumi/stacks/premise-gcs-fixture/" + stack + ".json"
+		infraCommand(t, client, "gcloud", "storage", "objects", "describe", state, "--format=value(name)")
+
+		if page := infraCommand(t, client, "gcloud", "storage", "cat", "gs://"+bucket+"/index.html"); !strings.Contains(page, "Release A") {
+			t.Fatal("static app A was not uploaded")
+		}
+		if migration := strings.TrimSpace(infraCommand(t, client, "gcloud", "storage", "cat", "gs://"+bucket+"/schema-version.txt")); migration != environment+":A" {
+			t.Fatalf("fake migration did not receive environment: %s", migration)
+		}
+	}
+
 	fresh := filepath.Join(t.TempDir(), "client")
 	copyInfraFixture(t, client, fresh)
-	operation(fresh, branches[0], "init")
-	recovered := strings.TrimSpace(operation(fresh, branches[0], "query", "--output", "bucketName"))
-	operation(fresh, branches[0], "plan")
-	operation(client, branches[0], "destroy")
+	t.Setenv("PM_BRANCH", "")
+	infraCommand(t, fresh, binary, "ci", "flow", "on-release", "--environment", "stage", "--release", "none")
+	if bucket := strings.TrimSpace(infraCommand(t, fresh, binary, "infra", "query", "--env", "stage", "--output", "bucketName")); bucket != buckets["stage"] {
+		t.Fatal("fresh checkout did not reuse the selected remote backend")
+	}
+	t.Setenv("PM_BRANCH", branch)
+	t.Setenv("PM_RELEASE", "B")
+	references, _ = json.Marshal(map[string]string{"web": filepath.Join(client, "apps/web/releases/B/index.html")})
+	t.Setenv("PM_ARTIFACTS", string(references))
+	t.Setenv("PREMISE_TEST_FAIL_HEALTH", "preview")
+	command := exec.Command(binary, "ci", "flow", "on-release", "--environment", "preview", "--release", "none")
+	command.Dir = client
+	command.Env = append(os.Environ(), "MISE_TRUSTED_CONFIG_PATHS="+client)
+	output, failed := command.CombinedOutput()
 
 	// Assert.
-	if buckets[0] == buckets[1] {
-		t.Fatal("different preview stacks share a bucket")
+	if failed == nil || !strings.Contains(string(output), "health") || !strings.Contains(string(output), "<h1>Release B</h1>") {
+		t.Fatalf("failed B health must fail the CI flow: %v\n%s", failed, output)
 	}
-	if recovered != buckets[0] {
-		t.Fatalf("fresh checkout recovered %q, want %q", recovered, buckets[0])
+	bucket := buckets["preview"]
+	if page := infraCommand(t, client, "gcloud", "storage", "cat", "gs://"+bucket+"/index.html"); !strings.Contains(page, "Release A") {
+		t.Fatal("rollback did not restore retained A")
 	}
-	infraCommand(t, client, "gcloud", "storage", "buckets", "describe", "gs://"+buckets[1])
-	t.Logf("Verified real GCS buckets, resource queries, remote state, and preview cleanup isolation: %s, %s", buckets[0], buckets[1])
+	if migration := strings.TrimSpace(infraCommand(t, client, "gcloud", "storage", "cat", "gs://"+bucket+"/schema-version.txt")); migration != "preview:B" {
+		t.Fatal("rollback reverted the fake migration")
+	}
+	t.Log("Failed B health restored retained A and preserved B migration marker")
+	seen := map[string]bool{}
+	for environment, bucket := range buckets {
+		if bucket == "" || seen[bucket] {
+			t.Fatalf("%s did not get an isolated bucket", environment)
+		}
+		seen[bucket] = true
+	}
 }
 
 // Private helpers ------------------------------------------------------------

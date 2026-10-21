@@ -1,10 +1,14 @@
 package core
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 )
 
 // MigrationGroup is one CI job. Its application tasks run in the declared order.
@@ -79,8 +83,87 @@ func PlanMigrations(root string, manifest Config) ([]MigrationGroup, error) {
 		}
 		groups = append(groups, MigrationGroup{Name: app.Project, Projects: []string{app.Project}})
 	}
-	if len(groups) > 0 && len(manifest.Workspace.Infra.Prerequisites) == 0 {
-		return nil, fmt.Errorf("applications with migrate tasks require workspace.infra.prerequisites before deployment")
-	}
 	return groups, nil
+}
+
+// RunMigrations runs optional application tasks concurrently across independent groups.
+// Tasks within an explicitly shared group run in order. All workers stop before return.
+func RunMigrations(ctx context.Context, root string, options InfraOptions, group string, stdout, stderr io.Writer) (resultErr error) {
+	manifest, err := LoadManifest(root + "/" + ManifestFilename)
+	if err != nil {
+		return err
+	}
+	groups, err := PlanMigrations(root, manifest)
+	if err != nil {
+		return err
+	}
+	stdout, stderr = synchronizedDeploymentWriters(stdout, stderr)
+	runner := infraCommandRunner{stdout: stdout, stderr: stderr}
+	environment := map[string]string{"PM_BRANCH": options.Branch}
+	if manifest.Workspace.Infra != nil {
+		destination, err := ResolveInfrastructure(root, options)
+		if err != nil {
+			return err
+		}
+		environment["PM_STACK"], environment["PULUMI_BACKEND_URL"] = destination.Stack, destination.BackendURL
+		environment["PM_INFRA_BACKEND"] = options.Backend
+		release, err := acquireInfrastructureOwnership(ctx, root, destination)
+		if err != nil {
+			return err
+		}
+		defer func() { resultErr = errors.Join(resultErr, release()) }()
+
+	}
+	var workers sync.WaitGroup
+	var failures []error
+	var mutex sync.Mutex
+	found := group == ""
+	for _, selected := range groups {
+		if group != "" && selected.Name != group {
+			continue
+		}
+		found = true
+		workers.Add(1)
+		go func(selected MigrationGroup) {
+			defer workers.Done()
+			for _, project := range selected.Projects {
+				err := runDeploymentTask(ctx, root, manifest, TaskReference{Project: project, Task: "migrate"}, environment, runner, DeployOptions{InfraOptions: options})
+				if err != nil {
+					mutex.Lock()
+					failures = append(failures, err)
+					mutex.Unlock()
+					return
+				}
+			}
+		}(selected)
+	}
+	workers.Wait()
+	if !found {
+		return fmt.Errorf("migration group %q is not configured", group)
+	}
+	return errors.Join(failures...)
+}
+
+// Private helpers ------------------------------------------------------------
+
+type deploymentWriter struct {
+	destination io.Writer
+	mutex       *sync.Mutex
+}
+
+func (w deploymentWriter) Write(data []byte) (int, error) {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+	return w.destination.Write(data)
+}
+
+func synchronizedDeploymentWriters(stdout, stderr io.Writer) (io.Writer, io.Writer) {
+	mutex := &sync.Mutex{}
+	if stdout != nil {
+		stdout = deploymentWriter{destination: stdout, mutex: mutex}
+	}
+	if stderr != nil {
+		stderr = deploymentWriter{destination: stderr, mutex: mutex}
+	}
+	return stdout, stderr
 }

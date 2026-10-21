@@ -11,13 +11,13 @@ import (
 	"github.com/cloudvoyant/premise/core/providers"
 )
 
-// Public API -----------------------------------------------------------------
+// Private helpers ------------------------------------------------------------
 
-// RunDeploymentPhase runs one phase of a deployment shared across CI jobs.
+// runDeploymentPhase runs one phase of a deployment shared across CI jobs.
 // Every phase must use the run ID that acquired the environment lock at start.
-func RunDeploymentPhase(ctx context.Context, root, phase string, options DeployOptions, stdin io.Reader, stdout, stderr io.Writer) error {
+func runDeploymentPhase(ctx context.Context, root, phase string, options DeployOptions, stdin io.Reader, stdout, stderr io.Writer) error {
 	switch phase {
-	case "start", "provision", "migrate", "apply", "complete", "recover", "unlock":
+	case "start", "prepare", "migrate", "update", "complete", "recover", "unlock":
 	default:
 		return fmt.Errorf("unknown deployment phase %q", phase)
 	}
@@ -56,7 +56,7 @@ func RunDeploymentPhase(ctx context.Context, root, phase string, options DeployO
 	if run.Project != destination.ProjectName || run.Stack != destination.Stack || run.Backend != destination.BackendURL {
 		return fmt.Errorf("deployment run %s belongs to a different Pulumi project, stack, or backend", run.ID)
 	}
-	if phase == "provision" || phase == "apply" || phase == "complete" {
+	if phase == "prepare" || phase == "update" || phase == "complete" {
 		if err := EnsureInfrastructureEnvironment(root, runningInCI()); err != nil {
 			return err
 		}
@@ -67,7 +67,7 @@ func RunDeploymentPhase(ctx context.Context, root, phase string, options DeployO
 	// restore declared environment values before running the client program.
 	// Migration workers only query saved state. Do not rewrite stack settings
 	// from parallel workers that may share the same checkout.
-	if phase != "migrate" && phase != "provision" && run.Phase != "started" && run.Phase != "init" && run.Phase != "completed" {
+	if phase != "migrate" && phase != "prepare" && run.Phase != "started" && run.Phase != "init" && run.Phase != "completed" {
 		if err := executeInfra(ctx, runner, destination, "select", false, environment); err != nil {
 			return err
 		}
@@ -93,40 +93,22 @@ func RunDeploymentPhase(ctx context.Context, root, phase string, options DeployO
 		return executeInfra(ctx, runner, selected, "apply", true, environment)
 	}
 	switch phase {
-	case "provision":
-		if run.Phase != "started" {
-			return fmt.Errorf("provision requires a newly started deployment, got phase %s", run.Phase)
-		}
+	case "prepare":
 		if err := setPhase("init"); err != nil {
 			return err
 		}
-		if err := executeInfra(ctx, runner, destination, "init", true, environment); err != nil {
+		if err := prepareInfrastructure(ctx, destination, runner, environment); err != nil {
 			return err
 		}
-		if err := setPhase("provision"); err != nil {
-			return err
-		}
-		if len(manifest.Workspace.Infra.Prerequisites) > 0 {
-			targets, err := resolvePrerequisiteTargets(ctx, runner, destination, manifest.Workspace.Infra.Prerequisites, environment)
-			if err != nil {
-				return err
-			}
-			if err := apply(targets); err != nil {
-				return err
-			}
-		}
-		return setPhase("provisioned")
+		return setPhase("prepared")
 	case "migrate":
-		if run.Phase != "provisioned" {
-			return fmt.Errorf("migrations require completed provisioning, got phase %s", run.Phase)
+		if run.Phase != "prepared" && run.Phase != "updated" {
+			return fmt.Errorf("migrations require infrastructure setup, got phase %s", run.Phase)
 		}
 		return runMigrationGroup(ctx, store, run, options.Group, task)
-	case "apply":
-		if run.Phase != "provisioned" {
-			return fmt.Errorf("full update requires completed provisioning, got phase %s", run.Phase)
-		}
-		if err := requireCompletedMigrations(ctx, store, run); err != nil {
-			return err
+	case "update":
+		if run.Phase != "prepared" {
+			return fmt.Errorf("full update requires completed infrastructure setup, got phase %s", run.Phase)
 		}
 		if err := setPhase("apply"); err != nil {
 			return err
@@ -134,9 +116,9 @@ func RunDeploymentPhase(ctx context.Context, root, phase string, options DeployO
 		if err := apply(nil); err != nil {
 			return err
 		}
-		return setPhase("applied")
+		return setPhase("updated")
 	case "complete":
-		if run.Phase != "applied" {
+		if run.Phase != "started" && run.Phase != "updated" {
 			return fmt.Errorf("completion requires a successful full update, got phase %s", run.Phase)
 		}
 		if err := setPhase("deploy"); err != nil {
@@ -194,8 +176,6 @@ func RunDeploymentPhase(ctx context.Context, root, phase string, options DeployO
 	}
 }
 
-// Private helpers ------------------------------------------------------------
-
 func startDeploymentRun(ctx context.Context, root string, manifest Config, destination InfraResolution, store providers.ObjectStore, options DeployOptions) error {
 	if options.Release == "" || len(options.Artifacts) == 0 {
 		return fmt.Errorf("deployment start requires an immutable --release and pinned --artifact references")
@@ -249,6 +229,7 @@ func startDeploymentRun(ctx context.Context, root string, manifest Config, desti
 
 func deploymentTaskEnvironment(run deploymentRun) map[string]string {
 	environment := map[string]string{
+		"PM_INFRA_BACKEND":   run.Options.Backend,
 		"PM_ENV":             run.Options.Environment,
 		"PM_BRANCH":          run.Options.Branch,
 		"PM_STACK":           run.Stack,
@@ -291,26 +272,12 @@ func runMigrationGroup(ctx context.Context, store providers.ObjectStore, run dep
 	return fmt.Errorf("deployment %s has no migration group %q", run.ID, name)
 }
 
-func requireCompletedMigrations(ctx context.Context, store providers.ObjectStore, run deploymentRun) error {
-	for _, group := range run.Groups {
-		object, err := store.Read(ctx, migrationRecordKey(run, group.Name))
-		if err != nil {
-			return fmt.Errorf("migration group %s has not completed: %w", group.Name, err)
-		}
-		var outcome migrationOutcome
-		if err := json.Unmarshal(object.Data, &outcome); err != nil || outcome.Status != "succeeded" {
-			return fmt.Errorf("migration group %s must succeed before the full infrastructure update", group.Name)
-		}
-	}
-	return nil
-}
-
 func recoverDeploymentRun(ctx context.Context, store providers.ObjectStore, run deploymentRun, lockVersion string, workersStopped bool, manifest Config, destination InfraResolution, runner infraCommandRunner, environment map[string]string, task func(TaskReference) error) error {
 	phase := run.Phase
 	if phase == "started" {
 		phase = "init"
 	}
-	if phase == "provisioned" {
+	if phase == "prepared" || phase == "updated" {
 		phase = "migration"
 		for _, group := range run.Groups {
 			object, err := store.Read(ctx, migrationRecordKey(run, group.Name))

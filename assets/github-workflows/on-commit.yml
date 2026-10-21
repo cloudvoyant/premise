@@ -17,8 +17,8 @@ concurrency:
 env:
   DEPLOY_ENVIRONMENT: preview
   PREVIEW_BRANCH: ${{ github.ref_name }}
+  PM_BRANCH: ${{ github.ref_name }}
   INFRA_BACKEND: ${{ vars.PREMISE_INFRA_BACKEND }}
-  DEPLOY_RUN_ID: gha-${{ github.run_id }}-${{ github.run_attempt }}
   GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
   GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
 
@@ -201,7 +201,7 @@ jobs:
           channel: rc
           version: ${{ needs.publish-release.outputs.version }}
 
-  provision:
+  deploy:
     needs: [plan, single, matrix, publish-release, publish-packages]
     if: >-
       always() && !cancelled() && vars.PREMISE_DEPLOY_ENABLED == 'true' &&
@@ -212,11 +212,6 @@ jobs:
       needs.publish-packages.result != 'failure' && needs.publish-packages.result != 'cancelled'
     runs-on: ubuntu-latest
     environment: preview
-    outputs:
-      matrix: ${{ steps.plan.outputs.matrix }}
-      has_migrations: ${{ steps.plan.outputs.has_migrations }}
-      started: ${{ steps.start.outputs.started }}
-      revision: ${{ steps.revision.outputs.sha }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -228,182 +223,16 @@ jobs:
           release: none
           premise-version: v0.5.0-rc.256
           install-premise: pre-built
-      - uses: google-github-actions/setup-gcloud@v3
-        if: vars.GCP_WORKLOAD_IDENTITY_PROVIDER != ''
-      - uses: aws-actions/configure-aws-credentials@v5
-        if: vars.PREMISE_AWS_ROLE != ''
-        with:
-          role-to-assume: ${{ vars.PREMISE_AWS_ROLE }}
-          aws-region: ${{ vars.PREMISE_AWS_REGION }}
       - name: Authenticate infrastructure providers
         run: pm infra auth --ci --env-file "$GITHUB_ENV"
       - name: Install client dependencies
-        run: |
-          pm install
-          mise run infra:install
-      - name: Pin source revision
-        id: revision
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-      - name: Plan migration jobs
-        id: plan
-        shell: bash
-        run: |
-          set -euo pipefail
-          args=(deploy plan --json --env "$DEPLOY_ENVIRONMENT")
-          if [[ -n "$PREVIEW_BRANCH" ]]; then args+=(--branch "$PREVIEW_BRANCH"); fi
-          if [[ -n "$INFRA_BACKEND" ]]; then args+=(--backend "$INFRA_BACKEND"); fi
-          pm "${args[@]}" > "$RUNNER_TEMP/deployment-plan.json"
-          python3 - "$RUNNER_TEMP/deployment-plan.json" <<'PYCODE'
-          import json, os, sys
-          plan = json.load(open(sys.argv[1]))
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-              output.write('matrix=' + json.dumps(plan['migration_matrix'], separators=(',', ':')) + '\n')
-              output.write('has_migrations=' + str(bool(plan['migrations'])).lower() + '\n')
-          PYCODE
-      - name: Acquire environment ownership
-        id: start
-        shell: bash
+        run: pm install
+      - name: Run environment flow
         env:
-          DEPLOY_REVISION: ${{ steps.revision.outputs.sha }}
-          DEPLOY_ARTIFACTS: ${{ vars.PREMISE_ARTIFACT_IDENTITIES }}
+          PM_ARTIFACTS: ${{ vars.PREMISE_ARTIFACT_IDENTITIES }}
         run: |
-          set -euo pipefail
-          args=(--env "$DEPLOY_ENVIRONMENT" --run-id "$DEPLOY_RUN_ID")
-          if [[ -n "$PREVIEW_BRANCH" ]]; then args+=(--branch "$PREVIEW_BRANCH"); fi
+          PM_RELEASE="$(git rev-parse HEAD)"
+          export PM_RELEASE
+          args=(ci flow on-release --environment "$DEPLOY_ENVIRONMENT" --release none)
           if [[ -n "$INFRA_BACKEND" ]]; then args+=(--backend "$INFRA_BACKEND"); fi
-          pm deploy start "${args[@]}" --release "$DEPLOY_REVISION" --artifact "$DEPLOY_ARTIFACTS"
-          echo 'started=true' >> "$GITHUB_OUTPUT"
-      - name: Provision database prerequisites
-        shell: bash
-        run: |
-          set -euo pipefail
-          args=(--env "$DEPLOY_ENVIRONMENT" --run-id "$DEPLOY_RUN_ID")
-          if [[ -n "$PREVIEW_BRANCH" ]]; then args+=(--branch "$PREVIEW_BRANCH"); fi
-          if [[ -n "$INFRA_BACKEND" ]]; then args+=(--backend "$INFRA_BACKEND"); fi
-          pm deploy provision "${args[@]}"
-
-  migrate:
-    needs: provision
-    if: needs.provision.outputs.has_migrations == 'true'
-    runs-on: ubuntu-latest
-    environment: preview
-    strategy:
-      # Recovery waits for all workers, including after one worker fails.
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.provision.outputs.matrix) }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.provision.outputs.revision }}
-          persist-credentials: false
-      - uses: cloudvoyant/premise@v0.5.0-rc.256
-        with:
-          setup-only: true
-          release: none
-          premise-version: v0.5.0-rc.256
-          install-premise: pre-built
-      - uses: google-github-actions/setup-gcloud@v3
-        if: vars.GCP_WORKLOAD_IDENTITY_PROVIDER != ''
-      - uses: aws-actions/configure-aws-credentials@v5
-        if: vars.PREMISE_AWS_ROLE != ''
-        with:
-          role-to-assume: ${{ vars.PREMISE_AWS_ROLE }}
-          aws-region: ${{ vars.PREMISE_AWS_REGION }}
-      - name: Authenticate infrastructure providers
-        run: pm infra auth --ci --env-file "$GITHUB_ENV"
-      - name: Install client dependencies
-        run: |
-          pm install
-          mise run infra:install
-      - name: Migrate one independent group
-        shell: bash
-        env:
-          MIGRATION_GROUP: ${{ matrix.group }}
-        run: |
-          set -euo pipefail
-          args=(--env "$DEPLOY_ENVIRONMENT" --run-id "$DEPLOY_RUN_ID")
-          if [[ -n "$PREVIEW_BRANCH" ]]; then args+=(--branch "$PREVIEW_BRANCH"); fi
-          if [[ -n "$INFRA_BACKEND" ]]; then args+=(--backend "$INFRA_BACKEND"); fi
-          pm deploy migrate "${args[@]}" --group "$MIGRATION_GROUP"
-
-  finish:
-    needs: [provision, migrate]
-    if: >-
-      always() && !cancelled() && needs.provision.result == 'success' &&
-      (needs.migrate.result == 'success' ||
-       (needs.provision.outputs.has_migrations == 'false' && needs.migrate.result == 'skipped'))
-    runs-on: ubuntu-latest
-    environment: preview
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.provision.outputs.revision }}
-          persist-credentials: false
-      - uses: cloudvoyant/premise@v0.5.0-rc.256
-        with:
-          setup-only: true
-          release: none
-          premise-version: v0.5.0-rc.256
-          install-premise: pre-built
-      - uses: google-github-actions/setup-gcloud@v3
-        if: vars.GCP_WORKLOAD_IDENTITY_PROVIDER != ''
-      - uses: aws-actions/configure-aws-credentials@v5
-        if: vars.PREMISE_AWS_ROLE != ''
-        with:
-          role-to-assume: ${{ vars.PREMISE_AWS_ROLE }}
-          aws-region: ${{ vars.PREMISE_AWS_REGION }}
-      - name: Authenticate infrastructure providers
-        run: pm infra auth --ci --env-file "$GITHUB_ENV"
-      - name: Install client dependencies
-        run: |
-          pm install
-          mise run infra:install
-      - name: Apply the full stack and check the release
-        shell: bash
-        run: |
-          set -euo pipefail
-          args=(--env "$DEPLOY_ENVIRONMENT" --run-id "$DEPLOY_RUN_ID")
-          if [[ -n "$PREVIEW_BRANCH" ]]; then args+=(--branch "$PREVIEW_BRANCH"); fi
-          if [[ -n "$INFRA_BACKEND" ]]; then args+=(--backend "$INFRA_BACKEND"); fi
-          pm deploy apply "${args[@]}"
-          pm deploy complete "${args[@]}"
-
-  recover:
-    needs: [provision, migrate, finish]
-    if: >-
-      always() && needs.provision.outputs.started == 'true' &&
-      needs.finish.result != 'success'
-    runs-on: ubuntu-latest
-    environment: preview
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.provision.outputs.revision }}
-          persist-credentials: false
-      - uses: cloudvoyant/premise@v0.5.0-rc.256
-        with:
-          setup-only: true
-          release: none
-          premise-version: v0.5.0-rc.256
-          install-premise: pre-built
-      - uses: google-github-actions/setup-gcloud@v3
-        if: vars.GCP_WORKLOAD_IDENTITY_PROVIDER != ''
-      - uses: aws-actions/configure-aws-credentials@v5
-        if: vars.PREMISE_AWS_ROLE != ''
-        with:
-          role-to-assume: ${{ vars.PREMISE_AWS_ROLE }}
-          aws-region: ${{ vars.PREMISE_AWS_REGION }}
-      - name: Authenticate infrastructure providers
-        run: pm infra auth --ci --env-file "$GITHUB_ENV"
-      - name: Install client dependencies
-        run: |
-          pm install
-          mise run infra:install
-      - name: Restore the previous application artifacts
-        shell: bash
-        run: |
-          set -euo pipefail
-          args=(--env "$DEPLOY_ENVIRONMENT" --run-id "$DEPLOY_RUN_ID")
-          if [[ -n "$PREVIEW_BRANCH" ]]; then args+=(--branch "$PREVIEW_BRANCH"); fi
-          if [[ -n "$INFRA_BACKEND" ]]; then args+=(--backend "$INFRA_BACKEND"); fi
-          pm deploy recover "${args[@]}" --workers-stopped
+          pm "${args[@]}"

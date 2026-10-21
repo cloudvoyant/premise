@@ -129,26 +129,22 @@ Publishing a library on merge does not create a GitHub deployment or select a `p
 
 ## Deploy with migrations
 
-Use `pm deploy` when a deployment needs database provisioning, migrations, or recovery tasks. The order is:
-
-```mermaid
-flowchart LR
-    db[Database prerequisites] --> migrate[Optional migrations]
-    migrate --> infra[Full infrastructure update]
-    infra --> extra[Optional extra deployment task]
-    extra --> health[Health tasks]
-```
-
-Declare prerequisite resource targets under `workspace.infra.prerequisites`. Applications expose an optional `migrate` task in their own `mise.toml`. Declare health and recovery tasks under `workspace.deployment`. See the [complete configuration](modules/infrastructure.md#order-provisioning-migrations-and-deployment).
+Use `pm ci flow on-release` for the complete environment sequence:
 
 ```sh
-pm deploy plan --env stage
-pm deploy run --env stage --release COMMIT_SHA --artifact web=IMMUTABLE_ARTIFACT_ID
+export PM_RELEASE=COMMIT_SHA
+export PM_ARTIFACTS='{"web":"IMMUTABLE_ARTIFACT_REFERENCE"}'
+pm ci flow on-release --environment stage --release none
 ```
 
-Pulumi deploys applications that it owns. Add a project `deploy` hook only for work outside Pulumi. On failure, client recovery tasks use the previous successful release. The client must provide backward-compatible migrations. Premise does not run database down migrations.
+For an existing stack, the order is migrate, infra plan, infra apply, then application deploy and health checks.
+For a new stack, migration runs after the first apply. Applications without a migration task skip that step.
+Clients must apply database infrastructure changes separately before schema migrations and keep migrations backward compatible.
 
-Premise stores release references and deployment ownership in shared storage. CI fans out independent migrations and waits for all required groups before the full update. Applications without migrations produce no migration job. The [infrastructure guide](modules/infrastructure.md) explains retained artifacts, recovery, and interrupted runs.
+You can also run `pm migrate`, `pm infra plan`, `pm infra apply`, and `pm deploy` individually with `--env ENV`.
+`pm deploy` only deploys and checks application artifacts; it has no subcommands.
+The complete CI flow retains successful artifact references and attempts recovery on failure.
+See the [infrastructure guide](modules/infrastructure.md) for configuration and recovery inputs.
 
 ## Pull application secrets
 

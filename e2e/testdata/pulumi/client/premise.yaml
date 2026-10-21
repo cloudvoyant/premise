@@ -1,11 +1,24 @@
 workspace:
-  name: gcs-client
+  name: static-client
   kind: monorepo
   schema-version: "0.2"
   providers: { ci: github, tools: mise, tasks: mise, infra: pulumi, versioning: svu }
   infra:
     directory: infra
   projects:
-    - name: dummy
-      template: fixture:dummy
-      path: apps/dummy
+    - name: web
+      template: fixture:static-app
+      path: apps/web
+      secrets:
+        config: fnox.toml
+        keys: [APP_MESSAGE]
+        profiles: { dev: dev, stage: stage, prod: prod, preview: preview }
+  deployment:
+    record_outputs: [bucketName]
+    applications:
+      - project: web
+        deploy: deploy
+        health: health
+        rollback: rollback
+    recovery:
+      first_deploy: { project: web, task: cleanup }

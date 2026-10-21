@@ -38,12 +38,19 @@ func InfraSetupCommand(scaffold core.WorkspaceScaffold) *cobra.Command {
 	var setup core.InfrastructureSetup
 	command := &cobra.Command{
 		Use:   "setup",
-		Short: "Add a Pulumi program and missing deployment workflows",
+		Short: "Add infrastructure, or prepare an existing program with --env",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			root, err := premiseRoot()
 			if err != nil {
 				return err
+			}
+			if cmd.Flags().Changed("env") {
+				options, err := resolvedInfraCommandOptions(cmd, root)
+				if err != nil {
+					return err
+				}
+				return core.PrepareInfrastructure(cmd.Context(), root, options, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 			}
 			if err := core.SetupInfrastructure(cmd.Context(), root, scaffold, setup, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
 				return err
@@ -52,6 +59,7 @@ func InfraSetupCommand(scaffold core.WorkspaceScaffold) *cobra.Command {
 			return nil
 		},
 	}
+	addInfraFlags(command)
 	command.Flags().StringVar(&setup.Language, "language", "", "Official Pulumi language starter; existing programs supply their runtime")
 	command.Flags().StringVar(&setup.PulumiVersion, "pulumi-version", "", "Pulumi version to pin; defaults to the existing pin or tested version")
 	return command
@@ -223,6 +231,9 @@ func infraCommandOptions(command *cobra.Command) core.InfraOptions {
 	branch, _ := command.Flags().GetString("branch")
 	shared, _ := command.Flags().GetBool("shared")
 	backend, _ := command.Flags().GetString("backend")
+	if backend == "" {
+		backend = os.Getenv("PM_INFRA_BACKEND")
+	}
 	yes, _ := command.Flags().GetBool("yes")
 	return core.InfraOptions{Environment: environment, Branch: branch, Shared: shared, Backend: backend, Yes: yes}
 }

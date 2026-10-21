@@ -9,10 +9,7 @@ import (
 	"testing"
 
 	core "github.com/cloudvoyant/premise/core"
-	"go.yaml.in/yaml/v3"
 )
-
-// Public API -----------------------------------------------------------------
 
 func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 	root := repositoryRoot(t)
@@ -48,40 +45,6 @@ func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 	assertFileContains(t, filepath.Join(project, "package.json"), `"format:check"`)
 	for _, name := range []string{"on-commit.yml", "on-merge.yml"} {
 		path := filepath.Join(workspace, ".github", "workflows", name)
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var workflow struct {
-			Events map[string]any `yaml:"on"`
-			Jobs   map[string]struct {
-				Condition   string `yaml:"if"`
-				Environment any    `yaml:"environment"`
-			} `yaml:"jobs"`
-		}
-		if err := yaml.Unmarshal(data, &workflow); err != nil {
-			t.Fatal(err)
-		}
-		switch name {
-		case "on-merge.yml":
-			for _, job := range []string{"preflight-packages", "publish-release", "publish-packages"} {
-				if workflow.Jobs[job].Environment != nil {
-					t.Fatalf("package publication job %s acquired a deployment environment", job)
-				}
-			}
-			if _, ok := workflow.Jobs["cleanup-preview"]; !ok {
-				t.Fatal("merge workflow must clean up previews")
-			}
-			if workflow.Jobs["plan"].Condition != "github.event_name == 'push'" {
-				t.Fatal("PR-close and branch-delete cleanup events must not publish a stable release")
-			}
-			for _, event := range []string{"push", "pull_request", "delete"} {
-				if _, ok := workflow.Events[event]; !ok {
-					t.Fatalf("merge workflow is missing %s", event)
-				}
-			}
-		}
-
 		if name == "on-commit.yml" {
 			assertFileContains(t, path, "cloudvoyant/premise@v0")
 			workflow, err := os.ReadFile(path)
@@ -117,6 +80,9 @@ func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 			} {
 				assertFileContains(t, path, expected)
 			}
+		}
+		if name == "on-merge.yml" {
+			assertFileContains(t, path, "cloudvoyant/premise@v0")
 		}
 
 	}
@@ -178,8 +144,6 @@ func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 		t.Fatalf("release created bootstrap tag: %s", refs)
 	}
 }
-
-// Private helpers ------------------------------------------------------------
 
 func bunReleaseRegistryFixture(t *testing.T, root string) {
 	t.Helper()

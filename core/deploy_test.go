@@ -12,12 +12,12 @@ import (
 // Public API -----------------------------------------------------------------
 
 func TestDeploymentFailuresStopDependentPhasesAndPreservePreviousSuccess(t *testing.T) {
-	for _, phase := range []string{"init", "provision", "migration", "apply", "deploy", "health", "record"} {
+	for _, phase := range []string{"deploy", "health", "record"} {
 		t.Run(phase, func(t *testing.T) {
 			// Arrange.
 			root, log, options := deploymentFailureFixture(t)
 			var output bytes.Buffer
-			if err := RunDeployment(t.Context(), root, options, nil, &output, &output); err != nil {
+			if err := RunApplicationDeployment(t.Context(), root, options, nil, &output, &output); err != nil {
 				t.Fatal(err)
 			}
 
@@ -25,7 +25,7 @@ func TestDeploymentFailuresStopDependentPhasesAndPreservePreviousSuccess(t *test
 			t.Setenv("TEST_FAILURE_PHASE", phase)
 			options.Release = "B"
 			options.Artifacts["web"] = "artifact-B"
-			if err := RunDeployment(t.Context(), root, options, nil, &output, &output); err == nil {
+			if err := RunApplicationDeployment(t.Context(), root, options, nil, &output, &output); err == nil {
 				t.Fatal("failure reported success")
 			}
 
@@ -48,7 +48,6 @@ func TestDeploymentFailuresStopDependentPhasesAndPreservePreviousSuccess(t *test
 			b := string(events)[strings.Index(string(events), "release=B"):]
 			forbidden := map[string][]string{
 				"init":      {"task migrate", "task deploy", "task health", "task rollback"},
-				"provision": {"task migrate", "task deploy", "task health", "task rollback"},
 				"migration": {"task deploy", "task health", "task rollback"},
 				"apply":     {"task deploy", "task health"},
 				"deploy":    {"task health"},
@@ -85,7 +84,7 @@ func TestFailedRecoveryRetainsFailureAndSelectsFirstReleaseCleanup(t *testing.T)
 			root, log, options := deploymentFailureFixture(t)
 			var output bytes.Buffer
 			if !first {
-				if err := RunDeployment(t.Context(), root, options, nil, &output, &output); err != nil {
+				if err := RunApplicationDeployment(t.Context(), root, options, nil, &output, &output); err != nil {
 					t.Fatal(err)
 				}
 				options.Release = "B"
@@ -94,7 +93,7 @@ func TestFailedRecoveryRetainsFailureAndSelectsFirstReleaseCleanup(t *testing.T)
 			// Act.
 			t.Setenv("TEST_FAILURE_PHASE", "health")
 			t.Setenv("TEST_RECOVERY_FAILURE", "1")
-			if err := RunDeployment(t.Context(), root, options, nil, &output, &output); err == nil {
+			if err := RunApplicationDeployment(t.Context(), root, options, nil, &output, &output); err == nil {
 				t.Fatal("recovery failure reported success")
 			}
 
@@ -153,16 +152,21 @@ func TestRecoveryRecordsAreNamespacedByProgram(t *testing.T) {
 		}
 	}
 
-	plan, err := ResolveDeploymentPlan(root, InfraOptions{Environment: "dev"})
+	destination, err := ResolveInfrastructure(root, InfraOptions{Environment: "dev"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Program != "environment" || !strings.HasSuffix(plan.RecordsDirectory, filepath.Join("environment", "dev")) {
-		t.Fatal(plan)
+	store, err := deploymentRecordStore(root, manifest, destination)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if destination.ProjectName != "environment" || !strings.HasSuffix(store.URL, "/environment/dev") {
+		t.Fatal(store.URL)
+	}
+
 }
 
-func TestRecoveryDoesNotRequireUnprovisionedApplicationSecrets(t *testing.T) {
+func TestRecoveryRunsWithoutApplicationSecrets(t *testing.T) {
 	root, log, options := deploymentFailureFixture(t)
 	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
 	if err != nil {
@@ -174,7 +178,7 @@ func TestRecoveryDoesNotRequireUnprovisionedApplicationSecrets(t *testing.T) {
 		}
 	}
 	var output bytes.Buffer
-	err = runDeploymentTask(t.Context(), root, manifest, TaskReference{Project: "web", Task: "cleanup"}, map[string]string{"PM_FAILED_PHASE": "provision", "PM_RELEASE": "A"}, infraCommandRunner{stdout: &output, stderr: &output}, options)
+	err = runDeploymentTask(t.Context(), root, manifest, TaskReference{Project: "web", Task: "cleanup"}, map[string]string{"PM_FAILED_PHASE": "migration", "PM_RELEASE": "A"}, infraCommandRunner{stdout: &output, stderr: &output}, options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +200,6 @@ func deploymentFailureFixture(t *testing.T) (string, string, DeployOptions) {
 		}
 	}
 	manifest := infraTestManifest()
-	manifest.Workspace.Infra.Prerequisites = []string{"urn:db"}
 	if err := os.MkdirAll(filepath.Join(root, "apps/web"), 0700); err != nil {
 		t.Fatal(err)
 	}

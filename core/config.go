@@ -104,7 +104,6 @@ type Question struct {
 type Infrastructure struct {
 	Directory       string                      `yaml:"directory,omitempty"`
 	SharedDirectory string                      `yaml:"shared_directory,omitempty"`
-	Prerequisites   []string                    `yaml:"prerequisites,omitempty"`
 	Providers       []string                    `yaml:"providers,omitempty"`
 	Backend         string                      `yaml:"backend,omitempty"`
 	Backends        map[string]InfraBackend     `yaml:"backends,omitempty"`
@@ -149,7 +148,6 @@ type DeploymentApplication struct {
 
 // DeploymentRecovery declares compensation without guessing database down migrations.
 type DeploymentRecovery struct {
-	Provision   *TaskReference `yaml:"provision,omitempty"`
 	Migration   *TaskReference `yaml:"migration,omitempty"`
 	FirstDeploy *TaskReference `yaml:"first_deploy"`
 	Database    *TaskReference `yaml:"database,omitempty"`
@@ -926,7 +924,7 @@ func validateInfrastructure(manifest Config) error {
 	if d.Recovery.FirstDeploy == nil {
 		return fmt.Errorf("deployment requires first_deploy recovery task")
 	}
-	for _, r := range []*TaskReference{d.Recovery.FirstDeploy, d.Recovery.Provision, d.Recovery.Migration, d.Recovery.Database} {
+	for _, r := range []*TaskReference{d.Recovery.FirstDeploy, d.Recovery.Migration, d.Recovery.Database} {
 		if err := check(r); err != nil {
 			return err
 		}

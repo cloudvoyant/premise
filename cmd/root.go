@@ -34,6 +34,7 @@ func init() {
 	rootCmd.AddCommand(
 		CICommand(),
 		DeployCommand(),
+		MigrateCommand(),
 		GenerateCommand(),
 		InstallCommand(),
 		ProjectsCommand(),

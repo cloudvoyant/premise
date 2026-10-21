@@ -211,171 +211,136 @@ Premise does not map infrastructure outputs to migration inputs or load fnox aut
 Use [secret management](../secret-management.md) explicitly for local application credentials.
 CI supplies the variables that the application task needs.
 
-### Order provisioning, migrations, and deployment
+### Order migrations, infrastructure updates, and deployment
 
-Declare database prerequisite targets and application contracts under `workspace`:
+Clients apply database infrastructure changes separately before schema migrations.
+Premise does not select database resource targets or provision prerequisites.
 
-```yaml
-infra:
-  directory: infra
-  # Include resource dependencies that must exist before migrations.
-  prerequisites: ["*::database"]
-  # Keep backend and environment declarations from the earlier example.
-deployment:
-  applications:
-    - project: api
-      health: health
-      rollback: rollback
-    - project: worker
-      health: health
-      rollback: rollback
-    - project: website
-      health: health
-      rollback: rollback
-  # Optional: serialize these tasks when they share migration history.
-  migration_groups:
-    shared-history: [api, worker]
-  recovery:
-    first_deploy: {project: api, task: cleanup}
-```
+`pm migrate --env ENV` runs optional application migration tasks.
+Independent groups run concurrently; explicit shared groups run their tasks in order.
+Premise waits for every worker before returning a failure.
+`pm infra plan` previews the stack, and `pm infra apply --yes` updates it.
+`pm deploy` runs application deployment and health tasks. It does not migrate or update infrastructure.
 
-Independent migrating applications get separate jobs by default.
-An explicit group runs its members in order within one job.
-A migrating application requires declared prerequisites. Premise does not infer database resources from arbitrary code.
-Prerequisite selection includes the required providers and component parents. Other dependencies require explicit targets.
+The environment CI flow coordinates those operations:
 
 ```mermaid
 flowchart TD
-  Start["Acquire environment ownership"] --> DB["Apply prerequisite resources"]
-  DB --> M1["Migration group 1"]
-  DB --> M2["Migration group 2"]
-  M1 --> Gate["All migrations succeeded"]
-  M2 --> Gate
-  Gate --> Apply["Apply full stack, including databases"]
-  Apply --> Deploy["Optional application deploy tasks"]
-  Deploy --> Health["Health checks"]
-  Health --> Record["Remember successful release and artifacts"]
-  Record --> Unlock["Release ownership"]
+    Check{Selected stack has resources?}
+    Check -->|Yes| Before[Optional migrations]
+    Check -->|No| Plan[Infrastructure plan]
+    Before --> Plan
+    Plan --> Apply[Infrastructure apply]
+    Apply --> Need{Migrations already ran?}
+    Need -->|No| After[Optional migrations]
+    Need -->|Yes| Deploy[Application deploy and health]
+    After --> Deploy
+    Deploy --> Record[Save successful artifact references]
 ```
 
-An application can set `deploy: deploy` when the full infrastructure update does not deploy it.
-The health and rollback tasks remain explicit. Task arguments use the same environment contract as migrations.
+Existing environments migrate before the update. New environments apply first, then migrate.
+This first-apply path lets feature branches create previews from the same program without new code.
+If Pulumi creates the app itself, clients must account for it starting before that first migration.
+Applications without a `migrate` task do not run migrations.
+
+```yaml
+workspace:
+  deployment:
+    applications:
+      - project: web
+        deploy: deploy
+        health: health
+        rollback: rollback
+    recovery:
+      first_deploy: {project: web, task: cleanup}
+```
+
+The `deploy` task is optional when Pulumi deploys the application.
+Health and rollback tasks belong to the client.
+A static app can use Pulumi to create a bucket and a Mise deploy task to upload its files.
+A migration task receives the environment argument and can query saved infrastructure through `pm infra query`.
 
 ```sh
-pm deploy plan --env stage --json
-pm deploy run --env stage --release COMMIT_SHA \
-  --artifact api=IMMUTABLE_REFERENCE,worker=IMMUTABLE_REFERENCE,website=IMMUTABLE_REFERENCE
+pm migrate --env stage
+pm infra plan --env stage
+pm infra apply --env stage --yes
+pm deploy --env stage --release COMMIT_SHA --artifact web=RETAINED_ARTIFACT
 ```
 
-Artifact references identify retained builds, image digests, or provider deployment IDs.
-The client publishes and retains those artifacts. Premise stores references and does not upload local build directories.
-Keep the previous release's artifacts available until recovery no longer needs them.
+To run the full sequence with recovery:
 
-### Recover from failure
-
-A failed migration prevents the full update. Applied migrations remain in place.
-Clients must make migrations backward compatible and own database repair.
-For a partial update or failed health check, Premise refreshes state and invokes client rollback tasks.
-First-release cleanup runs when no successful release exists.
-Optional `recovery.provision`, `recovery.migration`, and `recovery.database` tasks handle client-specific repairs.
-
-Tasks receive `PM_ENV`, `PM_BRANCH`, `PM_STACK`, `PM_RUN_ID`, `PM_RELEASE`, and JSON `PM_ARTIFACTS`.
-Recovery also receives `PM_FAILED_PHASE`, `PM_PREVIOUS_RELEASE`, JSON `PM_PREVIOUS_ARTIFACTS`, and JSON `PM_PREVIOUS_OUTPUTS`.
-Use these references to restore the application. Do not undo compatible schema migrations automatically.
-
-Successful metadata lives under `BACKEND/.premise-releases/PROJECT/STACK` by default.
-Set `deployment.records` to another `s3://` or `gs://` prefix when needed.
-The destination must support conditional object writes and deletion. The AWS CLI or gcloud must be available through Mise.
-An explicit local directory supports tests and local operation. Remote-backend CI rejects runner-local records.
-
-```text
-.premise-releases/PROJECT/STACK/
-├── lock.json                  Owner of the entire deployment
-├── last-success.json          Release and retained artifact references
-├── last-run.json              Original outcome and recovery outcome
-└── runs/
-    ├── RUN_ID.json            Phase state and previous recovery references
-    └── RUN_ID/migrations/
-        └── GROUP.json         One worker's outcome
+```sh
+export PM_RELEASE=COMMIT_SHA
+export PM_ARTIFACTS='{"web":"RETAINED_ARTIFACT"}'
+pm ci flow on-release --environment stage --release none
 ```
 
-These records describe application releases. Pulumi resource state does not store this application contract.
-A failed release cannot replace the previous successful record. Records contain no application credentials.
-The shared lock covers every phase and blocks overlapping standalone infrastructure changes.
-Failed recovery retains ownership so another release cannot hide the failure.
+For a preview, use `--branch FEATURE_BRANCH --environment preview`, or set `PM_BRANCH`.
+Use `--backend NAME` to override the configured backend. Child tasks inherit `PM_INFRA_BACKEND`, so their infra queries use the same selection.
+The flow uses the same public module operations as the individual commands.
+It keeps an environment lock until success or recovery and waits for every migration worker.
+A failed migration stops the sequence. A failed update or health check attempts client recovery.
+The original flow still fails after successful recovery. Premise does not run down migrations.
 
-For an interrupted run, stop every worker before repair.
-Inspect its run and migration records. A migration still marked `running` blocks automatic recovery.
-Use `pm deploy recover --env ENV --run-id ID` when workers report completion.
-If a stopped worker left a running marker, add `--workers-stopped` only after every worker stops.
-After manual repair, `pm deploy unlock --env ENV --run-id ID` releases only that run's lock.
-For previews, also pass the original `--branch`.
+### Retain artifacts for recovery
 
-### Add infrastructure later
+Keep immutable artifacts outside the runner checkout, for example in an artifact bucket or package registry.
+`PM_ARTIFACTS` accepts a JSON map or comma-separated `project=reference` pairs.
+Premise stores references, not application files, in `last-success.json`.
+Client rollback tasks receive `PM_PREVIOUS_RELEASE`, `PM_PREVIOUS_ARTIFACTS`, and selected nonsecret `PM_PREVIOUS_OUTPUTS`.
+They restore those artifacts. The first-deploy cleanup task handles a failed deployment with no prior success.
 
-`pm init` without infrastructure omits `on-deploy.yml` and does not add a Pulumi tool pin.
-Run `pm infra setup --language go` in that workspace to create the official starter, add infrastructure configuration, and add the missing manual workflow.
-Use `--pulumi-version VERSION` to select the tool pin. Omit `--language` to adopt an existing `infra/Pulumi.yaml` program.
-Setup preserves existing programs, client tasks, tool pins, and workflows. Repeating it adds only missing files.
-Configure a remote backend before using `pm infra init --env ENV`; setup does not create cloud resources or initialize stacks.
+Records live under the selected backend's `.premise-releases/PROJECT/STACK` prefix by default.
+Set `workspace.deployment.records` to another existing GCS or S3 prefix when needed.
+Each run has a record and migration outcomes. The lock uses conditional writes so another process cannot claim the same environment.
+A successful run replaces `last-success.json`; a failed run preserves the previous successful release.
 
-### Run CI phases
+### Add infrastructure and prepare a runner
 
-Only three workflows are allowed: `on-commit.yml`, `on-deploy.yml`, and `on-merge.yml`.
-The commit flow keeps the established order:
+`pm init` without infrastructure omits `on-deploy.yml` and the Pulumi tool pin.
+`pm infra setup --language go` adds an official starter and the missing manual workflow to an existing workspace.
+It preserves client files and existing tool pins. `--pulumi-version VERSION` selects another pin.
 
-```mermaid
-flowchart LR
-    Plan --> Tasks[Task fan-out]
-    Tasks --> Publish[Release and package publication]
-    Publish --> Provision[Infrastructure prerequisites]
-    Provision --> Migrate[Optional migration fan-out]
-    Migrate --> Apply[Full infrastructure update and deployment]
-    Apply --> Complete[Health checks and release record]
-    Provision -. failure .-> Recover[Recover previous application artifacts]
-    Migrate -. failure .-> Recover
-    Apply -. failure .-> Recover
-```
+`pm infra setup --env ENV` prepares an existing program for execution.
+It runs the infra directory's own Mise `setup` or `install` task when declared; otherwise it runs `pulumi install`.
+It then initializes or selects the configured stack and restores its configuration.
+Declare provider tools in Mise and authenticate with `pm infra auth --ci` before running CI flows.
+The optional root `ci:auth` task handles unsupported providers after native authentication.
+Do not use cloud-provider GitHub Actions for authentication or tool setup.
 
-These deployment jobs live directly in `on-commit.yml` for feature-push previews and `on-deploy.yml` for manual deployments.
-Each job selects the same commit, backend, environment, and run ID.
-`on-merge.yml` owns preview cleanup, including branch deletion. It does not deploy production infrastructure.
-Infrastructure tests run separately on demand; they are not CI workflow jobs.
-Fresh runners restore declared stack configuration. Migration workers write separate outcomes to shared storage.
-The full update waits for all workers. A zero-migration deployment skips the matrix and continues directly.
-Recovery waits for all migration jobs, including failed jobs.
+### Keep workflow placement stable
 
-The CLI exposes `deploy start`, `provision`, `migrate --group NAME`, `apply`, `complete`, and `recover`.
-`deploy run` calls these same phases locally. The action exposes matching `deploy-*` commands.
-CI must not run `deploy run` after the migration matrix because it repeats the deployment lifecycle.
-
-`on-deploy.yml` remains manual. Feature pushes create previews through `on-commit.yml`.
-Merge and branch-deletion events clean previews through `on-merge.yml`.
-Pull-request validation does not deploy. Cleanup never publishes a release.
-Package publication and credential preflight do not select GitHub environments. Store publication tokens as repository or organization CI secrets. Environment-scoped jobs are for actual infrastructure deployments.
+Only `on-commit.yml`, `on-deploy.yml`, and `on-merge.yml` are allowed.
+The commit flow keeps plan, task fan-out, release publication, and package publication in that order.
+Feature preview deployment follows those jobs through the environment CI flow.
+Independent migration groups still run concurrently inside that flow.
+`on-deploy.yml` is manual-only. Preview cleanup stays in `on-merge.yml`, including branch deletion.
+Publishing packages never selects a deployment environment.
+Infrastructure tests run separately on demand, not in CI.
 
 ## API
 
-| API                                     | Responsibility                                                             |
-| --------------------------------------- | -------------------------------------------------------------------------- |
-| `InitializeWorkspaceWithInfrastructure` | Stage workspace files and create or adopt a client program.                |
-| `SetupInfrastructure`                   | Add infrastructure to an existing workspace and preserve client files.     |
-| `ResolveStackName`                      | Resolve persistent, preview, or explicitly shared stack identity.          |
-| `ResolveInfrastructure`                 | Resolve program directory, backend, and environment configuration.         |
-| `RunInfra`                              | Run pinned Pulumi operations and respect deployment ownership.             |
-| `QueryInfrastructure`                   | Select a non-secret or explicitly requested secret value from saved state. |
-| `PlanMigrations`                        | Discover optional application tasks and ordered groups.                    |
-| `ResolveDeploymentPlan`                 | Describe phases, migration jobs, and durable record destinations.          |
-| `RunDeploymentPhase`                    | Execute one phase using the shared run identity.                           |
-| `RunDeployment`                         | Run phases locally and attempt client recovery after failure.              |
+| API                                     | Responsibility                                                           |
+| --------------------------------------- | ------------------------------------------------------------------------ |
+| `InitializeWorkspaceWithInfrastructure` | Initialize client-owned infrastructure with the workspace.               |
+| `SetupInfrastructure`                   | Add a client program and missing workflow while preserving client files. |
+| `PrepareInfrastructure`                 | Install program dependencies and select the environment stack.           |
+| `InfrastructureExists`                  | Check whether the selected stack has saved application resources.        |
+| `RunInfra`                              | Preview, apply, query, or destroy infrastructure through pinned Pulumi.  |
+| `QueryInfrastructure`                   | Read a selected saved output or resource property.                       |
+| `PlanMigrations` / `RunMigrations`      | Discover optional tasks and run independent groups.                      |
+| `RunApplicationDeployment`              | Deploy and check artifacts, with recovery on failure.                    |
+| `RunDeployment`                         | Coordinate the complete environment CI flow and its recovery.            |
 
-`core/pulumix.go` owns CLI invocation and Pulumi plan/state wire formats.
-`core/providers` owns provider authentication, credentials, and object storage operations.
-Core imports no cloud resource SDK. Client fixture modules own their published provider dependencies.
+Generic Pulumi operations live in `core/pulumix.go`.
+Provider authentication, CI output adapters, and storage operations live under `core/providers`.
 
 ## Validation
 
-Premise's end-to-end harness exercises real Go and TypeScript programs, saved-state queries, PostgreSQL migrations, and automatic artifact recovery.
-The live GCS test creates only storage buckets. It checks queries, state reuse, and preview cleanup isolation.
-Cloud checks require explicit test credentials. A skipped check is not live validation.
-See the [GCS fixture](../../e2e/testdata/pulumi/README.md) and [local deployment fixture](../../e2e/testdata/deploy/README.md).
+The single live fixture is a static app and a small Go GCS program.
+The test uses `pm ci` flows across dev, stage, prod, and a branch preview.
+Infra apply creates a bucket; deploy uploads the static app; a fake migration writes a marker.
+A failed B health check must restore the retained A page while preserving B's migration marker.
+The test also checks environment isolation, named backend selection, fresh-checkout state reuse, and final cleanup.
+A second CLI test pulls environment-specific secrets through real fnox into an ignored private env file.
+See the [static GCS fixture](../../e2e/testdata/pulumi/README.md).

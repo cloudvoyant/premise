@@ -5,7 +5,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 )
@@ -116,48 +115,6 @@ func TestPreviewCleanupHandlesMissingStacksWithoutHidingBackendFailures(t *testi
 				t.Fatalf("destroyed=%t, want %t", err == nil, tc.wantDestroy)
 			}
 		})
-	}
-}
-
-func TestPrerequisiteCoverageRejectsApplicationDependency(t *testing.T) {
-	resources := map[string]infraResourcePlan{"urn:db": {Goal: &infraPlanGoal{Custom: true, Dependencies: []string{"urn:app"}}}, "urn:app": {Goal: &infraPlanGoal{Custom: true}}}
-	if _, err := validatePrerequisiteCoverage(resources, []string{"urn:db"}, "dev", "example"); err == nil {
-		t.Fatal("accepted missing prerequisite")
-	}
-	if _, err := validatePrerequisiteCoverage(resources, []string{"urn:missing"}, "dev", "example"); err == nil {
-		t.Fatal("accepted unmatched target")
-	}
-}
-
-func TestPrerequisiteCoverageIncludesProvider(t *testing.T) {
-	resources := map[string]infraResourcePlan{"urn:db": {Goal: &infraPlanGoal{Custom: true, Provider: "urn:provider::id"}}, "urn:provider": {Goal: &infraPlanGoal{Custom: true, Type: "pulumi:providers:gcp"}}}
-	targets, err := validatePrerequisiteCoverage(resources, []string{"urn:db"}, "dev", "example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(targets, []string{"urn:db", "urn:provider"}) {
-		t.Fatal(targets)
-	}
-}
-
-func TestPrerequisitePatternsMatchPulumiTypesWithSlashes(t *testing.T) {
-	branch := "urn:pulumi:preview-feature::environment::fixture:database/branch:Branch::db-branch"
-	database := "urn:pulumi:preview-feature::environment::fixture:database/instance:Instance::db-database"
-	app := "urn:pulumi:preview-feature::environment::fixture:application/deployment:Deployment::app-deployment"
-	resources := map[string]infraResourcePlan{
-		branch:   {Goal: &infraPlanGoal{Custom: true}},
-		database: {Goal: &infraPlanGoal{Custom: true, Dependencies: []string{branch}}},
-		app:      {Goal: &infraPlanGoal{Custom: true, Dependencies: []string{database}}},
-	}
-	targets, err := validatePrerequisiteCoverage(resources, []string{"urn:pulumi:{stack}::{project}::*::db-*"}, "preview-feature", "environment")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(targets, []string{branch, database}) {
-		t.Fatalf("targets = %q", targets)
-	}
-	if _, err := validatePrerequisiteCoverage(resources, []string{"["}, "preview-feature", "environment"); err == nil {
-		t.Fatal("invalid wildcard accepted")
 	}
 }
 

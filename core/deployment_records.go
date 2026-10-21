@@ -94,7 +94,7 @@ func deploymentRecordStore(root string, manifest Config, destination InfraResolu
 }
 
 // acquireInfrastructureOwnership prevents standalone commands from mutating a
-// stack between the provisioning and recovery phases of a deployment.
+// stack during an environment CI flow or application deployment.
 func acquireInfrastructureOwnership(ctx context.Context, root string, destination InfraResolution) (func() error, error) {
 	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
 	if err != nil {

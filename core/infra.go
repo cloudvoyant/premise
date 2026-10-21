@@ -130,7 +130,7 @@ func RunInfra(ctx context.Context, root, operation string, options InfraOptions,
 	}
 	runner := infraCommandRunner{stdin: stdin, stdout: stdout, stderr: stderr}
 	if operation == "destroy" && strings.HasPrefix(resolution.Stack, "preview-") {
-		exists, err := previewStackExists(ctx, runner, resolution)
+		exists, err := stackExists(ctx, runner, resolution)
 		if err != nil {
 			return err
 		}

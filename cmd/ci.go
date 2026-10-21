@@ -3,7 +3,6 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 
 	core "github.com/cloudvoyant/premise/core"
 	"github.com/cloudvoyant/premise/core/backends"
@@ -27,7 +26,7 @@ func CICommand() *cobra.Command {
 func CIPlanCommand() *cobra.Command {
 	var flowName string
 	var environment, branch string
-	var asJSON, githubOutput bool
+	var asJSON, githubOutput, ciOutput bool
 	command := &cobra.Command{
 		Use:  "plan",
 		Args: cobra.NoArgs,
@@ -71,7 +70,10 @@ func CIPlanCommand() *cobra.Command {
 				}
 			}
 			if githubOutput {
-				return writeCIGitHubOutput(cmd.OutOrStdout(), plan)
+				return core.WriteCIPlanOutputs(cmd.OutOrStdout(), "github", plan)
+			}
+			if ciOutput {
+				return core.WriteCIPlanOutputs(cmd.OutOrStdout(), manifest.Workspace.Providers.CI, plan)
 			}
 			if asJSON {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(plan)
@@ -84,13 +86,14 @@ func CIPlanCommand() *cobra.Command {
 	command.Flags().StringVar(&environment, "env", "", "Deployment environment for optional migration jobs")
 	command.Flags().StringVar(&branch, "branch", "", "Preview branch identity")
 	command.Flags().BoolVar(&asJSON, "json", false, "emit JSON")
+	command.Flags().BoolVar(&ciOutput, "ci-output", false, "emit outputs through the configured CI provider")
 	command.Flags().BoolVar(&githubOutput, "github-output", false, "emit GitHub Actions output values")
 	return command
 }
 
 // CIFlowCommand creates the flow command.
 func CIFlowCommand() *cobra.Command {
-	var environment, project, channel, version, outputDir, platform, releaseModeFlag string
+	var environment, branch, backend, project, channel, version, outputDir, platform, releaseModeFlag string
 	var rootOnly, skipRoot bool
 	command := &cobra.Command{
 		Use:   "flow <on-commit|on-merge|on-release>",
@@ -115,14 +118,16 @@ func CIFlowCommand() *cobra.Command {
 			if rootOnly && skipRoot {
 				return fmt.Errorf("--root-only and --skip-root cannot be used together")
 			}
-			options := core.CIFlowOptions{Project: project, Platform: platform, OutputDir: outputDir, Channel: channel, Version: version, RootOnly: rootOnly, SkipRoot: skipRoot}
+			options := core.CIFlowOptions{Backend: backend, Branch: branch, Project: project, Platform: platform, OutputDir: outputDir, Channel: channel, Version: version, RootOnly: rootOnly, SkipRoot: skipRoot}
 			if err := core.RunCIFlowWithOptions(cmd.Context(), root, flow, environment, releaseMode, options, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
 				return fmt.Errorf("run CI flow %s: %w", flow, err)
 			}
 			return nil
 		},
 	}
-	command.Flags().StringVar(&environment, "environment", "", "release environment: stage or prod")
+	command.Flags().StringVar(&environment, "environment", "", "deployment environment: dev, stage, prod, or preview")
+	command.Flags().StringVar(&branch, "branch", "", "feature branch identity for a preview")
+	command.Flags().StringVar(&backend, "backend", "", "Configured infrastructure backend override")
 	command.Flags().StringVar(&project, "project", "", "declared project template name")
 	command.Flags().StringVar(&channel, "channel", "", "artifact channel: stable or rc")
 	command.Flags().StringVar(&version, "version", "", "artifact version")
@@ -132,22 +137,4 @@ func CIFlowCommand() *cobra.Command {
 	command.Flags().BoolVar(&skipRoot, "skip-root", false, "skip the root hook")
 	command.Flags().StringVar(&releaseModeFlag, "release", "none", "release mode: none (publish with pm release after all flows pass)")
 	return command
-}
-
-// Private helpers ------------------------------------------------------------
-
-// writeCIGitHubOutput writes values directly to a GitHub Actions step output file.
-func writeCIGitHubOutput(output io.Writer, plan core.CISchedule) error {
-	matrix, err := json.Marshal(struct {
-		Include []core.CIMatrixRow `json:"include"`
-	}{plan.Matrix})
-	if err != nil {
-		return err
-	}
-	migrations, err := json.Marshal(core.MigrationMatrix{Include: plan.Migrations})
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(output, "mode=%s\nrunner=%s\nnative=%t\nmatrix=%s\nhas_migrations=%t\nmigration_matrix=%s\n", plan.Mode, plan.Runner, plan.HasNative, matrix, len(plan.Migrations) > 0, migrations)
-	return err
 }

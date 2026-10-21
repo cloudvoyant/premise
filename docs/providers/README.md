@@ -10,7 +10,7 @@ workspace:
 
 ## Usage
 
-Install tools through Mise, then authenticate:
+Install tools through Mise, then authenticate. CI also calls `pm infra auth --ci`; do not use cloud-provider GitHub Actions for authentication or tool setup:
 
 ```sh
 mise install
@@ -22,7 +22,7 @@ In CI, use the runner identity or protected CI secrets:
 
 ```sh
 pm infra auth --ci --env-file "$GITHUB_ENV"  # GitHub environment file
-pm deploy run --env stage --release COMMIT_SHA --artifact web=ARTIFACT_ID
+pm deploy --env stage --release COMMIT_SHA --artifact web=ARTIFACT_ID
 ```
 
 `--env-file` appends credential file paths for later jobs steps. It never writes token values. Other runners can pass the returned paths through their own environment mechanism. Existing standard credential files also work.
