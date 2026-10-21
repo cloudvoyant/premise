@@ -125,14 +125,19 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Check registry credential before creating a release
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Preflight registry publication before creating a release
+        uses: cloudvoyant/premise@v0
         env:
           CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
-        run: |
-          if [[ -z "$CRATES_TOKEN" ]]; then
-            echo '::error::CRATES_TOKEN is unavailable before release'
-            exit 1
-          fi
+        with:
+          command: preflight
+          flow: on-merge
+          release: none
+          install-premise: build
+          version: ${{ needs.plan.outputs.version }}
 
   publish-release:
     needs: [plan, single, matrix, preflight-packages]

@@ -7,7 +7,7 @@ branding:
 
 inputs:
   command:
-    description: "Operation: plan | flow | flow-matrix | release | packages"
+    description: "Operation: plan | flow | flow-matrix | preflight | release | packages"
     required: false
     default: flow
   flow:
@@ -284,6 +284,9 @@ runs:
             if [[ "$ROOT_ONLY" == true ]]; then args+=(--root-only); fi
             if [[ "$SKIP_ROOT" == true ]]; then args+=(--skip-root); fi
             ;;
+          preflight)
+            args=(release preflight --expected-version "$VERSION")
+            ;;
           release|packages)
             phase=publish
             if [[ "$COMMAND" == packages ]]; then phase=packages; fi
@@ -293,7 +296,7 @@ runs:
             fi
             ;;
           *)
-            echo "::error::invalid command '$COMMAND' (plan | flow | flow-matrix | release | packages)"
+            echo "::error::invalid command '$COMMAND' (plan | flow | flow-matrix | preflight | release | packages)"
             exit 1
             ;;
         esac

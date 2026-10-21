@@ -215,6 +215,55 @@ printf 'publish\n' >> "$RELEASE_CAPTURE"
 	}
 }
 
+func TestStablePublicationPreflightWithoutCargo(t *testing.T) {
+	// Arrange: build the CLI used by the composite action.
+	root := repositoryRoot(t)
+	bin := t.TempDir()
+	binary := filepath.Join(bin, "pm")
+	build := exec.Command("go", "build", "-o", binary, ".")
+	build.Dir = root
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build CLI: %v\n%s", err, out)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CRATES_TOKEN", "")
+	scripts := sourceReleaseActionScripts(t, root)
+	for _, backend := range []string{"none", "go"} {
+		t.Run(backend, func(t *testing.T) {
+			workspace, remote := sourceReleaseFixture(t)
+			if backend == "go" {
+				path := filepath.Join(workspace, "premise.yaml")
+				manifest, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				writeFixtureFile(t, path, strings.Replace(string(manifest), "package_managers: []", "package_managers: [go]", 1), 0o644)
+			}
+			before := gitOutput(t, workspace, "status", "--porcelain")
+
+			// Act: exercise both public entry points before any release tag exists.
+			sourceReleaseCommand(t, workspace, binary, "release", "preflight", "--expected-version", "v0.1.0")
+			runSourceReleaseAction(t, workspace, scripts["Run Premise operation"], "preflight", "stable", "v0.1.0")
+
+			// Assert: no token, publication hook, tag, or file mutation was needed.
+			if after := gitOutput(t, workspace, "status", "--porcelain"); after != before {
+				t.Fatalf("preflight changed files: %s", after)
+			}
+			if tags := gitOutput(t, remote, "tag"); tags != "" {
+				t.Fatalf("preflight created remote tags: %s", tags)
+			}
+			if tags := gitOutput(t, workspace, "tag"); tags != "" {
+				t.Fatalf("preflight created local tags: %s", tags)
+			}
+			invalid := exec.Command(binary, "release", "preflight", "--expected-version", "not-a-version")
+			invalid.Dir = workspace
+			if out, err := invalid.CombinedOutput(); err == nil {
+				t.Fatalf("invalid preflight version accepted: %s", out)
+			}
+		})
+	}
+}
+
 // TestSourceOnlyConfigWithGoReleaser validates with the optional, pinned local binary.
 // Run with PREMISE_TEST_GORELEASER set to the GoReleaser 2.18.1 executable.
 func TestSourceOnlyConfigWithGoReleaser(t *testing.T) {

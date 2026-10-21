@@ -88,6 +88,22 @@ var releasePackagesCmd = &cobra.Command{
 	},
 }
 
+var releasePreflightCmd = &cobra.Command{
+	Use:   "preflight",
+	Short: "validate stable registry publication before creating a release",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		root, _, err := core.FindManifest(currentDirectory())
+		if err != nil {
+			return err
+		}
+		if err := registerPackageManagerBackends(); err != nil {
+			return err
+		}
+		return core.PreflightStablePublication(cmd.Context(), root, releaseExpectedVersion)
+	},
+}
+
 func currentDirectory() string { cwd, _ := os.Getwd(); return cwd }
 
 func init() {
@@ -98,6 +114,7 @@ func init() {
 	releasePublishCmd.Flags().StringVar(&releaseFilesDir, "files-dir", "", "staged release files directory")
 	releasePackagesCmd.Flags().StringVar(&releaseChannel, "channel", "stable", "release channel (stable or rc)")
 	releasePackagesCmd.Flags().StringVar(&releaseExpectedVersion, "expected-version", "", "expected release version")
-	releaseCmd.AddCommand(releasePublishCmd, releasePackagesCmd)
+	releasePreflightCmd.Flags().StringVar(&releaseExpectedVersion, "expected-version", "", "expected stable release version")
+	releaseCmd.AddCommand(releasePublishCmd, releasePackagesCmd, releasePreflightCmd)
 	rootCmd.AddCommand(releaseCmd)
 }
