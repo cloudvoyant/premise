@@ -19,14 +19,22 @@ func MigrateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			options, err := resolvedInfraCommandOptions(command, root)
+			environment, _ := command.Flags().GetString("env")
+			branch, _ := command.Flags().GetString("branch")
+			shared, _ := command.Flags().GetBool("shared")
+			backend, _ := command.Flags().GetString("backend")
+			yes, _ := command.Flags().GetBool("yes")
+			options, err := core.ResolveInfraOptions(command.Context(), root, core.InfraOptions{Environment: environment, Branch: branch, Shared: shared, Backend: backend, Yes: yes})
 			if err != nil {
 				return err
 			}
 			return core.RunMigrations(command.Context(), root, options, group, command.OutOrStdout(), command.ErrOrStderr())
 		},
 	}
-	addInfraFlags(command)
+	command.Flags().String("env", "", "Environment: dev, stage, prod, or preview")
+	command.Flags().String("branch", "", "Branch identity required for preview environments")
+	command.Flags().Bool("shared", false, "Select only shared infrastructure")
+	command.Flags().String("backend", "", "Named saved backend; defaults to environment/workspace selection")
 	command.Flags().StringVar(&group, "group", "", "Run one declared migration group")
 	return command
 }

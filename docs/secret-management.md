@@ -1,158 +1,132 @@
 # Secret management
 
-An application secret is a value that the application needs. A deployment credential grants access to change infrastructure. Premise keeps these two groups separate.
+Application secrets live in GCP Secret Manager as JSON documents. Fnox retrieves each document and creates a temporary private file. Application tasks read that file through its environment variable.
 
-## Ownership
+Premise uses `fnox exec` for local runs and CI. It does not copy application secrets into GitHub or GitLab secrets. Deployment credentials use local OAuth or protected CI credentials and stay outside application secret documents.
 
-| Value                              | Source                                                                   | Consumer                                   |
-| ---------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------ |
-| Stored application secrets         | GCP Secret Manager through fnox                                          | Local application and local migration task |
-| Database connection for a preview  | Secret output from its Pulumi stack                                      | Migration task and server-side application |
-| Cloud administration credentials   | Provider-supported OAuth or CI secrets                                   | Declared deployment and recovery tasks     |
-| GCP authentication                 | Local Application Default Credentials or CI workload identity            | fnox, Pulumi and durable record storage    |
-| Pulumi state protection            | Backend access controls and storage encryption; empty passphrase for now | Pulumi configuration and state             |
-| Project IDs and environment labels | Committed non-secret configuration                                       | Environment resolver                       |
+## Usage
 
-Deployment platforms receive application values during deployment. They do not own the source values for `pm secrets pull`. Do not put deployment credentials in an application fnox profile. Do not put database credentials in a browser bundle.
+Pin fnox in the workspace `mise.toml`:
 
-## Configure application secrets
+```toml
+[tools]
+fnox = "1.39.0"
+```
 
-Premise uses fnox 1.39.0 through Mise. Its `gcp-sm` provider reads GCP Secret Manager. This provider is separate from the GCS bucket that holds Pulumi state.
-
-Declare keys and profiles on the application project in `premise.yaml`:
+Declare an application's configuration and environment profiles in `premise.yaml`:
 
 ```yaml
 workspace:
   projects:
     - name: web
-      template: cloudvoyant/premise-bun:premise-tanstack-start-app
+      template: registry:static-app
       path: apps/web
       secrets:
         config: fnox.toml
-        profiles:
-          dev: dev
-          stage: stage
-          prod: prod
-          preview: preview
-        keys: [APP_SECRET]
+        profiles: { dev: dev, stage: stage, prod: prod, preview: preview }
         file: .env.local
 ```
 
-Create `apps/web/fnox.toml` with references:
+Create `apps/web/fnox.toml` with references to JSON documents:
 
 ```toml
 [providers.gcp]
 type = "gcp-sm"
-project = "your-gcp-project"
-prefix = "web-"
+project = "my-project"
 
 [profiles.dev.secrets]
-APP_SECRET = { provider = "gcp", value = "dev-app-secret" }
+APP_CONFIG = { provider = "gcp", value = "web-dev", as_file = true }
 
 [profiles.stage.secrets]
-APP_SECRET = { provider = "gcp", value = "stage-app-secret" }
+APP_CONFIG = { provider = "gcp", value = "web-stage", as_file = true }
 
 [profiles.prod.secrets]
-APP_SECRET = { provider = "gcp", value = "prod-app-secret" }
+APP_CONFIG = { provider = "gcp", value = "web-prod", as_file = true }
 
 [profiles.preview.secrets]
-APP_SECRET = { provider = "gcp", value = "preview-app-secret" }
+APP_CONFIG = { provider = "gcp", value = "web-preview", as_file = true }
 ```
 
-Store the values in Secret Manager. Grant access only to the required secrets. The configuration contains secret names, not secret values. Premise requires an explicit profile and declared keys. It does not fall back to production or top-level fnox secrets.
+Each referenced secret contains JSON, such as `{"message":"hello"}`. Store real values in Secret Manager. Commit references only. GCP Secret Manager is separate from the GCS bucket that stores Pulumi state.
 
-## Local use
-
-If you use GCP Secret Manager locally, configure Application Default Credentials:
+Run an application command:
 
 ```sh
-gcloud auth application-default login
+pm secrets exec --project web --env dev -- mise run start
 ```
 
-Add `.env.local` to the application's Git ignore rules. Then pull its application values:
+The child receives `APP_CONFIG` as a temporary file path. Its JSON parser reads the values. Fnox removes the file after the child exits, including a failed exit. Premise does not parse the document or maintain a second set of scalar secret keys.
+
+Deployment and migration tasks automatically use fnox when their application declares `secrets`. The selected environment chooses the profile. Recovery tasks run without automatic secret resolution so a secret-provider failure cannot prevent cleanup. If recovery requires secrets, the client task explicitly calls fnox.
+
+### Generate an env file
+
+An env file is a snapshot for tools that require one, including end-to-end tests. Define the project task `secrets:pull`. It writes only dotenv content to standard output. Send diagnostics to standard error and never print credentials there.
+
+```toml
+[tasks."secrets:pull"]
+run = "python3 tasks/env.py"
+```
+
+For example, `tasks/env.py` combines the JSON document with a saved infrastructure output:
+
+```python
+import json
+import os
+import subprocess
+
+with open(os.environ["APP_CONFIG"]) as source:
+    secrets = json.load(source)
+
+args = ["pm", "infra", "query", "--env", os.environ["PM_ENV"],
+        "--output", "bucketName"]
+if os.environ["PM_ENV"] == "preview":
+    args += ["--branch", os.environ["PM_BRANCH"]]
+bucket = subprocess.check_output(args, text=True).strip()
+
+print("APP_MESSAGE=" + json.dumps(secrets["message"]))
+print("BUCKET_NAME=" + json.dumps(bucket))
+```
+
+JSON string quoting works for the fixture's dotenv reader. A client with multiline or other special values must use its dotenv library's encoder.
+
+Add the destination to `.gitignore`, then run:
 
 ```sh
-pm secrets pull --env dev --project web
+pm secrets pull --project web --env dev
+pm secrets pull --project web --env preview --branch feature/example
 ```
 
-The command writes `apps/web/.env.local` with permissions `0600`. These permissions allow only your user to read and write it. Premise resolves all values before it replaces the file. It keeps the existing file if secret resolution fails.
+Premise captures the task output and writes the ignored destination with mode `0600`. It replaces the file only after the task succeeds. The default filename is `.env.local`. Omit `--project` to select all applications with a secrets declaration.
 
-If you omit `--project`, Premise pulls every declared application destination. If you select `preview`, Premise resolves the current feature branch. A profile can contain `{branch}` to select its stable preview identity. That explicit profile must exist in the fnox configuration.
+`PM_ENV` and `PM_BRANCH` identify the selected environment. Infra queries inherit `PM_INFRA_BACKEND` when a deployment selects a backend. A profile can use `{branch}` to select the normalized preview identity. That profile must exist in fnox.
 
-Use child-process injection when a task does not need a file:
+## CI authentication
+
+Run native authentication before the environment flow:
 
 ```sh
-pm secrets exec --env dev --project web -- mise run migrate
+pm infra auth --ci --env-file "$GITHUB_ENV"
+pm ci flow on-deploy --environment stage --release none
 ```
 
-Premise removes common administration tokens from the child environment. It calls `fnox env --json --keys ...` once for the project's declared keys. Fnox owns provider access, interpolation, and profile resolution. It masks these values in captured child output. Do not print transformed secrets or enable shell tracing.
+The provider identity needs access to the referenced secrets, infrastructure resources, and state backend. GCP uses Application Default Credentials locally and workload identity federation in CI. A gcloud CLI login alone does not create Application Default Credentials.
 
-Premise does not execute env-file text as shell code. It quotes values and rejects empty values, invalid UTF-8 and NUL characters. Generated env files must remain outside deployment bundles, caches and reports.
+Use protected CI credentials only for deployment authentication when OAuth or workload identity is unavailable. Do not store them in the application's JSON document. Do not generate an application env file in CI unless a task requires it.
 
-## Infrastructure and migration secrets
+Fnox and its child inherit the job's credentials. Scope the job identity to the resources it needs. Fnox manages temporary-file lifetime. It does not make arbitrary application output safe to log. Tasks must not print JSON documents, transformed secret values, or shell traces.
 
-The client-owned infrastructure program reads its required process environment variables.
-Premise does not register an infrastructure project or resolve an infrastructure fnox profile automatically.
-Wrap sensitive provider inputs and exported values with the Pulumi SDK's secret API.
+## Rotation and failures
 
-Application tasks own database credential lookup. For example, a migration can run:
+Each execution fetches secrets through fnox with daemon caching disabled. Rotate the source document, then run the command again. Regenerate an env snapshot when its values change.
 
-```sh
-DATABASE_URL="$(pm infra query --env stage --output databaseUrl --show-secrets)"
-export DATABASE_URL
-```
+If a profile, document, or task fails, the operation fails. A failed pull leaves the previous env file intact. The pull suppresses task diagnostics because they can contain secret values. Interactive execution forwards child output.
 
-Keep this value out of command arguments, logs, release records, and browser bundles.
-For previews, pass `--env preview --branch "$PM_BRANCH"` to the query.
-Use an exported output as the application's stable interface to infrastructure.
+Recovery records contain release identities and artifact references. They do not contain application secrets. Clients own migration compatibility and any recovery task that requires secrets.
 
-For stored local application values, explicitly wrap a task with `pm secrets exec` or pull its env file.
-Premise's deployment executor does not load fnox automatically.
-The fnox adapter rejects file secrets and credential leases. Use native `fnox exec` for those contracts.
+## Architecture and references
 
-## CI use
-
-Keep fnox secret providers local. Copy the selected application values into CI secrets from your workstation:
-
-```sh
-pm secrets sync --env stage --project web --ci github --repository owner/repo
-pm secrets sync --env stage --project web --ci gitlab --repository group/repo
-```
-
-Authenticate `gh` or `glab` locally before the sync. Declare these tools through Mise. The destination environment must exist. GitHub receives environment secrets. GitLab receives masked, raw variables scoped to that environment. GitLab masking rules can reject short or multiline values. The command reports the failed key without printing its value. Earlier keys can already be updated when a later key fails.
-
-The command reads the local fnox profile. That profile can use GCP Secret Manager, a local env file, or another fnox provider. Secret values travel to the CI CLI on standard input. They do not appear in command arguments or logs. Repeat the sync after rotation.
-
-Map each declared key into its job environment:
-
-```yaml
-env:
-  APP_SECRET: ${{ secrets.APP_SECRET }}
-```
-
-In CI, `pm secrets exec` reads declared application keys directly from the environment and rejects missing values. Migration tasks and Pulumi programs receive the job environment and validate their own required keys. These operations do not invoke fnox automatically or contact its secret provider. CI must set `CI=true`, `GITHUB_ACTIONS=true`, or `GITLAB_CI=true`.
-
-Configure deployment credentials separately through [provider setup](providers/README.md). OAuth or protected CI administration tokens authenticate the infrastructure operation. `pm infra auth --ci` runs native authentication before the optional root `ci:auth` fallback. Provider guides define the variable names. The empty Pulumi passphrase requires no additional CI secret.
-
-## Rotation and previews
-
-A pull retrieves values again through fnox without daemon caching. Rotate local source values, then repeat the pull or process execution. Sync them again before the next CI deployment. Environment files are local snapshots. Remove an obsolete snapshot rather than using it as the source for a new secret.
-
-Preview database connections come from the selected branch stack. Client infrastructure code can publish these outputs to branch-specific Secret Manager entries when a persistent local pull needs them. The client owns this publication contract. Cleanup removes only entries that the preview owns.
-
-Premise masks known provider credentials and declared application values in captured task output. CI masking does not cover local logs or every value generated at runtime. Clients must avoid printing queried credentials or transformed secret values.
-
-Recovery records contain release identities and references. They do not contain secret values. Do not restore revoked credentials when you restore an application release. Database migration compatibility remains the client's responsibility.
-
-## Failures
-
-If a profile or secret is missing, Premise stops before writing an env file. Error messages identify the missing key or profile. Provider diagnostics are suppressed because they can contain credentials.
-
-If access fails, make sure that Application Default Credentials exist and the identity can access the selected secret. A gcloud CLI login alone does not establish this access. If a child command fails, Premise reports the failure and masks resolved values in its captured output.
-
-## References
-
+- [Secrets architecture](architecture/secrets.md)
+- [fnox exec](https://fnox.jdx.dev/cli/exec.html)
 - [fnox GCP Secret Manager](https://fnox.jdx.dev/providers/gcp-sm.html)
-- [Mise fnox integration](https://mise.jdx.dev/environments/secrets/fnox.html)
-- [GCP Secret Manager authentication](https://docs.cloud.google.com/secret-manager/docs/authentication)
-- [Infrastructure deployment](modules/infrastructure.md)
+- [Provider authentication](providers/README.md)

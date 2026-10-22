@@ -17,7 +17,7 @@ flowchart LR
     cli --> tasks[Selected project Mise tasks]
 ```
 
-Project tasks own installation, builds, tests, and quality checks. The CLI selects eligible projects and keeps their task order. A root flow hook can replace the fallback lifecycle.
+Project tasks own installation, builds, tests, and quality checks. The CLI selects eligible projects and keeps their task order. A root flow hook runs once before the selected project checks.
 
 ### Usage
 
@@ -36,11 +36,29 @@ flowchart TD
     root -->|No| install[Project install]
     install --> build[Build and test]
     build --> quality[Lint and format checks]
-    custom --> done[Flow completes]
-    quality --> done
+    custom --> install
+    quality --> done[Flow completes]
 ```
 
-`on-commit` checks feature work. `on-merge` checks trunk work. `on-release` is the task-based application lifecycle. Use the [infrastructure module](infrastructure.md) for database provisioning, migrations, and deployment recovery.
+`on-commit` checks feature work. With `--environment preview`, it runs the preview environment sequence after checks and publication. `on-merge` checks trunk work. With `--environment preview --branch NAME`, it destroys that branch's preview. `on-deploy` runs a manually selected environment.
+
+```mermaid
+flowchart TD
+    Commit[on-commit checks] --> Publish[Publish eligible artifacts]
+    Publish --> Preview[on-commit with preview environment]
+    Manual[Manual on-deploy] --> Environment[Environment sequence]
+    Preview --> Environment
+    Environment --> Existing{Saved application resources?}
+    Existing -->|Yes| Migrate[Optional migrations]
+    Migrate --> Apply[Preview and apply infra]
+    Existing -->|No| First[Preview and apply infra]
+    First --> FirstMigrate[Optional migrations]
+    Apply --> Deploy[Deploy and health checks]
+    FirstMigrate --> Deploy
+    Merge[on-merge with preview environment] --> Cleanup[Destroy preview]
+```
+
+The CLI calls infrastructure, migration, and deployment module APIs. Clients apply database changes before an existing environment's migrations. See the [infrastructure module](infrastructure.md) for recovery.
 
 ### Hosted matrix
 

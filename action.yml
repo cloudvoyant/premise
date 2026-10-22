@@ -11,7 +11,7 @@ inputs:
     required: false
     default: flow
   flow:
-    description: "CI flow: on-commit | on-merge | on-release"
+    description: "CI flow: on-commit | on-merge | on-deploy"
     required: false
     default: on-commit
   environment:

@@ -43,6 +43,11 @@ Keep flag values local to each command instance.
 Keep one `init` in `cmd/root.go` that only registers top-level commands explicitly.
 Put execution helpers under `Private helpers`. Do not build commands in a loop.
 
+Keep Cobra flag parsing inside each command's RunE body. Execution helpers take
+plain inputs and do not accept Cobra commands. Read CI release environment variables
+inside the release module and expose the result as a typed struct; command files
+must not know those variable names.
+
 # Docs
 
 Put Usage before API sections. Use short sentences, working examples, and diagrams
@@ -55,3 +60,10 @@ tests that only mirror implementation details. Keep reusable files and scripts
 in test fixtures. Organize tests into Arrange, Act, and Assert sections with
 blank lines between them. Name each test for both its behavior and its expected
 outcome.
+
+# Module organization
+
+Keep infra querying and setup in the infra module, and deployment phases and records
+in the deploy module. Put provider interfaces and implementations in core/providers.
+Put newly introduced external-tool wrappers in core/extensions. Move existing wrappers
+in a separate follow-up. Avoid comments that repeat a command's name and description.

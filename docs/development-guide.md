@@ -78,7 +78,7 @@ The CLI composition root explicitly registers its built-in Go, Cargo, and Bun ba
     install-premise: build
 ```
 
-Premise supports `on-commit`, `on-merge`, and `on-release` lifecycle flows. A root Mise task with the same name overrides the convention-based fallback lifecycle. The flow command still owns guarded RC or stable publication after that lifecycle. Without an override, Premise uses `workspace.kind` to select the monorepo or template-registry lifecycle. A root can contain both generated projects and template declarations; the kind controls lifecycle behavior rather than content.
+Premise supports `on-commit`, `on-merge`, and `on-deploy` lifecycle flows. A root Mise task with the same name runs before project checks. Publish RC or stable artifacts after the selected checks pass. An explicit environment selects the environment part of the lifecycle. It calls the infrastructure, migration, and deployment modules. Without an override, Premise uses `workspace.kind` to select the monorepo or template-registry lifecycle. A root can contain both generated projects and template declarations; the kind controls lifecycle behavior rather than content.
 
 A scoped `pm ci flow` builds native files for a declared project and platform. Pass `--project`, `--platform`, `--channel` (`stable` or `rc`), `--version`, and an empty absolute `--output-dir`. The project's `release:build` Mise task receives `RELEASE_VERSION`, `PREMISE_RELEASE_CHANNEL`, and `PREMISE_ARTIFACT_DIR` and must write nonempty files there. The project owns its build commands and version overrides. The flow stages files without publishing packages or creating a tag.
 

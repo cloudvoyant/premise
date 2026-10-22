@@ -224,7 +224,8 @@ jobs:
       - name: Destroy the merged or deleted branch preview
         uses: ./
         with:
-          command: infra-destroy
+          command: flow
+          flow: on-merge
           release: none
           environment: preview
           branch: ${{ github.event.pull_request.head.ref || github.event.ref }}

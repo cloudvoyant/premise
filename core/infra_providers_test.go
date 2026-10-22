@@ -1,11 +1,12 @@
 package core
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cloudvoyant/premise/core/providers"
 )
 
 // Public API -----------------------------------------------------------------
@@ -13,7 +14,7 @@ import (
 func TestGCPEnvironmentRequiresCredentialsAndAcceptsExistingADC(t *testing.T) {
 	// Arrange.
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "")
-	provider, ok := InfrastructureProvider("gcp")
+	provider, ok := providers.InfrastructureProvider("gcp")
 	if !ok {
 		t.Fatal("missing GCP provider")
 	}
@@ -93,50 +94,5 @@ printf 'fallback\n' >> "$AUTH_TEST_LOG"
 	os.WriteFile(filepath.Join(root, "mise.toml"), []byte("[tasks.other]\nrun = 'echo other'\n"), 0600)
 	if _, err := AuthenticateInfrastructure(t.Context(), root, true, nil, nil, nil); err == nil || !strings.Contains(err.Error(), "root mise.toml") {
 		t.Fatalf("missing root fallback accepted: %v", err)
-	}
-}
-
-func TestCIApplicationSecretsUseEnvironmentWithoutFnox(t *testing.T) {
-	root := t.TempDir()
-	manifest := NewManifest("ci-secrets")
-	manifest.Workspace.Projects = []Project{{Name: "web", Template: "registry:web", Path: "apps/web", Secrets: &ProjectSecrets{Config: "fnox.toml", Profiles: map[string]string{"stage": "stage"}, Keys: []string{"APP_SECRET"}}}}
-	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("CI", "true")
-	t.Setenv("APP_SECRET", "from-ci")
-	t.Setenv("PATH", t.TempDir()) // No fnox, Mise, or cloud CLI is available.
-	values, err := LoadProjectSecrets(t.Context(), root, "web", "stage", "")
-	if err != nil || values["APP_SECRET"] != "from-ci" {
-		t.Fatalf("CI did not supply values: %v", err)
-	}
-	t.Setenv("APP_SECRET", "")
-	if _, err := LoadProjectSecrets(t.Context(), root, "web", "stage", ""); err == nil || !strings.Contains(err.Error(), "APP_SECRET") {
-		t.Fatal("missing CI variable accepted")
-	}
-}
-
-func TestSecretSyncKeepsValuesOutOfArguments(t *testing.T) {
-	root := t.TempDir()
-	manifest := NewManifest("sync")
-	manifest.Workspace.Projects = []Project{{Name: "web", Template: "registry:web", Path: "apps/web", Secrets: &ProjectSecrets{Config: "fnox.toml", Profiles: map[string]string{"stage": "stage"}, Keys: []string{"APP_SECRET"}}}}
-	os.MkdirAll(filepath.Join(root, "apps/web"), 0700)
-	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
-		t.Fatal(err)
-	}
-	os.WriteFile(filepath.Join(root, "mise"), []byte("#!/bin/sh\nprintf '%s' '{\"schema\":1,\"set\":{\"APP_SECRET\":\"secret-value\"}}'\n"), 0700)
-	os.WriteFile(filepath.Join(root, "gh"), []byte(`#!/bin/sh
-[ "$*" = 'secret set APP_SECRET --repo owner/repo --env stage' ] || exit 2
-[ "$(cat)" = secret-value ] || exit 3
-`), 0700)
-	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
-	if err := SyncProjectSecrets(t.Context(), root, "web", "stage", "", "github", "owner/repo"); err != nil {
-		t.Fatal(err)
-	}
-	// Diagnostics from a failed secret write must not reveal stdin or provider output.
-	os.WriteFile(filepath.Join(root, "gh"), []byte("#!/bin/sh\ncat >&2\nexit 1\n"), 0700)
-	err := SyncProjectSecrets(t.Context(), root, "web", "stage", "", "github", "owner/repo")
-	if err == nil || bytes.Contains([]byte(err.Error()), []byte("secret-value")) {
-		t.Fatalf("unsafe sync failure: %v", err)
 	}
 }

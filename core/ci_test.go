@@ -79,7 +79,7 @@ func newFakeCIRunner() *fakeCIRunner {
 }
 
 func TestParseCIFlow(t *testing.T) {
-	for _, value := range []string{"on-commit", "on-merge", "on-release"} {
+	for _, value := range []string{"on-commit", "on-merge", "on-deploy"} {
 		flow, err := ParseCIFlow(value)
 		if err != nil {
 			t.Fatal(err)
@@ -88,8 +88,8 @@ func TestParseCIFlow(t *testing.T) {
 			t.Fatalf("ParseCIFlow(%q) = %q", value, flow)
 		}
 	}
-	if _, err := ParseCIFlow("feature"); err == nil || !strings.Contains(err.Error(), "expected on-commit") {
-		t.Fatalf("ParseCIFlow(feature) error = %v", err)
+	if _, err := ParseCIFlow("on-release"); err == nil || !strings.Contains(err.Error(), "expected on-commit") {
+		t.Fatalf("ParseCIFlow(on-release) error = %v", err)
 	}
 }
 
@@ -102,10 +102,10 @@ func TestCITargets(t *testing.T) {
 	}{
 		{flow: CIFlowOnCommit, want: "preview"},
 		{flow: CIFlowOnMerge, want: "dev"},
-		{flow: CIFlowOnRelease, want: "stage"},
-		{flow: CIFlowOnRelease, environment: "prod", want: "prod"},
+		{flow: CIFlowOnDeploy, want: "stage"},
+		{flow: CIFlowOnDeploy, environment: "prod", want: "prod"},
 		{flow: CIFlowOnCommit, environment: "stage", wantErr: true},
-		{flow: CIFlowOnRelease, environment: "preview", want: "preview"},
+		{flow: CIFlowOnDeploy, environment: "preview", want: "preview"},
 	} {
 		got, err := ciTarget(test.flow, test.environment)
 		if test.wantErr {
@@ -308,7 +308,7 @@ func TestRegistryCIFlowRunsEachTemplateAndSkipsAppTasksForLibraries(t *testing.T
 	runner.tasks[appDirectory+"|deploy"] = true
 	runner.tasks[appDirectory+"|e2e"] = true
 
-	if err := runCIFlow(context.Background(), root, CIFlowOnRelease, "stage", CIReleaseNone, runner); err != nil {
+	if err := runCIFlow(context.Background(), root, CIFlowOnDeploy, "stage", CIReleaseNone, runner); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.calls) == 0 || runner.calls[0].directory != filepath.Join(root, "templates", library.Name) {

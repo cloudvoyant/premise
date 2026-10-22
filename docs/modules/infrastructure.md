@@ -207,7 +207,7 @@ DATABASE_URL="$(pm infra query "${scope[@]}" --output databaseUrl --show-secrets
 exec bun run db:migrate
 ```
 
-Premise does not map infrastructure outputs to migration inputs or load fnox automatically for these tasks.
+Migration tasks select their own infrastructure inputs through queries. Applications with a secrets declaration run through fnox exec with the selected environment profile.
 Use [secret management](../secret-management.md) explicitly for local application credentials.
 CI supplies the variables that the application task needs.
 
@@ -272,10 +272,10 @@ To run the full sequence with recovery:
 ```sh
 export PM_RELEASE=COMMIT_SHA
 export PM_ARTIFACTS='{"web":"RETAINED_ARTIFACT"}'
-pm ci flow on-release --environment stage --release none
+pm ci flow on-deploy --environment stage --release none
 ```
 
-For a preview, use `--branch FEATURE_BRANCH --environment preview`, or set `PM_BRANCH`.
+For a feature-push preview, run `pm ci flow on-commit --environment preview --branch FEATURE_BRANCH --release none`. Cleanup uses `pm ci flow on-merge --environment preview --branch FEATURE_BRANCH --release none`. The on-deploy workflow remains manual-only.
 Use `--backend NAME` to override the configured backend. Child tasks inherit `PM_INFRA_BACKEND`, so their infra queries use the same selection.
 The flow uses the same public module operations as the individual commands.
 It keeps an environment lock until success or recovery and waits for every migration worker.
@@ -332,7 +332,7 @@ Infrastructure tests run separately on demand, not in CI.
 | `RunApplicationDeployment`              | Deploy and check artifacts, with recovery on failure.                    |
 | `RunDeployment`                         | Coordinate the complete environment CI flow and its recovery.            |
 
-Generic Pulumi operations live in `core/pulumix.go`.
+The Pulumi process boundary lives in `core/extensions/pulumix.go`. Infrastructure operations, setup, and queries live in `core/infra.go`. Deployment phases and recovery records live in `core/deploy.go`.
 Provider authentication, CI output adapters, and storage operations live under `core/providers`.
 
 ## Validation
@@ -342,5 +342,5 @@ The test uses `pm ci` flows across dev, stage, prod, and a branch preview.
 Infra apply creates a bucket; deploy uploads the static app; a fake migration writes a marker.
 A failed B health check must restore the retained A page while preserving B's migration marker.
 The test also checks environment isolation, named backend selection, fresh-checkout state reuse, and final cleanup.
-A second CLI test pulls environment-specific secrets through real fnox into an ignored private env file.
+CLI tests use real fnox JSON files locally and in CI mode. They test temporary-file cleanup and ignored env files. The live flow combines JSON secrets with the selected bucket query in each environment.
 See the [static GCS fixture](../../e2e/testdata/pulumi/README.md).

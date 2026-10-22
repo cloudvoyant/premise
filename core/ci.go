@@ -18,7 +18,6 @@ import (
 	"strings"
 
 	"github.com/cloudvoyant/premise/core/providers"
-
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 )
@@ -45,9 +44,9 @@ func WriteCIPlanOutputs(output io.Writer, provider string, plan CISchedule) erro
 type CIFlow string
 
 const (
-	CIFlowOnCommit  CIFlow = "on-commit"
-	CIFlowOnMerge   CIFlow = "on-merge"
-	CIFlowOnRelease CIFlow = "on-release"
+	CIFlowOnCommit CIFlow = "on-commit"
+	CIFlowOnMerge  CIFlow = "on-merge"
+	CIFlowOnDeploy CIFlow = "on-deploy"
 )
 
 // CIPlatformProject is the shared, build-system-neutral project selection.
@@ -222,10 +221,10 @@ const (
 func ParseCIFlow(value string) (CIFlow, error) {
 	flow := CIFlow(value)
 	switch flow {
-	case CIFlowOnCommit, CIFlowOnMerge, CIFlowOnRelease:
+	case CIFlowOnCommit, CIFlowOnMerge, CIFlowOnDeploy:
 		return flow, nil
 	default:
-		return "", fmt.Errorf("invalid CI flow %q: expected on-commit, on-merge, or on-release", value)
+		return "", fmt.Errorf("invalid CI flow %q: expected on-commit, on-merge, or on-deploy", value)
 	}
 }
 
@@ -259,6 +258,11 @@ func RunCIFlow(ctx context.Context, root string, flow CIFlow, environment string
 }
 
 func RunCIFlowWithOptions(ctx context.Context, root string, flow CIFlow, environment string, releaseMode CIReleaseMode, options CIFlowOptions, stdout, stderr io.Writer) error {
+	environmentFlow := environment != "" || flow == CIFlowOnDeploy
+	if environmentFlow && (options.Project != "" || options.Platform != "" || options.RootOnly || options.SkipRoot || options.OutputDir != "" || options.Channel != "" || options.Version != "") {
+		return errors.New("environment CI flows cannot be scoped to project checks or release staging")
+	}
+
 	if options.RootOnly && (options.Project != "" || options.Platform != "" || options.OutputDir != "" || options.Channel != "" || options.Version != "") {
 		return errors.New("--root-only cannot be combined with project, platform, output-dir, channel, or version")
 	}
@@ -297,13 +301,10 @@ func RunCIFlowWithOptions(ctx context.Context, root string, flow CIFlow, environ
 	if err != nil {
 		return err
 	}
-	if flow == CIFlowOnRelease && manifest.Workspace.Infra != nil && manifest.Workspace.Deployment != nil && !options.RootOnly {
-		release := os.Getenv("PM_RELEASE")
-		artifacts, err := ParseArtifactReferences(os.Getenv("PM_ARTIFACTS"))
-		if err != nil {
-			return err
+	if environment != "" || flow == CIFlowOnDeploy {
+		if manifest.Workspace.Infra == nil {
+			return errors.New("environment CI flows require workspace.infra")
 		}
-
 		branch := options.Branch
 		if branch == "" {
 			branch = os.Getenv("PM_BRANCH")
@@ -314,8 +315,27 @@ func RunCIFlowWithOptions(ctx context.Context, root string, flow CIFlow, environ
 				return err
 			}
 		}
-		return RunDeployment(ctx, root, DeployOptions{InfraOptions: InfraOptions{Environment: target, Branch: branch, Backend: options.Backend}, Release: release, Artifacts: artifacts}, nil, stdout, stderr)
+		infrastructure := InfraOptions{Environment: target, Branch: branch, Backend: options.Backend}
+		if flow == CIFlowOnMerge {
+			return RunInfra(ctx, root, "destroy", infrastructure, nil, stdout, stderr)
+		}
+		if manifest.Workspace.Deployment == nil {
+			if err := PrepareInfrastructure(ctx, root, infrastructure, nil, stdout, stderr); err != nil {
+				return err
+			}
+			if err := RunInfra(ctx, root, "plan", infrastructure, nil, stdout, stderr); err != nil {
+				return err
+			}
+			infrastructure.Yes = true
+			return RunInfra(ctx, root, "apply", infrastructure, nil, stdout, stderr)
+		}
+		release, err := ReadReleaseEnvironment(ReleaseEnvironment{})
+		if err != nil {
+			return err
+		}
+		return RunDeployment(ctx, root, DeployOptions{InfraOptions: infrastructure, Release: release.Release, Artifacts: release.Artifacts}, nil, stdout, stderr)
 	}
+
 	projects, err := SelectCIProjects(root, manifest, flow)
 	if err != nil {
 		return err
@@ -396,7 +416,7 @@ func validateCIStaging(flow CIFlow, options CIFlowOptions) error {
 	if options.OutputDir == "" {
 		return errors.New("--output-dir is required to stage a release")
 	}
-	if (flow == CIFlowOnCommit && options.Channel != "rc") || (flow == CIFlowOnMerge && options.Channel != "stable") || flow == CIFlowOnRelease {
+	if (flow == CIFlowOnCommit && options.Channel != "rc") || (flow == CIFlowOnMerge && options.Channel != "stable") || flow == CIFlowOnDeploy {
 		return fmt.Errorf("channel %q does not match flow %q", options.Channel, flow)
 	}
 	if !releaseVersionPattern.MatchString(options.Version) {
@@ -504,7 +524,7 @@ func runSelectedProject(ctx context.Context, root string, project CIPlatformProj
 			return fmt.Errorf("project %s platform %s: %w", project.Name, platform, err)
 		}
 	}
-	if project.Kind == "app" && flow == CIFlowOnRelease {
+	if project.Kind == "app" && flow == CIFlowOnDeploy {
 		for _, task := range []string{"deploy", "e2e"} {
 			exists, err := runner.TaskExists(ctx, directory, task)
 			if err != nil {
@@ -674,7 +694,7 @@ func runCIFlow(ctx context.Context, root string, flow CIFlow, target string, rel
 	var kind ProjectKind
 	if override {
 		arguments := []string{"run", string(flow)}
-		if flow == CIFlowOnRelease {
+		if flow == CIFlowOnDeploy {
 			arguments = append(arguments, "--", target)
 		}
 		if err := runner.Run(ctx, root, nil, "mise", arguments...); err != nil {
@@ -790,7 +810,7 @@ func runCIReleasePhase(ctx context.Context, root string, flow CIFlow, releaseMod
 		return runner.PublishReleaseCandidate(ctx, root, kind)
 	case CIFlowOnMerge:
 		return runner.ReleaseStable(ctx, root, releaseMode)
-	case CIFlowOnRelease:
+	case CIFlowOnDeploy:
 		if releaseMode != CIReleaseAuto && releaseMode != CIReleaseNone {
 			return fmt.Errorf("%s only supports auto or none release mode", flow)
 		}
@@ -826,7 +846,7 @@ func ciTasks(flow CIFlow, target string) []ciTask {
 			{name: "format:check"},
 			{name: "lint"},
 		}
-	case CIFlowOnRelease:
+	case CIFlowOnDeploy:
 		return []ciTask{
 			{name: "deploy", optional: true, appOnly: true, target: target},
 			{name: "e2e", optional: true, appOnly: true, target: target},
@@ -839,21 +859,24 @@ func ciTasks(flow CIFlow, target string) []ciTask {
 func ciTarget(flow CIFlow, environment string) (string, error) {
 	switch flow {
 	case CIFlowOnCommit:
-		if environment != "" {
-			return "", fmt.Errorf("%s does not accept a deployment environment", flow)
+		if environment != "" && environment != "preview" {
+			return "", errors.New("on-commit only supports the preview deployment environment")
 		}
 		return "preview", nil
 	case CIFlowOnMerge:
-		if environment != "" {
-			return "", fmt.Errorf("%s does not accept a deployment environment", flow)
+		if environment != "" && environment != "preview" {
+			return "", errors.New("on-merge only accepts preview for cleanup")
+		}
+		if environment == "preview" {
+			return "preview", nil
 		}
 		return "dev", nil
-	case CIFlowOnRelease:
+	case CIFlowOnDeploy:
 		if environment == "" {
 			environment = "stage"
 		}
 		if environment != "dev" && environment != "stage" && environment != "prod" && environment != "preview" {
-			return "", fmt.Errorf("invalid release environment %q: expected dev, stage, prod, or preview", environment)
+			return "", fmt.Errorf("invalid deployment environment %q: expected dev, stage, prod, or preview", environment)
 		}
 		return environment, nil
 	default:

@@ -24,3 +24,6 @@ run = '../../tasks/static.sh rollback'
 
 [tasks.cleanup]
 run = '../../tasks/static.sh cleanup'
+
+[tasks."secrets:pull"]
+run = 'python3 ../../tasks/env.py'

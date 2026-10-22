@@ -12,7 +12,6 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-// InfraCommand creates the infra command.
 func InfraCommand(scaffold core.WorkspaceScaffold) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "infra",
@@ -33,7 +32,6 @@ func InfraCommand(scaffold core.WorkspaceScaffold) *cobra.Command {
 	return command
 }
 
-// InfraSetupCommand creates the setup command for an existing workspace.
 func InfraSetupCommand(scaffold core.WorkspaceScaffold) *cobra.Command {
 	var setup core.InfrastructureSetup
 	command := &cobra.Command{
@@ -46,7 +44,12 @@ func InfraSetupCommand(scaffold core.WorkspaceScaffold) *cobra.Command {
 				return err
 			}
 			if cmd.Flags().Changed("env") {
-				options, err := resolvedInfraCommandOptions(cmd, root)
+				environment, _ := cmd.Flags().GetString("env")
+				branch, _ := cmd.Flags().GetString("branch")
+				shared, _ := cmd.Flags().GetBool("shared")
+				backend, _ := cmd.Flags().GetString("backend")
+				yes, _ := cmd.Flags().GetBool("yes")
+				options, err := core.ResolveInfraOptions(cmd.Context(), root, core.InfraOptions{Environment: environment, Branch: branch, Shared: shared, Backend: backend, Yes: yes})
 				if err != nil {
 					return err
 				}
@@ -59,13 +62,15 @@ func InfraSetupCommand(scaffold core.WorkspaceScaffold) *cobra.Command {
 			return nil
 		},
 	}
-	addInfraFlags(command)
+	command.Flags().String("env", "", "Environment: dev, stage, prod, or preview")
+	command.Flags().String("branch", "", "Branch identity required for preview environments")
+	command.Flags().Bool("shared", false, "Select only shared infrastructure")
+	command.Flags().String("backend", "", "Named saved backend; defaults to environment/workspace selection")
 	command.Flags().StringVar(&setup.Language, "language", "", "Official Pulumi language starter; existing programs supply their runtime")
 	command.Flags().StringVar(&setup.PulumiVersion, "pulumi-version", "", "Pulumi version to pin; defaults to the existing pin or tested version")
 	return command
 }
 
-// InfraQueryCommand creates the query command for saved resource data.
 func InfraQueryCommand() *cobra.Command {
 	var query core.InfraQuery
 	command := &cobra.Command{
@@ -77,14 +82,22 @@ func InfraQueryCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			options, err := resolvedInfraCommandOptions(cmd, root)
+			environment, _ := cmd.Flags().GetString("env")
+			branch, _ := cmd.Flags().GetString("branch")
+			shared, _ := cmd.Flags().GetBool("shared")
+			backend, _ := cmd.Flags().GetString("backend")
+			yes, _ := cmd.Flags().GetBool("yes")
+			options, err := core.ResolveInfraOptions(cmd.Context(), root, core.InfraOptions{Environment: environment, Branch: branch, Shared: shared, Backend: backend, Yes: yes})
 			if err != nil {
 				return err
 			}
 			return core.QueryInfrastructure(cmd.Context(), root, options, query, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
-	addInfraFlags(command)
+	command.Flags().String("env", "", "Environment: dev, stage, prod, or preview")
+	command.Flags().String("branch", "", "Branch identity required for preview environments")
+	command.Flags().Bool("shared", false, "Select only shared infrastructure")
+	command.Flags().String("backend", "", "Named saved backend; defaults to environment/workspace selection")
 	command.Flags().StringVar(&query.Output, "output", "", "Exported stack output name")
 	command.Flags().StringVar(&query.Resource, "resource", "", "Resource logical name or full Pulumi URN")
 	command.Flags().StringVar(&query.Type, "type", "", "Exact resource type to disambiguate a logical name")
@@ -94,70 +107,154 @@ func InfraQueryCommand() *cobra.Command {
 	return command
 }
 
-// InfraInitCommand creates the init command.
 func InfraInitCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize an environment stack",
 		Args:  cobra.NoArgs,
-		RunE:  func(cmd *cobra.Command, args []string) error { return runInfraCommand(cmd, args, "init") },
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			root, err := premiseRoot()
+			if err != nil {
+				return err
+			}
+			environment, _ := cmd.Flags().GetString("env")
+			branch, _ := cmd.Flags().GetString("branch")
+			shared, _ := cmd.Flags().GetBool("shared")
+			backend, _ := cmd.Flags().GetString("backend")
+			yes, _ := cmd.Flags().GetBool("yes")
+			options, err := core.ResolveInfraOptions(cmd.Context(), root, core.InfraOptions{Environment: environment, Branch: branch, Shared: shared, Backend: backend, Yes: yes})
+			if err != nil {
+				return err
+			}
+			return core.RunInfra(cmd.Context(), root, "init", options, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
 	}
-	addInfraFlags(command)
+	command.Flags().String("env", "", "Environment: dev, stage, prod, or preview")
+	command.Flags().String("branch", "", "Branch identity required for preview environments")
+	command.Flags().Bool("shared", false, "Select only shared infrastructure")
+	command.Flags().String("backend", "", "Named saved backend; defaults to environment/workspace selection")
 	return command
 }
 
-// InfraPlanCommand creates the plan command.
 func InfraPlanCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:     "plan",
 		Aliases: []string{"preview"},
 		Short:   "Preview an environment update",
 		Args:    cobra.NoArgs,
-		RunE:    func(cmd *cobra.Command, args []string) error { return runInfraCommand(cmd, args, "plan") },
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			root, err := premiseRoot()
+			if err != nil {
+				return err
+			}
+			environment, _ := cmd.Flags().GetString("env")
+			branch, _ := cmd.Flags().GetString("branch")
+			shared, _ := cmd.Flags().GetBool("shared")
+			backend, _ := cmd.Flags().GetString("backend")
+			yes, _ := cmd.Flags().GetBool("yes")
+			options, err := core.ResolveInfraOptions(cmd.Context(), root, core.InfraOptions{Environment: environment, Branch: branch, Shared: shared, Backend: backend, Yes: yes})
+			if err != nil {
+				return err
+			}
+			return core.RunInfra(cmd.Context(), root, "plan", options, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
 	}
-	addInfraFlags(command)
+	command.Flags().String("env", "", "Environment: dev, stage, prod, or preview")
+	command.Flags().String("branch", "", "Branch identity required for preview environments")
+	command.Flags().Bool("shared", false, "Select only shared infrastructure")
+	command.Flags().String("backend", "", "Named saved backend; defaults to environment/workspace selection")
 	return command
 }
 
-// InfraApplyCommand creates the apply command.
 func InfraApplyCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "apply",
 		Short: "Apply an environment update",
 		Args:  cobra.NoArgs,
-		RunE:  func(cmd *cobra.Command, args []string) error { return runInfraCommand(cmd, args, "apply") },
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			root, err := premiseRoot()
+			if err != nil {
+				return err
+			}
+			environment, _ := cmd.Flags().GetString("env")
+			branch, _ := cmd.Flags().GetString("branch")
+			shared, _ := cmd.Flags().GetBool("shared")
+			backend, _ := cmd.Flags().GetString("backend")
+			yes, _ := cmd.Flags().GetBool("yes")
+			options, err := core.ResolveInfraOptions(cmd.Context(), root, core.InfraOptions{Environment: environment, Branch: branch, Shared: shared, Backend: backend, Yes: yes})
+			if err != nil {
+				return err
+			}
+			return core.RunInfra(cmd.Context(), root, "apply", options, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
 	}
-	addInfraFlags(command)
+	command.Flags().String("env", "", "Environment: dev, stage, prod, or preview")
+	command.Flags().String("branch", "", "Branch identity required for preview environments")
+	command.Flags().Bool("shared", false, "Select only shared infrastructure")
+	command.Flags().String("backend", "", "Named saved backend; defaults to environment/workspace selection")
 	command.Flags().Bool("yes", false, "Approve the Pulumi update non-interactively")
 	return command
 }
 
-// InfraOutputCommand creates the output command.
 func InfraOutputCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "output",
 		Short: "Read environment stack outputs as JSON",
 		Args:  cobra.NoArgs,
-		RunE:  func(cmd *cobra.Command, args []string) error { return runInfraCommand(cmd, args, "output") },
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			root, err := premiseRoot()
+			if err != nil {
+				return err
+			}
+			environment, _ := cmd.Flags().GetString("env")
+			branch, _ := cmd.Flags().GetString("branch")
+			shared, _ := cmd.Flags().GetBool("shared")
+			backend, _ := cmd.Flags().GetString("backend")
+			yes, _ := cmd.Flags().GetBool("yes")
+			options, err := core.ResolveInfraOptions(cmd.Context(), root, core.InfraOptions{Environment: environment, Branch: branch, Shared: shared, Backend: backend, Yes: yes})
+			if err != nil {
+				return err
+			}
+			return core.RunInfra(cmd.Context(), root, "output", options, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
 	}
-	addInfraFlags(command)
+	command.Flags().String("env", "", "Environment: dev, stage, prod, or preview")
+	command.Flags().String("branch", "", "Branch identity required for preview environments")
+	command.Flags().Bool("shared", false, "Select only shared infrastructure")
+	command.Flags().String("backend", "", "Named saved backend; defaults to environment/workspace selection")
 	return command
 }
 
-// InfraDestroyCommand creates the destroy command.
 func InfraDestroyCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "destroy",
 		Short: "Destroy an environment stack",
 		Args:  cobra.NoArgs,
-		RunE:  func(cmd *cobra.Command, args []string) error { return runInfraCommand(cmd, args, "destroy") },
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			root, err := premiseRoot()
+			if err != nil {
+				return err
+			}
+			environment, _ := cmd.Flags().GetString("env")
+			branch, _ := cmd.Flags().GetString("branch")
+			shared, _ := cmd.Flags().GetBool("shared")
+			backend, _ := cmd.Flags().GetString("backend")
+			yes, _ := cmd.Flags().GetBool("yes")
+			options, err := core.ResolveInfraOptions(cmd.Context(), root, core.InfraOptions{Environment: environment, Branch: branch, Shared: shared, Backend: backend, Yes: yes})
+			if err != nil {
+				return err
+			}
+			return core.RunInfra(cmd.Context(), root, "destroy", options, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
 	}
-	addInfraFlags(command)
+	command.Flags().String("env", "", "Environment: dev, stage, prod, or preview")
+	command.Flags().String("branch", "", "Branch identity required for preview environments")
+	command.Flags().Bool("shared", false, "Select only shared infrastructure")
+	command.Flags().String("backend", "", "Named saved backend; defaults to environment/workspace selection")
 	command.Flags().Bool("yes", false, "Approve the Pulumi update non-interactively")
 	return command
 }
 
-// InfraAuthCommand creates the auth command.
 func InfraAuthCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "auth",
@@ -203,49 +300,4 @@ func InfraAuthCommand() *cobra.Command {
 	command.Flags().Bool("ci", false, "Use CI identity instead of interactive OAuth")
 	command.Flags().String("env-file", "", "Append credential paths to the CI environment file")
 	return command
-}
-
-// Private helpers ------------------------------------------------------------
-
-func runInfraCommand(cmd *cobra.Command, args []string, operation string) error {
-	root, err := premiseRoot()
-	if err != nil {
-		return err
-	}
-	options, err := resolvedInfraCommandOptions(cmd, root)
-	if err != nil {
-		return err
-	}
-	return core.RunInfra(cmd.Context(), root, operation, options, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
-}
-
-func addInfraFlags(command *cobra.Command) {
-	command.Flags().String("env", "", "Environment: dev, stage, prod, or preview")
-	command.Flags().String("branch", "", "Branch identity required for preview environments")
-	command.Flags().Bool("shared", false, "Select only shared infrastructure")
-	command.Flags().String("backend", "", "Named saved backend; defaults to environment/workspace selection")
-}
-
-func infraCommandOptions(command *cobra.Command) core.InfraOptions {
-	environment, _ := command.Flags().GetString("env")
-	branch, _ := command.Flags().GetString("branch")
-	shared, _ := command.Flags().GetBool("shared")
-	backend, _ := command.Flags().GetString("backend")
-	if backend == "" {
-		backend = os.Getenv("PM_INFRA_BACKEND")
-	}
-	yes, _ := command.Flags().GetBool("yes")
-	return core.InfraOptions{Environment: environment, Branch: branch, Shared: shared, Backend: backend, Yes: yes}
-}
-
-func resolvedInfraCommandOptions(command *cobra.Command, root string) (core.InfraOptions, error) {
-	options := infraCommandOptions(command)
-	if options.Environment == "preview" && options.Branch == "" {
-		branch, err := core.CurrentFeatureBranch(command.Context(), root)
-		if err != nil {
-			return options, err
-		}
-		options.Branch = branch
-	}
-	return options, nil
 }

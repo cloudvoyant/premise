@@ -96,7 +96,7 @@ func CIFlowCommand() *cobra.Command {
 	var environment, branch, backend, project, channel, version, outputDir, platform, releaseModeFlag string
 	var rootOnly, skipRoot bool
 	command := &cobra.Command{
-		Use:   "flow <on-commit|on-merge|on-release>",
+		Use:   "flow <on-commit|on-merge|on-deploy>",
 		Short: "Run one CI lifecycle",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

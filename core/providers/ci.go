@@ -1,8 +1,8 @@
 package providers
 
 import (
+	"context"
 	"fmt"
-	"io"
 )
 
 // CIPlan contains scheduling values before the runner chooses its output format.
@@ -16,19 +16,24 @@ type CIPlan struct {
 	HasMigrations bool
 }
 
-// CIPlanOutput formats a scheduling plan for a CI runner.
-type CIPlanOutput interface {
-	WritePlan(io.Writer, CIPlan) error
-}
-
 // Public API -----------------------------------------------------------------
 
 // CIOutputProvider selects the runner adapter declared by the workspace.
-func CIOutputProvider(name string) (CIPlanOutput, error) {
+func CIOutputProvider(name string) (CIProvider, error) {
 	switch name {
 	case "github":
 		return GitHub{}, nil
 	default:
 		return nil, fmt.Errorf("CI output provider %q is not supported", name)
 	}
+}
+
+// CIIdentityToken delegates the native GitHub runner identity exchange.
+// Other runners supply CI_OIDC_TOKEN_FILE before cloud authentication.
+func CIIdentityToken(ctx context.Context, audience, path string) error {
+	provider, err := CIOutputProvider("github")
+	if err != nil {
+		return err
+	}
+	return provider.IdentityToken(ctx, audience, path)
 }

@@ -3,6 +3,7 @@ package core
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -174,7 +175,7 @@ func TestRecoveryRunsWithoutApplicationSecrets(t *testing.T) {
 	}
 	for index := range manifest.Workspace.Projects {
 		if manifest.Workspace.Projects[index].Name == "web" {
-			manifest.Workspace.Projects[index].Secrets = &ProjectSecrets{Config: "not-created-yet.toml", Profiles: map[string]string{"dev": "dev"}, Keys: []string{"DATABASE_URL"}}
+			manifest.Workspace.Projects[index].Secrets = &ProjectSecrets{Config: "not-created-yet.toml", Profiles: map[string]string{"dev": "dev"}}
 		}
 	}
 	var output bytes.Buffer
@@ -185,6 +186,160 @@ func TestRecoveryRunsWithoutApplicationSecrets(t *testing.T) {
 	events, err := os.ReadFile(log)
 	if err != nil || !strings.Contains(string(events), "task cleanup") {
 		t.Fatalf("cleanup did not run: %v", err)
+	}
+}
+
+func TestCIEnvironmentFlowOrdersMigrationsAroundTheFirstApply(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		t.Run(map[bool]string{false: "new-stack", true: "existing-stack"}[existing], func(t *testing.T) {
+			// Arrange.
+			root, log, options := deploymentFailureFixture(t)
+			if existing {
+				t.Setenv("TEST_INFRA_EXISTS", "1")
+			} else {
+				t.Setenv("TEST_INFRA_EXISTS", "0")
+			}
+			t.Setenv("PM_RELEASE", options.Release)
+			t.Setenv("PM_ARTIFACTS", `{"web":"artifact-A"}`)
+
+			// Act.
+			err := RunCIFlowWithOptions(t.Context(), root, CIFlowOnDeploy, "dev", CIReleaseNone, CIFlowOptions{}, io.Discard, io.Discard)
+
+			// Assert.
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(log)
+			if err != nil {
+				t.Fatal(err)
+			}
+			events := string(data)
+			migration, apply, deploy := strings.Index(events, "task migrate"), strings.Index(events, " up --stack dev"), strings.Index(events, "task deploy")
+			if migration < 0 || apply < 0 || deploy < 0 {
+				t.Fatalf("missing flow operation: %s", events)
+			}
+			if existing && migration > apply {
+				t.Fatalf("existing environment applied before migration: %s", events)
+			}
+			if !existing && migration < apply {
+				t.Fatalf("new environment migrated before apply: %s", events)
+			}
+			if deploy < migration || deploy < apply {
+				t.Fatalf("deployment preceded prerequisites: %s", events)
+			}
+			if strings.Contains(events, "--target") {
+				t.Fatal("flow used resource targeting")
+			}
+		})
+	}
+}
+
+func TestCIEnvironmentFailureRecoversPreviousArtifactAndKeepsFailure(t *testing.T) {
+	for _, phase := range []string{"migration", "apply", "health"} {
+		t.Run(phase, func(t *testing.T) {
+			// Arrange.
+			root, log, options := deploymentFailureFixture(t)
+			t.Setenv("TEST_INFRA_EXISTS", "1")
+			t.Setenv("PM_RELEASE", options.Release)
+			t.Setenv("PM_ARTIFACTS", `{"web":"artifact-A"}`)
+			if err := RunCIFlow(t.Context(), root, CIFlowOnDeploy, "dev", CIReleaseNone, io.Discard, io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PM_RELEASE", "B")
+			t.Setenv("PM_ARTIFACTS", `{"web":"artifact-B"}`)
+			t.Setenv("TEST_FAILURE_PHASE", phase)
+
+			// Act.
+			err := RunCIFlow(t.Context(), root, CIFlowOnDeploy, "dev", CIReleaseNone, io.Discard, io.Discard)
+
+			// Assert.
+			if err == nil {
+				t.Fatal("failed environment flow reported success")
+			}
+			data, readErr := os.ReadFile(filepath.Join(root, ".premise/releases/environment/dev/last-success.json"))
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			var success ReleaseRecord
+			if err := json.Unmarshal(data, &success); err != nil {
+				t.Fatal(err)
+			}
+			if success.Release != "A" || success.Artifacts["web"] != "artifact-A" {
+				t.Fatal("failed flow replaced the last successful artifact")
+			}
+			data, readErr = os.ReadFile(log)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if phase != "migration" && !strings.Contains(string(data), "task rollback release=B previous=A") {
+				t.Fatal("flow did not restore the previous release")
+			}
+		})
+	}
+}
+
+func TestCIMergePreviewDestroysTheSelectedStackWithoutDeploying(t *testing.T) {
+	// Arrange.
+	root, log, _ := deploymentFailureFixture(t)
+	branch := "feature/cleanup"
+	stack, err := ResolveStackName(InfraOptions{Environment: "preview", Branch: branch})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TEST_PREVIEW_STACK", stack)
+
+	// Act.
+	err = RunCIFlowWithOptions(t.Context(), root, CIFlowOnMerge, "preview", CIReleaseNone, CIFlowOptions{Branch: branch}, io.Discard, io.Discard)
+
+	// Assert.
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := string(data)
+	if !strings.Contains(events, "destroy --stack "+stack+" --yes --non-interactive --remove") {
+		t.Fatalf("merge did not destroy its preview: %s", events)
+	}
+	if strings.Contains(events, "task ") || strings.Contains(events, " up ") {
+		t.Fatalf("merge cleanup ran a deployment task: %s", events)
+	}
+}
+
+func TestCIInfraOnlyEnvironmentAppliesWithoutApplicationArtifacts(t *testing.T) {
+	// Arrange.
+	root, log, _ := deploymentFailureFixture(t)
+	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.Workspace.Deployment = nil
+	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PM_RELEASE", "")
+	t.Setenv("PM_ARTIFACTS", "")
+
+	// Act.
+	err = RunCIFlow(t.Context(), root, CIFlowOnDeploy, "stage", CIReleaseNone, io.Discard, io.Discard)
+
+	// Assert.
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := string(data)
+	preview, apply := strings.Index(events, "preview --stack stage"), strings.Index(events, "up --stack stage")
+	if preview < 0 || apply < preview {
+		t.Fatalf("infra-only flow did not preview and apply stage: %s", events)
+	}
+	if strings.Contains(events, "task migrate") || strings.Contains(events, "task deploy") {
+		t.Fatal("infra-only flow required application tasks")
 	}
 }
 

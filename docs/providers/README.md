@@ -38,7 +38,7 @@ The fallback can create credential files at paths already defined in CI. A child
 
 ## Credentials and application values
 
-Keep fnox providers local. Run `pm secrets sync` locally to copy selected application values into CI secrets. CI reads those values from its environment and does not contact fnox or Secret Manager. See [Secret management](../secret-management.md).
+Use `fnox exec` for application JSON secrets locally and in CI. The CI identity needs access to the secret provider. Premise does not copy application values into CI secrets. See [Secret management](../secret-management.md).
 
 Deployment credentials come from OAuth or protected CI secrets. They do not belong in application fnox profiles. State storage and deployed resources can require separate permissions. Backend access controls protect state while the empty Pulumi passphrase remains the default.
 

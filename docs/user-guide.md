@@ -129,12 +129,12 @@ Publishing a library on merge does not create a GitHub deployment or select a `p
 
 ## Deploy with migrations
 
-Use `pm ci flow on-release` for the complete environment sequence:
+Use `pm ci flow on-deploy` for the complete environment sequence:
 
 ```sh
 export PM_RELEASE=COMMIT_SHA
 export PM_ARTIFACTS='{"web":"IMMUTABLE_ARTIFACT_REFERENCE"}'
-pm ci flow on-release --environment stage --release none
+pm ci flow on-deploy --environment stage --release none
 ```
 
 For an existing stack, the order is migrate, infra plan, infra apply, then application deploy and health checks.
@@ -148,22 +148,16 @@ See the [infrastructure guide](modules/infrastructure.md) for configuration and 
 
 ## Pull application secrets
 
-Declare application keys and local fnox profiles in the project’s `secrets` configuration. Keep `.env.local` Git-ignored:
+Declare the application's fnox configuration and environment profiles in `premise.yaml`. Fnox retrieves JSON documents as temporary files locally and in CI.
 
 ```sh
+pm secrets exec --env dev --project web -- mise run start
 pm secrets pull --env dev --project web
-pm secrets exec --env dev --project web -- mise run migrate
 ```
 
-`pull` writes a private local env file. `exec` supplies values to one child process. Fnox can read local secret files or a secret service through Mise.
+`exec` supplies JSON file paths to the child process. `pull` runs the project's `secrets:pull` Mise task and writes its output to a private ignored env file. The task can combine secret fields with `pm infra query` values.
 
-Copy selected local values into CI secrets:
-
-```sh
-pm secrets sync --env stage --project web --ci github --repository owner/repo
-```
-
-CI reads the declared variables directly. Deployment OAuth credentials and administration tokens remain separate from application values. See [Secret management](secret-management.md) and the individual [provider guides](providers/README.md).
+Deployment and migration tasks automatically use fnox when the application declares secrets. CI authenticates directly to the secret provider. Deployment OAuth credentials and protected CI tokens stay separate from application documents. See [Secret management](secret-management.md) and the [architecture diagrams](architecture/secrets.md).
 
 ## Publish a release
 

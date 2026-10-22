@@ -12,7 +12,6 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-// ReleaseCommand creates the release command.
 func ReleaseCommand() *cobra.Command {
 	var dryRun, buildOnly bool
 	command := &cobra.Command{
@@ -55,7 +54,6 @@ func ReleaseCommand() *cobra.Command {
 	return command
 }
 
-// ReleasePublishCommand creates the publish command.
 func ReleasePublishCommand() *cobra.Command {
 	var channel, expectedVersion, filesDir string
 	command := &cobra.Command{
@@ -84,7 +82,6 @@ func ReleasePublishCommand() *cobra.Command {
 	return command
 }
 
-// ReleasePackagesCommand creates the packages command.
 func ReleasePackagesCommand() *cobra.Command {
 	var channel, expectedVersion string
 	command := &cobra.Command{

@@ -61,7 +61,7 @@ func (p GCP) Authenticate(ctx context.Context, root string, ci bool, stdin io.Re
 	if token == "" {
 		token = filepath.Join(directory, "identity-token")
 		audience := "//iam.googleapis.com/" + os.Getenv("GCP_WORKLOAD_IDENTITY_PROVIDER")
-		if err := githubIdentityToken(ctx, audience, token); err != nil {
+		if err := CIIdentityToken(ctx, audience, token); err != nil {
 			return nil, err
 		}
 	}

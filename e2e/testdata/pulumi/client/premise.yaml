@@ -11,7 +11,6 @@ workspace:
       path: apps/web
       secrets:
         config: fnox.toml
-        keys: [APP_MESSAGE]
         profiles: { dev: dev, stage: stage, prod: prod, preview: preview }
   deployment:
     record_outputs: [bucketName]

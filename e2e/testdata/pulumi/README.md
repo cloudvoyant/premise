@@ -21,7 +21,7 @@ client/
 └── tasks/static.sh
 ```
 
-The Go harness runs `pm ci flow on-commit` and `pm ci flow on-release` across dev, stage, prod, and a feature-branch preview. A new environment applies infrastructure before its first migration. Existing environments migrate before applying infrastructure.
+The Go harness runs `pm ci flow on-commit` and `pm ci flow on-deploy` across dev, stage, prod, and a feature-branch preview. A new environment applies infrastructure before its first migration. Existing environments migrate before applying infrastructure.
 
 The fake migration writes the environment and release into `schema-version.txt`. Deployment copies the retained release page to `index.html`. The test verifies the page and marker through GCS.
 
@@ -46,3 +46,5 @@ The secrets CLI test uses this same client. It pulls dev, stage, prod, and previ
 ```sh
 PREMISE_TEST_FNOX=1 go test ./e2e -run '^TestSecretsPull' -count=1
 ```
+
+The application uses an `as_file` JSON secret in each fnox profile. These documents contain test defaults only. The live flow runs `pm secrets pull` after apply. Its `secrets:pull` task combines the document's message with the selected stack's bucket name. Preview deployment uses on-commit, manual environments use on-deploy, and preview deletion uses on-merge.

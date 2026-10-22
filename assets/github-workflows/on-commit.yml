@@ -231,6 +231,6 @@ jobs:
         run: |
           PM_RELEASE="$(git rev-parse HEAD)"
           export PM_RELEASE
-          args=(ci flow on-release --environment "$DEPLOY_ENVIRONMENT" --release none)
+          args=(ci flow on-commit --environment "$DEPLOY_ENVIRONMENT" --release none)
           if [[ -n "$INFRA_BACKEND" ]]; then args+=(--backend "$INFRA_BACKEND"); fi
           pm "${args[@]}"

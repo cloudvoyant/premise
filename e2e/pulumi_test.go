@@ -60,6 +60,7 @@ func TestInfraGCSCIFlowsDeployStaticAppAcrossEnvironmentsAndRecoverPreviousVersi
 	}
 	t.Setenv("PULUMI_BACKEND_URL", backend+"/unselected-fallback")
 	branch := fmt.Sprintf("feature/static-%d", time.Now().UnixNano())
+	infraCommand(t, client, "git", "init", "--quiet")
 	buckets := map[string]string{}
 	attempted := map[string]bool{}
 	arguments := func(environment, operation string) []string {
@@ -85,7 +86,7 @@ func TestInfraGCSCIFlowsDeployStaticAppAcrossEnvironmentsAndRecoverPreviousVersi
 			}
 
 			for attempt := 0; attempt < 2; attempt++ {
-				command := exec.CommandContext(ctx, binary, arguments(environment, "destroy")...)
+				command := exec.CommandContext(ctx, binary, "ci", "flow", "on-merge", "--environment", "preview", "--branch", branch, "--release", "none")
 				command.Dir = client
 				command.Env = append(os.Environ(), "MISE_TRUSTED_CONFIG_PATHS="+client)
 				if environment != "preview" {
@@ -128,9 +129,26 @@ func TestInfraGCSCIFlowsDeployStaticAppAcrossEnvironmentsAndRecoverPreviousVersi
 		if environment == "preview" {
 			t.Setenv("PM_BRANCH", branch)
 		}
-		infraCommand(t, client, binary, "ci", "flow", "on-release", "--environment", environment, "--release", "none")
+		flow := "on-deploy"
+		if environment == "preview" {
+			flow = "on-commit"
+		}
+		infraCommand(t, client, binary, "ci", "flow", flow, "--environment", environment, "--release", "none")
 		bucket := strings.TrimSpace(infraCommand(t, client, binary, append(arguments(environment, "query"), "--output", "bucketName")...))
 		buckets[environment] = bucket
+		pull := []string{"secrets", "pull", "--project", "web", "--env", environment}
+		if environment == "preview" {
+			pull = append(pull, "--branch", branch)
+		}
+		output := infraCommand(t, client, binary, pull...)
+		data, err := os.ReadFile(filepath.Join(client, "apps/web/.env.local"))
+		if err != nil || !strings.Contains(string(data), "BUCKET_NAME=\""+bucket+"\"") || !strings.Contains(string(data), "APP_MESSAGE=\""+environment+"-example\"") {
+			t.Fatalf("env file did not combine JSON secret and selected stack: %v", err)
+		}
+		if strings.Contains(output, environment+"-example") {
+			t.Fatal("secrets pull printed a secret")
+		}
+
 		selected := manifest.Workspace.Infra.Environments[environment].Backend
 		scope := core.InfraOptions{Environment: environment}
 		if environment == "preview" {
@@ -154,7 +172,7 @@ func TestInfraGCSCIFlowsDeployStaticAppAcrossEnvironmentsAndRecoverPreviousVersi
 	fresh := filepath.Join(t.TempDir(), "client")
 	copyInfraFixture(t, client, fresh)
 	t.Setenv("PM_BRANCH", "")
-	infraCommand(t, fresh, binary, "ci", "flow", "on-release", "--environment", "stage", "--release", "none")
+	infraCommand(t, fresh, binary, "ci", "flow", "on-deploy", "--environment", "stage", "--release", "none")
 	if bucket := strings.TrimSpace(infraCommand(t, fresh, binary, "infra", "query", "--env", "stage", "--output", "bucketName")); bucket != buckets["stage"] {
 		t.Fatal("fresh checkout did not reuse the selected remote backend")
 	}
@@ -163,7 +181,7 @@ func TestInfraGCSCIFlowsDeployStaticAppAcrossEnvironmentsAndRecoverPreviousVersi
 	references, _ = json.Marshal(map[string]string{"web": filepath.Join(client, "apps/web/releases/B/index.html")})
 	t.Setenv("PM_ARTIFACTS", string(references))
 	t.Setenv("PREMISE_TEST_FAIL_HEALTH", "preview")
-	command := exec.Command(binary, "ci", "flow", "on-release", "--environment", "preview", "--release", "none")
+	command := exec.Command(binary, "ci", "flow", "on-deploy", "--environment", "preview", "--release", "none")
 	command.Dir = client
 	command.Env = append(os.Environ(), "MISE_TRUSTED_CONFIG_PATHS="+client)
 	output, failed := command.CombinedOutput()

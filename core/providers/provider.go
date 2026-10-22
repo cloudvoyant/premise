@@ -11,7 +11,30 @@ import (
 	"strings"
 )
 
+// InfraProvider authenticates deployment tools and checks their standard variables.
+// It never resolves application secrets.
+type InfraProvider interface {
+	EnsureEnvironment(ci bool) error
+	Authenticate(context.Context, string, bool, io.Reader, io.Writer, io.Writer) (map[string]string, error)
+}
+
+// CIProvider owns runner output formatting and identity exchange.
+type CIProvider interface {
+	WritePlan(io.Writer, CIPlan) error
+	IdentityToken(context.Context, string, string) error
+}
+
 // Public API -----------------------------------------------------------------
+
+// InfrastructureProvider returns a supported provider, independently of Pulumi resources.
+func InfrastructureProvider(name string) (InfraProvider, bool) {
+	switch name {
+	case "gcp":
+		return GCP{}, true
+	default:
+		return nil, false
+	}
+}
 
 // AdministrationSecretKeys returns credential names that must not reach application tasks.
 func AdministrationSecretKeys() map[string]bool {
@@ -20,18 +43,6 @@ func AdministrationSecretKeys() map[string]bool {
 		keys[key] = true
 	}
 	return keys
-}
-
-// SyncCISecret sends a local scalar value to the chosen CI secret store over stdin.
-func SyncCISecret(ctx context.Context, root, provider, repository, environment, key, value string) error {
-	switch provider {
-	case "github":
-		return syncGitHubSecret(ctx, root, repository, environment, key, value)
-	case "gitlab":
-		return syncGitLabSecret(ctx, root, repository, environment, key, value)
-	default:
-		return fmt.Errorf("secrets sync supports github or gitlab")
-	}
 }
 
 // Private helpers ------------------------------------------------------------

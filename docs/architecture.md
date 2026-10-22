@@ -201,7 +201,7 @@ Each map distinguishes modules called directly by the command from modules used 
 ### `pm ci flow`
 
 ```text
-[pm ci flow <on-commit|on-merge|on-release>]
+[pm ci flow <on-commit|on-merge|on-deploy>]
   |
   +-- direct --> [Configuration]
   |               locate the workspace root
