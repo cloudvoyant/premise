@@ -1,7 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 operation="$1"
-environment="$2"
+environment="${2:-}"
+if [[ -n "${PREMISE_TEST_EVENTS:-}" ]]; then
+    printf '%s:%s:%s\n' "$operation" "$environment" "${PM_RELEASE:-A}" >> "$PREMISE_TEST_EVENTS"
+fi
+[[ "${PREMISE_TEST_FAIL_TASK:-}" != "$operation" ]]
+case "$operation" in
+    build|test|format:check|lint)
+        test -s "releases/${PM_RELEASE:-A}/index.html"
+        exit
+        ;;
+    release:build)
+        cp "releases/${PM_RELEASE:-A}/index.html" "$PREMISE_ARTIFACT_DIR/index.html"
+        printf '%s:%s\n' "$PREMISE_RELEASE_CHANNEL" "$RELEASE_VERSION" > "$PREMISE_ARTIFACT_DIR/version.txt"
+        exit
+        ;;
+esac
 args=(--env "$environment")
 if [[ "$environment" == preview ]]; then args+=(--branch "$PM_BRANCH"); fi
 bucket="$(pm infra query "${args[@]}" --output bucketName)"

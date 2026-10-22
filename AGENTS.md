@@ -65,6 +65,13 @@ in test fixtures. Organize tests into Arrange, Act, and Assert sections with
 blank lines between them. Name each test for both its behavior and its expected
 outcome.
 
+Organize E2E coverage under Scaffold, Infra, Secrets, and CI suites. Use nested
+`t.Run` contexts named `when ...` and outcome tests named `it ...`. Keep scenario
+actions and assertions visible in the suite; move reusable setup and process
+execution into helpers. Each context must work when selected with `go test -run`;
+do not make one sibling scenario depend on another sibling having run. Test
+cleanup behavior explicitly, and retain `t.Cleanup` as the resource safety net.
+
 # Module organization
 
 Keep infra querying and setup in the infra module, and application deployment and rollback tasks

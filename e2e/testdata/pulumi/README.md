@@ -44,7 +44,9 @@ Normal `go test ./...` skips the live test. A skip does not prove live behavior.
 The secrets CLI test uses this same client. It pulls dev, stage, prod, and preview values through real fnox, checks the ignored env file and mode 0600, and verifies that a failed pull preserves the file. The profile values are test literals, not cloud credentials.
 
 ```sh
-PREMISE_TEST_FNOX=1 go test ./e2e -run '^TestSecretsPull' -count=1
+PREMISE_TEST_FNOX=1 go test ./e2e -run '^TestSecrets$' -count=1
 ```
 
 Local env-file generation uses an `as_file` JSON secret in each fnox profile. These documents contain test defaults only. The live flow runs `pm secrets pull` after apply. Its Bash `secrets:pull` task writes the document's message and selected stack bucket name into an ignored env file. Preview deployment uses on-commit, manual environments use on-deploy, and preview deletion uses on-merge.
+
+The [suite guide](../../README.md) describes the Scaffold, Infra, Secrets, and CI groups and scenario selection. Infrastructure update tests change a bucket label through the program’s `PREMISE_TEST_REVISION` input. The test-only `PREMISE_TEST_FAIL_INFRA` flag stops the program before registering resources, so the failure test can prove that the existing bucket survives. Task events record checks, migrations, deployment, and health to make their ordering observable.

@@ -1,14 +1,14 @@
 [tasks.build]
-run = 'test -s "releases/${PM_RELEASE:-A}/index.html"'
+run = '../../tasks/static.sh build'
 
 [tasks.test]
-run = 'test -s releases/A/index.html && test -s releases/B/index.html'
+run = '../../tasks/static.sh test'
 
 [tasks."format:check"]
-run = 'test -s "releases/${PM_RELEASE:-A}/index.html"'
+run = '../../tasks/static.sh format:check'
 
 [tasks.lint]
-run = 'test -s "releases/${PM_RELEASE:-A}/index.html"'
+run = '../../tasks/static.sh lint'
 
 [tasks.migrate]
 run = '../../tasks/static.sh migrate'
@@ -39,3 +39,6 @@ jq -r --arg bucket "$bucket" '
 ' "$APP_CONFIG" > "$temporary"
 mv "$temporary" .env.local
 '''
+
+[tasks."release:build"]
+run = "../../tasks/static.sh release:build"

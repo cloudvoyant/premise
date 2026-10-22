@@ -52,8 +52,8 @@ description = "Run end-to-end tests"
 run = "go test ./e2e"
 
 [tasks."e2e:infra"]
-description = "Create, verify, and destroy live GCS preview buckets"
-run = "go test ./e2e -run '^TestInfraGCS' -count=1 -timeout 20m -v"
+description = "Run live scaffold, infrastructure, and CI scenarios against GCS"
+run = "go test ./e2e -run '^(TestScaffold|TestInfra|TestCI)$' -count=1 -timeout 45m -v"
 
 [tasks."e2e:infra".env]
 PREMISE_TEST_GCS = "1"
