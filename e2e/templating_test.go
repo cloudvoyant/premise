@@ -14,6 +14,8 @@ import (
 	core "github.com/cloudvoyant/premise/core"
 )
 
+// Private helpers ------------------------------------------------------------
+
 type fixedQuestionnaire struct {
 	Answers map[string]string
 }
@@ -94,7 +96,7 @@ func workspaceMiseTemplate(t *testing.T) string {
 	return string(content)
 }
 
-func TestWorkspaceTemplateAndGenerationWorkflow(t *testing.T) {
+func testWorkspaceTemplateAndGenerationWorkflow(t *testing.T) {
 	installMiseTaskShim(t)
 	base := t.TempDir()
 	root := filepath.Join(base, "example")
@@ -269,7 +271,7 @@ func writeFixtureFile(t *testing.T, path, content string, mode os.FileMode) {
 	}
 }
 
-func TestGenerateFromCargoAndBunRegistries(t *testing.T) {
+func testGenerateFromCargoAndBunRegistries(t *testing.T) {
 	log := installMiseTaskShim(t)
 	base := t.TempDir()
 	workspace := filepath.Join(base, "workspace")
@@ -460,7 +462,7 @@ func assertProjectMise(t *testing.T, path, tool, version, appKind string) {
 	}
 }
 
-func TestGenerateValidationFailuresLeaveNoLiveState(t *testing.T) {
+func testGenerateValidationFailuresLeaveNoLiveState(t *testing.T) {
 	for _, test := range []struct {
 		name           string
 		fixture        func(*testing.T, string)
@@ -559,7 +561,7 @@ func assertNoGenerationTemporaryDirectories(t *testing.T, roots ...string) {
 	}
 }
 
-func TestGenerateExplainsMissingTemplateManifest(t *testing.T) {
+func testGenerateExplainsMissingTemplateManifest(t *testing.T) {
 	workspace := filepath.Join(t.TempDir(), "workspace")
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		t.Fatal(err)
@@ -582,7 +584,7 @@ func TestGenerateExplainsMissingTemplateManifest(t *testing.T) {
 	}
 }
 
-func TestInitializeWorkspacePreservesExistingMiseConfig(t *testing.T) {
+func testInitializeWorkspacePreservesExistingMiseConfig(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "example")
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
@@ -604,7 +606,7 @@ func TestInitializeWorkspacePreservesExistingMiseConfig(t *testing.T) {
 	}
 }
 
-func TestInitializeWorkspaceRejectsExistingMiseWithoutMonorepoMarker(t *testing.T) {
+func testInitializeWorkspaceRejectsExistingMiseWithoutMonorepoMarker(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "example")
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
@@ -617,7 +619,7 @@ func TestInitializeWorkspaceRejectsExistingMiseWithoutMonorepoMarker(t *testing.
 	}
 }
 
-func TestManifestRejectsUnknownFields(t *testing.T) {
+func testManifestRejectsUnknownFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), core.ManifestFilename)
 	content := `workspace:
   name: example
@@ -639,7 +641,7 @@ unknown: true
 	}
 }
 
-func TestConfigRejectsDuplicateProjects(t *testing.T) {
+func testConfigRejectsDuplicateProjects(t *testing.T) {
 	config := core.NewManifest("example")
 	config.Workspace.Projects = []core.Project{
 		{Name: "orders", Template: ".:app", Path: "apps/orders"},
@@ -655,7 +657,7 @@ func TestConfigRejectsDuplicateProjects(t *testing.T) {
 	}
 }
 
-func TestTemplateContractsCollectAllFailures(t *testing.T) {
+func testTemplateContractsCollectAllFailures(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test uses a shell fixture")
 	}

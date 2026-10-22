@@ -8,18 +8,18 @@ The configuration module owns the typed, validated representation of `premise.ya
 
 ### API
 
-| API                                   | Use                                                                            |
-| ------------------------------------- | ------------------------------------------------------------------------------ |
-| `NewManifest(name)`                   | Create an in-memory manifest with default providers and an empty project list. |
-| `LoadManifest(path)`                  | Decode and validate one `premise.yaml`.                                        |
-| `SaveManifest(path, manifest)`        | Validate and atomically replace a manifest.                                    |
-| `Config.Validate()`                   | Validate a manifest without filesystem writes.                                 |
-| `Config.DeclaredTemplates()`          | Return template-registry declarations.                                         |
-| `Config.FindTemplate(name)`           | Resolve one declared template by name.                                         |
-| `Config.AddProject(project)`          | Add a generated-project record while enforcing unique names and paths.         |
-| `FindManifest(start)`                 | Walk upward from a path to locate the owning manifest.                         |
-| `InitializeWorkspace(root, template)` | Create a new monorepo manifest and root Mise configuration.                    |
-| `InitializeTemplateRegistry(root)`    | Create a new template-registry manifest and templates directory.               |
+| API | Use |
+| --- | --- |
+| `NewManifest(name)` | Create an in-memory manifest with default providers and an empty project list. |
+| `LoadManifest(path)` | Decode and validate one `premise.yaml`. |
+| `SaveManifest(path, manifest)` | Validate and atomically replace a manifest. |
+| `Config.Validate()` | Validate a manifest without filesystem writes. |
+| `Config.DeclaredTemplates()` | Return template-registry declarations. |
+| `Config.FindTemplate(name)` | Resolve one declared template by name. |
+| `Config.AddProject(project)` | Add a generated-project record while enforcing unique names and paths. |
+| `FindManifest(start)` | Walk upward from a path to locate the owning manifest. |
+| `InitializeWorkspace(root, template)` | Create a new monorepo manifest and root Mise configuration. |
+| `InitializeTemplateRegistry(root)` | Create a new template-registry manifest and templates directory. |
 
 ### Usage
 

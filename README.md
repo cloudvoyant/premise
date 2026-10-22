@@ -60,7 +60,7 @@ pm update v0.2.1
 
 ## Documentation
 
-- [User Guide](docs/user-guide.md) - Complete setup and usage guide
+- [User Guide](docs/guides/README.md) - Complete setup and usage guide
 - [Architecture](docs/architecture.md) - Overall Premise architecture
 - [Generation Architecture](docs/generation.md) - Create-only generation and template merging
 - [Infrastructure](docs/infrastructure.md) - Infrastructure and CI/CD details

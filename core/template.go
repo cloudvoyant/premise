@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go.yaml.in/yaml/v3"
 	"io"
 	"os"
 	"path/filepath"
@@ -277,6 +278,15 @@ func copyTree(source, destination string, replacer *strings.Replacer) error {
 		if walkErr != nil {
 			return walkErr
 		}
+		if entry.IsDir() && generatedPulumiSDKDirectory(source, path) {
+			return filepath.SkipDir
+		}
+		if path != source && generatedScaffoldEntry(entry.Name()) {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		relative, err := filepath.Rel(source, path)
 		if err != nil || escapesRoot(relative) {
 			return fmt.Errorf("source entry escapes scaffold root: %s", path)
@@ -362,4 +372,37 @@ func kindLabel(kind string) string {
 		return "App"
 	}
 	return "Library"
+}
+
+func generatedScaffoldEntry(name string) bool {
+	switch name {
+	case ".git", "node_modules", ".pulumi", ".pulumi-state", ".vercel", ".output", "dist", "coverage":
+		return true
+	}
+	return name == ".env" || (strings.HasPrefix(name, ".env.") && name != ".env.example") || (name != "Pulumi.yaml" && strings.HasPrefix(name, "Pulumi.") && strings.HasSuffix(name, ".yaml"))
+}
+
+// Generated provider SDKs are recreated from the program's packages metadata.
+// A normal client-authored sdks directory remains ordinary source.
+func generatedPulumiSDKDirectory(source, path string) bool {
+	relative, err := filepath.Rel(source, path)
+	if err != nil {
+		return false
+	}
+	parts := strings.Split(filepath.ToSlash(relative), "/")
+	if len(parts) != 2 || parts[0] != "sdks" {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(source, "Pulumi.yaml"))
+	if err != nil {
+		return false
+	}
+	var project struct {
+		Packages map[string]any `yaml:"packages"`
+	}
+	if yaml.Unmarshal(data, &project) != nil {
+		return false
+	}
+	_, generated := project.Packages[parts[1]]
+	return generated
 }

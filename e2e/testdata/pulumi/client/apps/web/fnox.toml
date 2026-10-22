@@ -1,0 +1,11 @@
+[profiles.dev.secrets]
+APP_CONFIG = { default = '{"message":"dev-example"}', as_file = true }
+
+[profiles.stage.secrets]
+APP_CONFIG = { default = '{"message":"stage-example"}', as_file = true }
+
+[profiles.prod.secrets]
+APP_CONFIG = { default = '{"message":"prod-example"}', as_file = true }
+
+[profiles.preview.secrets]
+APP_CONFIG = { default = '{"message":"preview-example"}', as_file = true }

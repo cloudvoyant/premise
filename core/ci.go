@@ -17,19 +17,38 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/cloudvoyant/premise/core/extensions"
+	"github.com/cloudvoyant/premise/core/providers"
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 )
 
 // Public API -----------------------------------------------------------------
 
+// WriteCIPlanOutputs sends scheduling data through the selected CI runner adapter.
+func WriteCIPlanOutputs(output io.Writer, provider string, plan CISchedule) error {
+	adapter, err := providers.CIOutputProvider(provider)
+	if err != nil {
+		return err
+	}
+	return adapter.WritePlan(output, providers.CIPlan{
+		Mode:              plan.Mode,
+		Runner:            plan.Runner,
+		HasNative:         plan.HasNative,
+		HasInfrastructure: plan.HasInfrastructure,
+		Matrix:            plan.Matrix,
+		Migrations:        plan.Migrations,
+		HasMigrations:     len(plan.Migrations) > 0,
+	})
+}
+
 // CIFlow names one convention-driven CI lifecycle.
 type CIFlow string
 
 const (
-	CIFlowOnCommit  CIFlow = "on-commit"
-	CIFlowOnMerge   CIFlow = "on-merge"
-	CIFlowOnRelease CIFlow = "on-release"
+	CIFlowOnCommit CIFlow = "on-commit"
+	CIFlowOnMerge  CIFlow = "on-merge"
+	CIFlowOnDeploy CIFlow = "on-deploy"
 )
 
 // CIPlatformProject is the shared, build-system-neutral project selection.
@@ -142,16 +161,20 @@ type CIMatrixRow struct {
 }
 
 type CISchedule struct {
-	Mode      string              `json:"mode"`
-	Runner    string              `json:"runner,omitempty"`
-	HasNative bool                `json:"has_native"`
-	Matrix    []CIMatrixRow       `json:"matrix"`
-	Excluded  []CIPlatformProject `json:"excluded"`
+	Mode              string              `json:"mode"`
+	Runner            string              `json:"runner,omitempty"`
+	HasInfrastructure bool                `json:"has_infra"`
+	HasNative         bool                `json:"has_native"`
+	Matrix            []CIMatrixRow       `json:"matrix"`
+	Excluded          []CIPlatformProject `json:"excluded"`
+	Migrations        []MigrationGroup    `json:"migrations"`
+	Environment       string              `json:"environment,omitempty"`
+	Branch            string              `json:"branch,omitempty"`
 }
 
 // PlanCISchedule chooses one whole-runner flow or one unified matrix.
 func PlanCISchedule(projects []CIPlatformProject) (CISchedule, error) {
-	plan := CISchedule{Matrix: []CIMatrixRow{}, Excluded: []CIPlatformProject{}}
+	plan := CISchedule{Matrix: []CIMatrixRow{}, Excluded: []CIPlatformProject{}, Migrations: []MigrationGroup{}}
 	platforms := make(map[string]bool)
 	for _, project := range projects {
 		if !project.Eligible {
@@ -201,10 +224,10 @@ const (
 func ParseCIFlow(value string) (CIFlow, error) {
 	flow := CIFlow(value)
 	switch flow {
-	case CIFlowOnCommit, CIFlowOnMerge, CIFlowOnRelease:
+	case CIFlowOnCommit, CIFlowOnMerge, CIFlowOnDeploy:
 		return flow, nil
 	default:
-		return "", fmt.Errorf("invalid CI flow %q: expected on-commit, on-merge, or on-release", value)
+		return "", fmt.Errorf("invalid CI flow %q: expected on-commit, on-merge, or on-deploy", value)
 	}
 }
 
@@ -221,6 +244,8 @@ func ParseCIReleaseMode(value string) (CIReleaseMode, error) {
 
 // CIFlowOptions controls the narrow orchestration controls for a complete flow.
 type CIFlowOptions struct {
+	Backend   string
+	Branch    string
 	Project   string
 	Platform  string
 	OutputDir string
@@ -236,6 +261,11 @@ func RunCIFlow(ctx context.Context, root string, flow CIFlow, environment string
 }
 
 func RunCIFlowWithOptions(ctx context.Context, root string, flow CIFlow, environment string, releaseMode CIReleaseMode, options CIFlowOptions, stdout, stderr io.Writer) error {
+	environmentFlow := environment != "" || flow == CIFlowOnDeploy
+	if environmentFlow && (options.Project != "" || options.Platform != "" || options.RootOnly || options.SkipRoot || options.OutputDir != "" || options.Channel != "" || options.Version != "") {
+		return errors.New("environment CI flows cannot be scoped to project checks or release staging")
+	}
+
 	if options.RootOnly && (options.Project != "" || options.Platform != "" || options.OutputDir != "" || options.Channel != "" || options.Version != "") {
 		return errors.New("--root-only cannot be combined with project, platform, output-dir, channel, or version")
 	}
@@ -274,6 +304,28 @@ func RunCIFlowWithOptions(ctx context.Context, root string, flow CIFlow, environ
 	if err != nil {
 		return err
 	}
+	if environment != "" || flow == CIFlowOnDeploy {
+		if manifest.Workspace.Infra == nil {
+			return errors.New("environment CI flows require workspace.infra")
+		}
+		branch := options.Branch
+		if branch == "" {
+			branch = os.Getenv("PM_BRANCH")
+		}
+		if target == "preview" && branch == "" {
+			branch, err = extensions.CurrentFeatureBranch(ctx, root)
+			if err != nil {
+				return err
+			}
+		}
+		infrastructure := InfraOptions{Environment: target, Branch: branch, Backend: options.Backend}
+		if flow == CIFlowOnMerge && target == "preview" {
+			return RunInfra(ctx, root, "destroy", infrastructure, nil, stdout, stderr)
+		}
+		release := ReadReleaseEnvironment(ReleaseEnvironment{})
+		return runEnvironmentCIFlow(ctx, root, DeployOptions{InfraOptions: infrastructure, Release: release.Release}, nil, stdout, stderr)
+	}
+
 	projects, err := SelectCIProjects(root, manifest, flow)
 	if err != nil {
 		return err
@@ -319,6 +371,37 @@ func RunCIFlowWithOptions(ctx context.Context, root string, flow CIFlow, environ
 
 // Private helpers ------------------------------------------------------------
 
+// runEnvironmentCIFlow runs the local equivalent of the separate hosted CI steps.
+// Infrastructure and migration failures stop execution without compensation.
+func runEnvironmentCIFlow(ctx context.Context, root string, options DeployOptions, stdin io.Reader, stdout, stderr io.Writer) error {
+	exists, err := InfrastructureExists(ctx, root, options.InfraOptions, stderr)
+	if err != nil {
+		return err
+	}
+	if err := PrepareInfrastructure(ctx, root, options.InfraOptions, stdin, stdout, stderr); err != nil {
+		return err
+	}
+	if exists {
+		if err := RunMigrations(ctx, root, options.InfraOptions, "", stdout, stderr); err != nil {
+			return err
+		}
+	}
+	if err := RunInfra(ctx, root, "plan", options.InfraOptions, stdin, stdout, stderr); err != nil {
+		return err
+	}
+	apply := options.InfraOptions
+	apply.Yes = true
+	if err := RunInfra(ctx, root, "apply", apply, stdin, stdout, stderr); err != nil {
+		return err
+	}
+	if !exists {
+		if err := RunMigrations(ctx, root, options.InfraOptions, "", stdout, stderr); err != nil {
+			return err
+		}
+	}
+	return RunApplicationDeployment(ctx, root, options, stdin, stdout, stderr)
+}
+
 func ciProject(name, path, kind, source string, declaration PlatformDeclaration, host string) CIPlatformProject {
 	checks := append([]string{}, declaration.CheckPlatforms...)
 	if len(checks) == 0 {
@@ -354,7 +437,7 @@ func validateCIStaging(flow CIFlow, options CIFlowOptions) error {
 	if options.OutputDir == "" {
 		return errors.New("--output-dir is required to stage a release")
 	}
-	if (flow == CIFlowOnCommit && options.Channel != "rc") || (flow == CIFlowOnMerge && options.Channel != "stable") || flow == CIFlowOnRelease {
+	if (flow == CIFlowOnCommit && options.Channel != "rc") || (flow == CIFlowOnMerge && options.Channel != "stable") || flow == CIFlowOnDeploy {
 		return fmt.Errorf("channel %q does not match flow %q", options.Channel, flow)
 	}
 	if !releaseVersionPattern.MatchString(options.Version) {
@@ -448,7 +531,7 @@ func runScopedCIFlow(ctx context.Context, root string, flow CIFlow, environment 
 	return nil
 }
 
-func runSelectedProject(ctx context.Context, root string, project CIPlatformProject, platform string, _ CIFlow, target, output, channel, version string, runner ciRunner) error {
+func runSelectedProject(ctx context.Context, root string, project CIPlatformProject, platform string, flow CIFlow, target, output, channel, version string, runner ciRunner) error {
 	directory := filepath.Join(root, project.Path)
 	if project.Source == "registry" {
 		if d, err := TemplateDirectory(root, project.Path); err == nil {
@@ -462,7 +545,7 @@ func runSelectedProject(ctx context.Context, root string, project CIPlatformProj
 			return fmt.Errorf("project %s platform %s: %w", project.Name, platform, err)
 		}
 	}
-	if project.Kind == "app" {
+	if project.Kind == "app" && flow == CIFlowOnDeploy {
 		for _, task := range []string{"deploy", "e2e"} {
 			exists, err := runner.TaskExists(ctx, directory, task)
 			if err != nil {
@@ -632,7 +715,7 @@ func runCIFlow(ctx context.Context, root string, flow CIFlow, target string, rel
 	var kind ProjectKind
 	if override {
 		arguments := []string{"run", string(flow)}
-		if flow == CIFlowOnRelease {
+		if flow == CIFlowOnDeploy {
 			arguments = append(arguments, "--", target)
 		}
 		if err := runner.Run(ctx, root, nil, "mise", arguments...); err != nil {
@@ -748,7 +831,7 @@ func runCIReleasePhase(ctx context.Context, root string, flow CIFlow, releaseMod
 		return runner.PublishReleaseCandidate(ctx, root, kind)
 	case CIFlowOnMerge:
 		return runner.ReleaseStable(ctx, root, releaseMode)
-	case CIFlowOnRelease:
+	case CIFlowOnDeploy:
 		if releaseMode != CIReleaseAuto && releaseMode != CIReleaseNone {
 			return fmt.Errorf("%s only supports auto or none release mode", flow)
 		}
@@ -775,8 +858,6 @@ func ciTasks(flow CIFlow, target string) []ciTask {
 			{name: "format"},
 			{name: "format:check"},
 			{name: "lint"},
-			{name: "deploy", optional: true, appOnly: true, target: target},
-			{name: "e2e", optional: true, appOnly: true, target: target},
 		}
 	case CIFlowOnMerge:
 		return []ciTask{
@@ -785,10 +866,8 @@ func ciTasks(flow CIFlow, target string) []ciTask {
 			{name: "format"},
 			{name: "format:check"},
 			{name: "lint"},
-			{name: "deploy", optional: true, appOnly: true, target: target},
-			{name: "e2e", optional: true, appOnly: true, target: target},
 		}
-	case CIFlowOnRelease:
+	case CIFlowOnDeploy:
 		return []ciTask{
 			{name: "deploy", optional: true, appOnly: true, target: target},
 			{name: "e2e", optional: true, appOnly: true, target: target},
@@ -801,21 +880,24 @@ func ciTasks(flow CIFlow, target string) []ciTask {
 func ciTarget(flow CIFlow, environment string) (string, error) {
 	switch flow {
 	case CIFlowOnCommit:
-		if environment != "" {
-			return "", fmt.Errorf("%s does not accept a deployment environment", flow)
+		if environment != "" && environment != "preview" {
+			return "", errors.New("on-commit only supports the preview deployment environment")
 		}
 		return "preview", nil
 	case CIFlowOnMerge:
-		if environment != "" {
-			return "", fmt.Errorf("%s does not accept a deployment environment", flow)
+		if environment != "" && environment != "preview" && environment != "dev" {
+			return "", errors.New("on-merge only accepts dev deployment or preview cleanup")
+		}
+		if environment == "preview" {
+			return "preview", nil
 		}
 		return "dev", nil
-	case CIFlowOnRelease:
+	case CIFlowOnDeploy:
 		if environment == "" {
 			environment = "stage"
 		}
-		if environment != "stage" && environment != "prod" {
-			return "", fmt.Errorf("invalid release environment %q: expected stage or prod", environment)
+		if environment != "dev" && environment != "stage" && environment != "prod" && environment != "preview" {
+			return "", fmt.Errorf("invalid deployment environment %q: expected dev, stage, prod, or preview", environment)
 		}
 		return environment, nil
 	default:

@@ -5,3 +5,8 @@ CHANGELOG.md
 .codevoyant/
 .pi/
 .tmp/
+
+.output/
+.vercel/
+
+.releases/

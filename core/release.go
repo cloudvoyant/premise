@@ -28,6 +28,17 @@ import (
 
 // Public API -----------------------------------------------------------------
 
+// ReleaseEnvironment contains the immutable application revision supplied by CI.
+type ReleaseEnvironment struct{ Release string }
+
+// ReadReleaseEnvironment fills an unspecified revision from the CI environment.
+func ReadReleaseEnvironment(overrides ReleaseEnvironment) ReleaseEnvironment {
+	if overrides.Release == "" {
+		overrides.Release = os.Getenv("PM_RELEASE")
+	}
+	return overrides
+}
+
 // ReleasePlan describes the stable release decision for the current HEAD.
 type ReleasePlan struct {
 	Version  string

@@ -1,0 +1,99 @@
+package providers
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"slices"
+	"strings"
+	"time"
+)
+
+// GitHub adapts CI outputs to GitHub Actions.
+type GitHub struct{}
+
+// Public API -----------------------------------------------------------------
+
+// WritePlan formats task and migration matrices as GitHub Actions step outputs.
+func (provider GitHub) WritePlan(output io.Writer, plan CIPlan) error {
+	return provider.writeOutputs(output, map[string]any{
+		"mode":             plan.Mode,
+		"runner":           plan.Runner,
+		"native":           plan.HasNative,
+		"has_infra":        plan.HasInfrastructure,
+		"matrix":           map[string]any{"include": plan.Matrix},
+		"has_migrations":   plan.HasMigrations,
+		"migration_matrix": map[string]any{"include": plan.Migrations},
+	})
+}
+
+// IdentityToken exchanges the GitHub Actions identity for the requested audience.
+func (GitHub) IdentityToken(ctx context.Context, audience, path string) error {
+	endpoint := os.Getenv("ACTIONS_ID_TOKEN_REQUEST_URL")
+	bearer := os.Getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
+	if endpoint == "" || bearer == "" {
+		return errors.New("github: identity token endpoint unavailable; enable id-token permission or supply CI_OIDC_TOKEN_FILE")
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Scheme != "https" {
+		return errors.New("github: invalid CI identity endpoint")
+	}
+	query := u.Query()
+	query.Set("audience", audience)
+	u.RawQuery = query.Encode()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return errors.New("github: invalid CI identity request")
+	}
+	request.Header.Set("Authorization", "Bearer "+bearer)
+	client := &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err := client.Do(request)
+	if err != nil {
+		return errors.New("github: CI identity exchange failed")
+	}
+	defer response.Body.Close()
+	var identity struct {
+		Value string `json:"value"`
+	}
+	if response.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&identity) != nil || identity.Value == "" {
+		return errors.New("github: CI issuer did not return an identity token")
+	}
+	return os.WriteFile(path, []byte(identity.Value), 0600)
+}
+
+// Private helpers ------------------------------------------------------------
+
+func (GitHub) writeOutputs(output io.Writer, values map[string]any) error {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	var buffer strings.Builder
+	for _, key := range keys {
+		if strings.ContainsAny(key, "=\r\n") {
+			return fmt.Errorf("invalid CI output name %q", key)
+		}
+		value, ok := values[key].(string)
+		if !ok {
+			encoded, err := json.Marshal(values[key])
+			if err != nil {
+				return err
+			}
+			value = string(encoded)
+		}
+		if strings.ContainsAny(value, "\r\n") {
+			return fmt.Errorf("CI output %q must fit on one line", key)
+		}
+		fmt.Fprintf(&buffer, "%s=%s\n", key, value)
+	}
+	_, err := io.WriteString(output, buffer.String())
+	return err
+}
+
+var githubSecretKeys = []string{"GH_TOKEN", "GITHUB_TOKEN"}

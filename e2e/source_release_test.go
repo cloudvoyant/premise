@@ -26,6 +26,7 @@ func sourceReleaseFixture(t *testing.T) (string, string) {
   kind: monorepo
   schema-version: "0.2"
   package_managers: []
+  providers: {ci: github}
   projects:
     - name: lua-plugin
       template: cloudvoyant/premise:premise-lib
@@ -294,7 +295,7 @@ func runSourceReleaseAction(t *testing.T, workspace, script, operation, channel,
 	t.Setenv("RELEASE_MODE", "auto")
 	t.Setenv("CHANNEL", channel)
 	t.Setenv("VERSION", version)
-	for _, key := range []string{"DEPLOY_ENVIRONMENT", "PROJECT", "PLATFORM", "OUTPUT_DIR", "FILES_DIR", "ROOT_ONLY", "SKIP_ROOT"} {
+	for _, key := range []string{"DEPLOY_ENVIRONMENT", "PREVIEW_BRANCH", "PROJECT", "PLATFORM", "OUTPUT_DIR", "FILES_DIR", "ROOT_ONLY", "SKIP_ROOT"} {
 		t.Setenv(key, "")
 	}
 	return sourceReleaseCommand(t, workspace, "bash", "-c", script)

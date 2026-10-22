@@ -79,7 +79,7 @@ func newFakeCIRunner() *fakeCIRunner {
 }
 
 func TestParseCIFlow(t *testing.T) {
-	for _, value := range []string{"on-commit", "on-merge", "on-release"} {
+	for _, value := range []string{"on-commit", "on-merge", "on-deploy"} {
 		flow, err := ParseCIFlow(value)
 		if err != nil {
 			t.Fatal(err)
@@ -88,8 +88,8 @@ func TestParseCIFlow(t *testing.T) {
 			t.Fatalf("ParseCIFlow(%q) = %q", value, flow)
 		}
 	}
-	if _, err := ParseCIFlow("feature"); err == nil || !strings.Contains(err.Error(), "expected on-commit") {
-		t.Fatalf("ParseCIFlow(feature) error = %v", err)
+	if _, err := ParseCIFlow("on-release"); err == nil || !strings.Contains(err.Error(), "expected on-commit") {
+		t.Fatalf("ParseCIFlow(on-release) error = %v", err)
 	}
 }
 
@@ -102,10 +102,10 @@ func TestCITargets(t *testing.T) {
 	}{
 		{flow: CIFlowOnCommit, want: "preview"},
 		{flow: CIFlowOnMerge, want: "dev"},
-		{flow: CIFlowOnRelease, want: "stage"},
-		{flow: CIFlowOnRelease, environment: "prod", want: "prod"},
+		{flow: CIFlowOnDeploy, want: "stage"},
+		{flow: CIFlowOnDeploy, environment: "prod", want: "prod"},
 		{flow: CIFlowOnCommit, environment: "stage", wantErr: true},
-		{flow: CIFlowOnRelease, environment: "preview", wantErr: true},
+		{flow: CIFlowOnDeploy, environment: "preview", want: "preview"},
 	} {
 		got, err := ciTarget(test.flow, test.environment)
 		if test.wantErr {
@@ -308,7 +308,7 @@ func TestRegistryCIFlowRunsEachTemplateAndSkipsAppTasksForLibraries(t *testing.T
 	runner.tasks[appDirectory+"|deploy"] = true
 	runner.tasks[appDirectory+"|e2e"] = true
 
-	if err := runCIFlow(context.Background(), root, CIFlowOnCommit, "preview", CIReleaseNone, runner); err != nil {
+	if err := runCIFlow(context.Background(), root, CIFlowOnDeploy, "stage", CIReleaseNone, runner); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.calls) == 0 || runner.calls[0].directory != filepath.Join(root, "templates", library.Name) {
@@ -321,7 +321,7 @@ func TestRegistryCIFlowRunsEachTemplateAndSkipsAppTasksForLibraries(t *testing.T
 		if call.directory == filepath.Join(root, "templates", library.Name) && (strings.Contains(joined, "deploy") || strings.Contains(joined, "e2e")) {
 			libraryAppTask = true
 		}
-		if call.directory == appDirectory && joined == "run --jobs 1 deploy -- preview" {
+		if call.directory == appDirectory && joined == "run --jobs 1 deploy -- stage" {
 			appDeploy = true
 		}
 	}
@@ -329,7 +329,7 @@ func TestRegistryCIFlowRunsEachTemplateAndSkipsAppTasksForLibraries(t *testing.T
 		t.Fatal("library template ran an app-only task")
 	}
 	if !appDeploy {
-		t.Fatal("app template did not run deploy preview")
+		t.Fatal("app template did not run deploy stage")
 	}
 	firstAppCall := -1
 	for index, call := range runner.calls {
@@ -340,6 +340,29 @@ func TestRegistryCIFlowRunsEachTemplateAndSkipsAppTasksForLibraries(t *testing.T
 	}
 	if firstAppCall < 0 || runner.calls[firstAppCall].name != "mise" || !reflect.DeepEqual(runner.calls[firstAppCall].arguments, []string{"install"}) {
 		t.Fatalf("first app command = %#v, want mise install", runner.calls[firstAppCall])
+	}
+}
+
+func TestValidationFlowsDoNotRunApplicationDeployTasks(t *testing.T) {
+	for _, flow := range []CIFlow{CIFlowOnCommit, CIFlowOnMerge} {
+		for _, task := range ciTasks(flow, "preview") {
+			if task.name == "deploy" || task.name == "e2e" {
+				t.Fatalf("%s includes deployment task %s", flow, task.name)
+			}
+		}
+		root := t.TempDir()
+		runner := newFakeCIRunner()
+		runner.tasks[root+"|deploy"] = true
+		runner.tasks[root+"|e2e"] = true
+		project := CIPlatformProject{Name: "web", Path: ".", Kind: "app"}
+		if err := runSelectedProject(context.Background(), root, project, "linux", flow, "preview", "", "", "", runner); err != nil {
+			t.Fatal(err)
+		}
+		for _, call := range runner.calls {
+			if strings.Contains(strings.Join(call.arguments, " "), "deploy") || strings.Contains(strings.Join(call.arguments, " "), "e2e") {
+				t.Fatalf("%s ran deployment during validation", flow)
+			}
+		}
 	}
 }
 

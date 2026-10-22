@@ -8,15 +8,15 @@ The generate module turns a selected registry template into a validated workspac
 
 ### API
 
-| API                                             | Use                                                                                      |
-| ----------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `GenerateOptions`                               | Supply questionnaire and merge-conflict behavior to the high-level workflow.             |
-| `Generate(ctx, cwd, selector, options, output)` | Resolve inputs and execute one complete generation.                                      |
-| `GenerateParameters`                            | Provide already resolved roots, paths, identities, substitutions, and conflict handling. |
-| `BuildGeneratePlan(parameters)`                 | Prepare and validate generation without publishing final files.                          |
-| `GeneratePlan`                                  | Hold planned root entries, merged Mise configuration, and private staging state.         |
-| `ApplyGeneratePlan(ctx, plan, output)`          | Validate a prepared candidate and publish it atomically.                                 |
-| `ResolveSubstitutions(template, answers)`       | Convert questionnaire answers into literal replacement values.                           |
+| API | Use |
+| --- | --- |
+| `GenerateOptions` | Supply questionnaire and merge-conflict behavior to the high-level workflow. |
+| `Generate(ctx, cwd, selector, options, output)` | Resolve inputs and execute one complete generation. |
+| `GenerateParameters` | Provide already resolved roots, paths, identities, substitutions, and conflict handling. |
+| `BuildGeneratePlan(parameters)` | Prepare and validate generation without publishing final files. |
+| `GeneratePlan` | Hold planned root entries, merged Mise configuration, and private staging state. |
+| `ApplyGeneratePlan(ctx, plan, output)` | Validate a prepared candidate and publish it atomically. |
+| `ResolveSubstitutions(template, answers)` | Convert questionnaire answers into literal replacement values. |
 
 ### Usage
 

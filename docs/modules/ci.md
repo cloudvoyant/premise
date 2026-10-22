@@ -2,83 +2,63 @@
 
 ## Purpose
 
-Premise owns project selection, task order, and release policy. GitHub Actions chooses runners, transfers native files between them, and isolates publishing credentials. A local flow works on the current host; GitHub schedules other operating systems when needed.
+The CI module selects projects, plans runners, and runs project Mise tasks. The Premise action connects hosted jobs to the same CLI commands used locally.
 
 ## Design
 
-### Project selection
+### Responsibilities
 
-A registry template or workspace project can declare logical `check_platforms` and `release_platforms`. Omitted check platforms mean Linux; omitted release platforms mean no native release files. These fields do not name a build system. Premise uses the same declarations for `pm projects ls`, `pm ci plan`, and `pm ci flow`.
-
-```yaml
-ci:
-  check_platforms: [linux, macos, windows]
-  release_platforms: [linux, macos, windows]
+```mermaid
+flowchart LR
+    local[Local terminal] --> cli[pm ci]
+    workflow[CI workflow] --> action[Premise action]
+    action --> cli
+    cli --> root[Optional root Mise hook]
+    cli --> tasks[Selected project Mise tasks]
 ```
 
-Commands:
+Project tasks own installation, builds, tests, and quality checks. The CLI selects eligible projects and keeps their task order. A root flow hook runs once before the selected project checks.
 
-```text
-pm projects ls --type app --flow on-merge --platform-mode multi --json
-pm ci flow on-commit
-pm ci flow on-commit --project desktop-app --platform macos
+### Usage
+
+Run the same flow locally or on a hosted runner:
+
+```sh
+pm ci flow on-commit --release none
+pm ci flow on-merge --project desktop --platform macos --release none
+pm ci plan --flow on-commit --json
 ```
 
-Without filters, the local flow runs host-compatible single-platform projects and reports excluded multi-platform projects. With `--project` and `--platform`, it runs the selected project's complete work for that declared target on a matching host. A platform-scoped flow can stage native files, but it never creates a workspace release on its own. A root Mise task is a once-per-invocation hook; it does not replace project work. Local release validation is mutation-free.
-
-### Commit and merge
-
-These are the hosted job shapes and commands. GitHub picks exactly one shape for a run. A single-runner job can perform all checks, quality tasks, and native staging in one `pm ci flow` invocation. If the selected check and release targets need multiple runner operating systems, GitHub expands one matrix over the union of declared project/platform targets. Single-platform projects are rows in that matrix too. The root hook runs once before matrix rows; each row performs the checks and/or native build declared for its target. Quality can run on more than one platform rather than requiring another job graph.
-
-```text
-+-------------------------- A. ALL WORK FITS ONE RUNNER OS --------------------------+
-| flow job (no matrix)                                                               |
-| pm ci flow <flow>                                |
-| root once; projects; checks; quality; stage native files; dry release plan         |
-| upload staged files if present                                                     |
-+------------------------------------------------------------------------------------+
-                                          |
-                                          v publish only when requested
-+--------------------------------- publish-release ----------------------------------+
-| pm release publish --channel <rc|stable> --expected-version <v>                    |
-| --files-dir <downloaded-files>                                           |
-| validate all files before tag; publish archives + native files once                |
-+------------------------------------------------------------------------------------+
-                                          |
-                                          v publication job succeeded
-+--------------------------------- publish-packages ---------------------------------+
-| pm release packages --channel <rc|stable> --expected-version <v>         |
-+------------------------------------------------------------------------------------+
-
-+----------------------- B. MORE THAN ONE RUNNER OS REQUIRED ------------------------+
-| plan/root job                                                                      |
-| pm ci plan --flow <flow> --github-output                                 |
-| pm ci flow <flow> --root-only                                            |
-+------------------------------------------------------------------------------------+
-                                          |
-                                          v one row per project/platform union
-+------------------------------- flow [GitHub matrix] -------------------------------+
-| pm ci flow <flow> --project <name> --platform <target>                             |
-| --skip-root --output-dir <dir>                                           |
-| run declared checks and/or native build; upload staged files if any                |
-+------------------------------------------------------------------------------------+
-                                          |
-                                          v ALL rows passed; publish requested
-+--------------------------------- publish-release ----------------------------------+
-| download ALL row files; validate complete expected set before tag                  |
-| pm release publish --channel <rc|stable> --expected-version <v>                    |
-| --files-dir <downloaded-files>                                           |
-+------------------------------------------------------------------------------------+
-                                          |
-                                          v publication job succeeded
-+--------------------------------- publish-packages ---------------------------------+
-| pm release packages --channel <rc|stable> --expected-version <v>         |
-+------------------------------------------------------------------------------------+
+```mermaid
+flowchart TD
+    select[Select flow and projects] --> root{Root flow hook exists?}
+    root -->|Yes| custom[Run the root hook]
+    root -->|No| install[Project install]
+    install --> build[Build and test]
+    build --> quality[Lint and format checks]
+    custom --> install
+    quality --> done[Flow completes]
 ```
 
-If publication is not requested, the run stops after the flow job or matrix succeeds. When it is requested, all selected native builds must finish before the publication job validates their transferred files. That job creates or reuses a tag at the triggering commit and runs GoReleaser once with ordinary archives and native files. It rejects missing files and tags at another commit. The package job starts only after GitHub publication succeeds. Native files travel between jobs as CI artifacts, never as caches. Package credentials stay in the protected package job; the flow jobs receive none. Even a one-OS release can need separate publication jobs to protect credentials.
+`on-commit` checks feature work. With `--environment preview`, it runs the preview environment sequence after checks and publication. `on-merge` checks trunk work. The hosted workflow deploys dev after checks and publication. With `--environment preview --branch NAME`, the local flow destroys that branch's preview. `on-deploy` runs a manually selected environment. Workflows use the has_infra plan output from premise.yaml to skip deployment jobs for workspaces without infra.
 
-Tauri keeps its normal Mise tasks and Cargo build directories. Its `release:build` task copies output into the flow's artifact directory without tagging or uploading. Windows RC builds use NSIS; stable builds can also use MSI. No Bash release script is needed. Cache keys must separate incompatible runner images; a failed cross-image cache restore is not evidence of a speedup.
+```mermaid
+flowchart TD
+    Commit[on-commit checks] --> Publish[Publish eligible artifacts]
+    Publish --> Preview[on-commit with preview environment]
+    Manual[Manual on-deploy] --> Environment[Environment sequence]
+    Preview --> Environment
+    Environment --> Existing{Saved application resources?}
+    Existing -->|Yes| Migrate[Optional migrations]
+    Migrate --> Apply[Preview and apply infra]
+    Existing -->|No| First[Preview and apply infra]
+    First --> FirstMigrate[Optional migrations]
+    Apply --> Deploy[Deploy and health checks]
+    FirstMigrate --> Deploy
+    Merge[on-merge with preview environment] --> Cleanup[Destroy preview]
+```
+
+Hosted workflows call pm infra, pm migrate, and pm deploy in separate steps. The local CI flow calls the same module APIs. Clients apply database changes before an existing environment's migrations. See the [infrastructure module](infrastructure.md) for application rollback.
 
 ### Libraries installed from Git
 
@@ -90,6 +70,7 @@ workspace:
   kind: monorepo
   schema-version: "0.2"
   package_managers: []
+  providers: {ci: github}
   projects:
     - name: lua-plugin
       template: cloudvoyant/premise:premise-lib
@@ -103,23 +84,21 @@ The existing plan, flow, release, and packages action operations support this co
 
 Stable releases keep the existing commit-based version rules. An RC release still requires a marked feature-branch push. The package operation reports a successful skip when no registry publisher is configured. `pm release --build` also reports a successful skip when there are no downloadable artifacts. GitHub publication still requires a token with permission to write repository contents.
 
-### Manual deploy
+### Hosted matrix
 
-`on-release` stays independent of commit/merge publication. The root override or optional app deploy and end-to-end tasks receive `stage` or `prod`. Native builds use scoped commit or merge flows; the old `on-platform` flow and platform helper commands have been removed. The tandem premise-cargo PR pins its action calls to the commit verified by the Premise RC release and can land with the Premise PR. The `v0` alias can move only after that release is verified.
+A matrix is a set of project and operating-system jobs. The planner includes single-platform projects when another project requires several runners.
 
-## API
-
-| Command                    | Responsibility                                                                                    |
-| -------------------------- | ------------------------------------------------------------------------------------------------- |
-| `pm ci flow <flow>`        | Run host-compatible tasks and stage files.                                                        |
-| `pm projects ls`           | Explain eligible and excluded projects.                                                           |
-| `pm ci plan --flow <flow>` | Describe the runner schedule as JSON with `--json`, or step output values with `--github-output`. |
-| `pm release publish`       | Validate files and publish one combined GitHub Release.                                           |
-| `pm release packages`      | Publish registry packages only after release success.                                             |
-
-## Composite action
-
-Commit and merge pipelines call the Premise action for each operation. GitHub still owns job dependencies, runner selection, and artifact transfer. The action's `command` input selects `plan`, `flow`, `flow-matrix`, `release`, or `packages`. `flow-matrix` requires a project and platform and uses the same complete flow as the single job.
+```mermaid
+flowchart TD
+    schedule[pm ci plan] --> choice{One runner OS?}
+    choice -->|Yes| single[One filtered flow]
+    choice -->|No| root[Run root hook once]
+    root --> expand[CI expands project/platform rows]
+    expand --> rows[Each row runs its filtered flow]
+    rows --> staged[Collect staged files]
+    single --> staged
+    staged --> downstream[Release workflow consumes files]
+```
 
 ```yaml
 - uses: cloudvoyant/premise@v0
@@ -136,20 +115,27 @@ Commit and merge pipelines call the Premise action for each operation. GitHub st
     project: ${{ matrix.project }}
     platform: ${{ matrix.platform }}
     skip-root: true
-    channel: rc
-    version: ${{ needs.plan.outputs.version }}
-    output-dir: ${{ runner.temp }}/premise-files
-
-- uses: cloudvoyant/premise@v0
-  env:
-    GH_TOKEN: ${{ github.token }}
-  with:
-    command: release
-    channel: rc
-    version: ${{ needs.plan.outputs.version }}
-    files-dir: ${{ runner.temp }}/premise-files
+    release: none
 ```
 
-The plan operation exports `mode`, `runner`, `matrix`, `native`, and `release_version`. The CLI writes the schedule directly to `GITHUB_OUTPUT`, without shell parsing. A marked feature-branch push (`[publish-rc]`) plans an RC; pull request checks do not publish. RC releases are GitHub prereleases and do not replace the latest stable release. The package job runs after successful publication even when the other runner shape was skipped.
+### CI provider outputs
 
-The flow engine owns selection, task order, host validation, safe release planning, and file staging. The release publisher owns file validation, tag safety, one combined GitHub Release, and later package publication. GitHub Actions owns runner and matrix selection, job dependencies, artifact transfer, and credential boundaries. A green check or dry run does not prove publication: inspect the hosted tag, release, archives, native assets, and registry packages before claiming it succeeded.
+`pm ci plan --ci-output` formats the plan through the workspace's configured CI provider. The GitHub adapter writes step-output values, including the task matrix and migration matrix. `--json` returns the runner-independent plan. `--github-output` remains a compatibility alias for existing released workflows. CI-specific formatting lives under `core/providers`, not in command handlers or workflow Python scripts.
+
+### API
+
+| CLI command | Action command | Behavior |
+| --- | --- | --- |
+| `pm ci plan --flow FLOW` | `plan` | Return the runner schedule. |
+| `pm ci flow FLOW` | `flow` | Run host-compatible tasks. |
+| `pm ci flow FLOW --project NAME --platform OS` | `flow-matrix` | Run one declared project/platform pair. |
+
+See [Project](project.md) for declarations and project listing, [Release](release.md) for publication, and [Infrastructure](infrastructure.md) for deployment commands.
+
+## Implementation Details
+
+`--project` and `--platform` filter work without changing task order. An unfiltered local flow excludes projects that require another operating system. A matrix row requires a matching host. `--root-only` runs the workspace hook. `--skip-root` prevents repeated root work in matrix rows.
+
+`pm ci plan --github-output` writes `mode`, `runner`, `matrix`, `native`, and `release_version` to `GITHUB_OUTPUT`. `--json` reports the same schedule locally. GitHub owns job dependencies and file transfer. Native output uses job artifacts.
+
+A `[publish-rc]` push can select RC publication after validation. Pull requests never publish. Platform jobs stage files but cannot publish independently. Release credentials belong to publication jobs.

@@ -1,0 +1,17 @@
+workspace:
+  name: static-client
+  kind: monorepo
+  schema-version: "0.2"
+  providers: { ci: github, tools: mise, tasks: mise, infra: pulumi, versioning: svu }
+  infra:
+    directory: infra
+  projects:
+    - name: web
+      template: fixture:static-app
+      path: apps/web
+  deployment:
+    applications:
+      - project: web
+        deploy: deploy
+        health: health
+        rollback: rollback

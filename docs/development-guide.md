@@ -32,7 +32,7 @@ core/release_backends.go # Release sequencing across selected managers
 core/backends/go.go     # Go artifact policy
 core/backends/cargo.go  # Cargo metadata, artifact, and publication policy
 core/backends/bun.go    # Bun metadata and npm publication policy
-cmd/package_manager_plugins.go # CLI composition of built-in backends
+core/backends/register.go # Registration of built-in backends
 core/ci.go             # Lifecycle selection and release-phase gating
 core/release.go        # Shared stable/RC release preparation and publication
 core/version.go        # Semantic version calculation and validation
@@ -40,7 +40,7 @@ docs/modules/          # Per-module design, API usage, and implementation detail
 go.mod                # Module manifest
 mise.toml             # Task runner and tool versions
 action.yml            # Published composite action (root — use a v0 tag while premise is in alpha)
-.github/workflows/    # Own CI + published reusable workflows
+.github/workflows/    # on-commit, on-deploy, and on-merge only
 ```
 
 ## Development Workflow
@@ -78,7 +78,7 @@ The CLI composition root explicitly registers its built-in Go, Cargo, and Bun ba
     install-premise: build
 ```
 
-Premise supports `on-commit`, `on-merge`, and `on-release` lifecycle flows. A root Mise task with the same name overrides the convention-based fallback lifecycle. The flow command still owns guarded RC or stable publication after that lifecycle. Without an override, Premise uses `workspace.kind` to select the monorepo or template-registry lifecycle. A root can contain both generated projects and template declarations; the kind controls lifecycle behavior rather than content.
+Premise supports `on-commit`, `on-merge`, and `on-deploy` lifecycle flows. A root Mise task with the same name runs before project checks. Publish RC or stable artifacts after the selected checks pass. An explicit environment selects the environment part of the lifecycle. It calls the infrastructure, migration, and deployment modules. Without an override, Premise uses `workspace.kind` to select the monorepo or template-registry lifecycle. A root can contain both generated projects and template declarations; the kind controls lifecycle behavior rather than content.
 
 A scoped `pm ci flow` builds native files for a declared project and platform. Pass `--project`, `--platform`, `--channel` (`stable` or `rc`), `--version`, and an empty absolute `--output-dir`. The project's `release:build` Mise task receives `RELEASE_VERSION`, `PREMISE_RELEASE_CHANNEL`, and `PREMISE_ARTIFACT_DIR` and must write nonempty files there. The project owns its build commands and version overrides. The flow stages files without publishing packages or creating a tag.
 
@@ -114,3 +114,7 @@ pm version next                     # next version from git history
 pm version bump patch|minor|major   # explicit bump
 pm version rc --identifier <id>     # MAJOR.MINOR.PATCH-rc.<id>
 ```
+
+## Infrastructure command tests
+
+Run `mise run e2e:infra` separately on demand with a dedicated GCP project and an existing GCS state backend. The [static GCS fixture](../e2e/testdata/pulumi/README.md) uses `pm ci` flows across environments. Infra apply creates a bucket. Deployment uploads a static page. A fake migration writes a marker. The same fixture tests automatic rollback and cleanup. Infrastructure validation does not run in CI.

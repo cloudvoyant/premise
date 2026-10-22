@@ -90,7 +90,7 @@ Update documentation when:
 Documentation files:
 
 - `README.md` - Quick start and overview
-- `docs/user-guide.md` - Setup and usage guide
+- `docs/guides/README.md` - Setup and usage guide
 - `docs/architecture.md` - Design, architecture, and implementation
 - `templates/README.md` - Language template catalog and task contract
 

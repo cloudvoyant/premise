@@ -20,25 +20,15 @@ Mise installs the pinned tools and runs repository tasks. The repository stores 
 
 ### GitHub Actions For CI/CD
 
-`.github/workflows/on-commit.yml` verifies pull requests and feature-branch pushes through the root `action.yml`; for a feature-branch push whose HEAD commit contains `[publish-rc]`, the `on-commit` flow also invokes the opt-in RC task. For Go, that task only prints the standard skip message. `.github/workflows/on-merge.yml` delegates the complete trunk lifecycle to the `on-merge` flow, which invokes the stable release phase after validation. `.github/workflows/on-deploy.yml` exposes the deploy flow.
+`.github/workflows/on-commit.yml` verifies pull requests and feature-branch pushes through the root `action.yml`; for a feature-branch push whose HEAD commit contains `[publish-rc]`, the `on-commit` flow also invokes the opt-in RC task. For Go, that task only prints the standard skip message. `.github/workflows/on-merge.yml` delegates the complete trunk lifecycle to the `on-merge` flow, which invokes the stable release phase after validation. `.github/workflows/on-deploy.yml` exposes manual deployment only. Feature-branch previews run in `on-commit.yml`, and preview cleanup runs in `on-merge.yml`.
 
-The workflows run repository checks through `mise`. The merge workflow runs the stable release after validation. The deploy workflow runs the deploy flow. Generated commit and merge workflows grant `id-token: write` so npm can request a GitHub OIDC token for trusted publishing or provenance. The commit flow publishes release candidates only on marked feature-branch pushes, not on pull requests. The action supports `pre-built`, `build`, and `skip` installation modes.
+The workflows run repository checks through `mise`. The merge workflow runs the stable release after validation. The manual deploy workflow calls the environment CI flow for migrations, infrastructure updates, application deployment, and recovery. Feature previews use the same flow inside `on-commit.yml`, after task execution and publication. Only `on-commit.yml`, `on-deploy.yml`, and `on-merge.yml` are allowed. Preview cleanup stays in `on-merge.yml`, including branch deletion. Infrastructure tests run separately on demand. Generated commit and merge workflows grant `id-token: write` so npm can request a GitHub OIDC token for trusted publishing or provenance. The commit flow publishes release candidates only on marked feature-branch pushes, not on pull requests. The action supports `pre-built`, `build`, and `skip` installation modes.
 
 The action restores the standard Go, Cargo, and Bun caches and project `target` directories before it runs tasks. It uses the same OS, architecture, and dependency-lockfile restore prefix in commit, merge, and platform-build workflows. Each job saves a new snapshot so a later job can reuse its newly compiled dependencies. GitHub's branch access rules and cache quota still apply; this is not a shared disk across runners. CI does not override the local build target: Cargo release tasks resolve its workspace target with `cargo metadata`. Template tests inspect `clean` without running it, and release tasks remove only stale packaged installer files.
 
 ### CI/CD Secrets
 
-Org-level secrets are utilized to avoid the need for setting up secrets for every new project. This means setup is only needed once.
-
-For GCP (default):
-
-- `GCP_SA_KEY` - Service account JSON key
-- `GCP_REGISTRY_PROJECT_ID`, `GCP_REGISTRY_REGION`, `GCP_REGISTRY_NAME` - Registry configuration
-
-For other registries:
-
-- npm: `NPM_TOKEN`
-- PyPI: `PYPI_TOKEN`
+Deployment tools belong in Mise. The CI runner supplies standard provider credentials through OAuth/workload identity or protected CI secrets. Premise does not assume a default cloud or require a service-account key. See [Provider setup](providers/README.md) for authentication, tool installation, provider-specific variables, and the current state-protection limit.
 
 ### Cross-Platform Support
 
@@ -56,3 +46,9 @@ Key compatibility measures:
 - [GitHub Actions](https://docs.github.com/en/actions)
 - [GCP Artifact Registry](https://cloud.google.com/artifact-registry/docs)
 - [Conventional Commits](https://www.conventionalcommits.org/)
+
+## Pulumi environments and application secrets
+
+Use the environment stack commands for infrastructure and the separate deployment steps for setup, migration, infra updates and application rollback. Project Mise tasks use fnox to generate local and E2E env files. Pulumi configures deployed application secret bindings. Deployment administration credentials use provider-supported OAuth or CI secrets.
+
+See [infrastructure deployment](modules/infrastructure.md) and [secret management](guides/secrets-and-config.md) for configuration, commands and recovery.

@@ -8,19 +8,19 @@ The package-manager module defines how selected package ecosystems expose metada
 
 ### API
 
-| API                                                 | Use                                                                                                  |
-| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `PackageManagerBackend.ID()`                        | Return the value accepted by `workspace.package_managers`.                                           |
-| `PackageManagerBackend.Ecosystem()`                 | Return the incompatibility key, such as `npm`, `cargo`, or `go`.                                     |
-| `GetPackageMetadata(root, template)`                | Parse one native package specification into `PackageMetadata`.                                       |
-| `ValidatePackage(root, template)`                   | Perform static package validation.                                                                   |
-| `WillPublishOk(ctx, root, template, version, task)` | Preflight one package without publication.                                                           |
-| `CreateGoReleaserConfig(root, manifest)`            | Contribute GoReleaser `builds` and `archives`.                                                       |
-| `SupportsPackages()`                                | Report whether the manager publishes a language registry package.                                    |
-| `PublishPackages(ctx, root, version, task, ...)`    | Preflight and publish eligible packages.                                                             |
-| `ReleaseWorkspace(ctx, root, ...)`                  | Prepare the workspace used for artifact builds.                                                      |
-| `RegisterPackageManagerBackend(backend)`            | Register an implementation before invoking release APIs.                                             |
-| `PackageMetadata`                                   | Carry manager-neutral package name, version, path, registry, visibility, and publication capability. |
+| API | Use |
+| --- | --- |
+| `PackageManagerBackend.ID()` | Return the value accepted by `workspace.package_managers`. |
+| `PackageManagerBackend.Ecosystem()` | Return the incompatibility key, such as `npm`, `cargo`, or `go`. |
+| `GetPackageMetadata(root, template)` | Parse one native package specification into `PackageMetadata`. |
+| `ValidatePackage(root, template)` | Perform static package validation. |
+| `WillPublishOk(ctx, root, template, version, task)` | Preflight one package without publication. |
+| `CreateGoReleaserConfig(root, manifest)` | Contribute GoReleaser `builds` and `archives`. |
+| `SupportsPackages()` | Report whether the manager publishes a language registry package. |
+| `PublishPackages(ctx, root, version, task, ...)` | Preflight and publish eligible packages. |
+| `ReleaseWorkspace(ctx, root, ...)` | Prepare the workspace used for artifact builds. |
+| `RegisterPackageManagerBackend(backend)` | Register an implementation before invoking release APIs. |
+| `PackageMetadata` | Carry manager-neutral package name, version, path, registry, visibility, and publication capability. |
 
 ### Usage
 
