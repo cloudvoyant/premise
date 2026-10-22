@@ -27,6 +27,7 @@ func InfraCommand(scaffold core.WorkspaceScaffold) *cobra.Command {
 		InfraApplyCommand(),
 		InfraOutputCommand(),
 		InfraQueryCommand(),
+		InfraExistsCommand(),
 		InfraDestroyCommand(),
 	)
 	return command
@@ -299,5 +300,34 @@ func InfraAuthCommand() *cobra.Command {
 	}
 	command.Flags().Bool("ci", false, "Use CI identity instead of interactive OAuth")
 	command.Flags().String("env-file", "", "Append credential paths to the CI environment file")
+	return command
+}
+
+func InfraExistsCommand() *cobra.Command {
+	var options core.InfraOptions
+	command := &cobra.Command{
+		Use:   "exists",
+		Short: "Report whether an environment has saved application resources",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			root, err := premiseRoot()
+			if err != nil {
+				return err
+			}
+			resolved, err := core.ResolveInfraOptions(cmd.Context(), root, options)
+			if err != nil {
+				return err
+			}
+			exists, err := core.InfrastructureExists(cmd.Context(), root, resolved, cmd.ErrOrStderr())
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), exists)
+			return err
+		},
+	}
+	command.Flags().StringVar(&options.Environment, "env", "", "Environment: dev, stage, prod, or preview")
+	command.Flags().StringVar(&options.Branch, "branch", "", "Preview branch identity")
+	command.Flags().StringVar(&options.Backend, "backend", "", "Named saved backend override")
 	return command
 }

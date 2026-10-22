@@ -13,8 +13,9 @@ This repository and generated Premise projects may contain only `on-commit.yml`,
 Keep plan, task fan-out, and publication before the environment flow. Existing
 environments migrate before the infrastructure update; new environments migrate
 after the first apply. Clients apply database infrastructure changes separately
-before schema migrations. Deployment and recovery follow the update and required
-migrations. Changes to this flow require explicit user approval. Run live
+before schema migrations. Deployment follows the update and required migrations. Infra and migration failures
+stop the flow. Application deploy or health failures call client rollback tasks, which
+use platform history. Do not add custom recovery storage, ledgers, or locks. Changes to this flow require explicit user approval. Run live
 infrastructure validation separately on demand; do not add it to CI.
 
 Infrastructure authentication belongs to Premise provider adapters, invoked with
@@ -63,7 +64,7 @@ outcome.
 
 # Module organization
 
-Keep infra querying and setup in the infra module, and deployment phases and records
+Keep infra querying and setup in the infra module, and application deployment and rollback tasks
 in the deploy module. Put provider interfaces and implementations in core/providers.
 Put newly introduced external-tool wrappers in core/extensions. Move existing wrappers
 in a separate follow-up. Avoid comments that repeat a command's name and description.

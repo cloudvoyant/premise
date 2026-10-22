@@ -13,10 +13,6 @@ fi
 if [ "$1" = "stack" ] && [ "$2" = "select" ]; then
  [ "$TEST_FAILURE_PHASE" != "init" ] || exit 1
 fi
-if [ "$1" = "stack" ] && [ "$2" = "output" ]; then
- [ "$TEST_FAILURE_PHASE" != "record" ] || exit 1
- printf '{"deploymentId":"deployment-%s"}' "$PM_RELEASE"
-fi
 if [ "$1" = "up" ]; then
  [ "$TEST_FAILURE_PHASE" != "apply" ] || exit 1
 fi

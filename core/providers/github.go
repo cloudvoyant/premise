@@ -25,6 +25,7 @@ func (provider GitHub) WritePlan(output io.Writer, plan CIPlan) error {
 		"mode":             plan.Mode,
 		"runner":           plan.Runner,
 		"native":           plan.HasNative,
+		"has_infra":        plan.HasInfrastructure,
 		"matrix":           map[string]any{"include": plan.Matrix},
 		"has_migrations":   plan.HasMigrations,
 		"migration_matrix": map[string]any{"include": plan.Migrations},

@@ -8,7 +8,6 @@ package core
 
 import (
 	"context"
-	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,52 +28,15 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-// ReleaseEnvironment contains immutable identities supplied by CI.
-type ReleaseEnvironment struct {
-	Release   string
-	Artifacts map[string]string
-}
+// ReleaseEnvironment contains the immutable application revision supplied by CI.
+type ReleaseEnvironment struct{ Release string }
 
-// ReadReleaseEnvironment fills unspecified identities from the CI environment.
-func ReadReleaseEnvironment(overrides ReleaseEnvironment) (ReleaseEnvironment, error) {
+// ReadReleaseEnvironment fills an unspecified revision from the CI environment.
+func ReadReleaseEnvironment(overrides ReleaseEnvironment) ReleaseEnvironment {
 	if overrides.Release == "" {
 		overrides.Release = os.Getenv("PM_RELEASE")
 	}
-	if len(overrides.Artifacts) == 0 {
-		artifacts, err := ParseArtifactReferences(os.Getenv("PM_ARTIFACTS"))
-		if err != nil {
-			return ReleaseEnvironment{}, err
-		}
-		overrides.Artifacts = artifacts
-	}
-	return overrides, nil
-}
-
-// ParseArtifactReferences accepts the JSON map or project=reference pairs used by CI.
-func ParseArtifactReferences(value string) (map[string]string, error) {
-	artifacts := map[string]string{}
-	if strings.TrimSpace(value) == "" {
-		return artifacts, nil
-	}
-	if strings.HasPrefix(strings.TrimSpace(value), "{") {
-		err := json.Unmarshal([]byte(value), &artifacts)
-		return artifacts, err
-	}
-	entries, err := csv.NewReader(strings.NewReader(value)).Read()
-	if err != nil {
-		return nil, err
-	}
-	for _, entry := range entries {
-		name, reference, ok := strings.Cut(entry, "=")
-		if !ok || name == "" || reference == "" {
-			return nil, fmt.Errorf("artifact references must be project=reference pairs")
-		}
-		if _, exists := artifacts[name]; exists {
-			return nil, fmt.Errorf("duplicate artifact for %s", name)
-		}
-		artifacts[name] = reference
-	}
-	return artifacts, nil
+	return overrides
 }
 
 // ReleasePlan describes the stable release decision for the current HEAD.

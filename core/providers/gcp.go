@@ -2,13 +2,10 @@ package providers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // GCP authenticates Google Cloud tools through local login or CI federation.
@@ -74,40 +71,4 @@ func (p GCP) Authenticate(ctx context.Context, root string, ci bool, stdin io.Re
 	}
 	success = true
 	return map[string]string{"GOOGLE_APPLICATION_CREDENTIALS": path, "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE": path}, nil
-}
-
-// Private helpers ------------------------------------------------------------
-
-func readGCSObject(ctx context.Context, location *url.URL) (StoredObject, error) {
-	metadata, err := objectCommand(ctx, "gcloud", "storage", "objects", "describe", location.String(), "--format=json")
-	if objectNotFound(err) {
-		return StoredObject{}, ErrObjectNotFound
-	}
-	if err != nil {
-		return StoredObject{}, fmt.Errorf("read %s: %w", location, err)
-	}
-	var version struct {
-		Generation string `json:"generation"`
-	}
-	if err := json.Unmarshal(metadata, &version); err != nil || version.Generation == "" {
-		return StoredObject{}, fmt.Errorf("GCS did not return a deployment record generation")
-	}
-	data, err := objectCommand(ctx, "gcloud", "storage", "cat", location.String()+"#"+version.Generation)
-	return StoredObject{Data: data, Version: version.Generation}, err
-}
-
-func writeGCSObject(ctx context.Context, location *url.URL, data []byte, version string) error {
-	path, cleanup, err := temporaryObjectBody(data)
-	if err != nil {
-		return err
-	}
-	defer cleanup()
-	args := []string{"storage", "cp", path, location.String(), "--quiet"}
-	if version == "*" {
-		args = append(args, "--if-generation-match=0")
-	} else if version != "" {
-		args = append(args, "--if-generation-match="+strings.TrimSpace(version))
-	}
-	_, err = objectCommand(ctx, "gcloud", args...)
-	return err
 }

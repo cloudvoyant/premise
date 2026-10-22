@@ -48,7 +48,7 @@ func ResolveInfraOptions(ctx context.Context, root string, options InfraOptions)
 		options.Backend = os.Getenv("PM_INFRA_BACKEND")
 	}
 	if options.Environment == "preview" && options.Branch == "" {
-		branch, err := CurrentFeatureBranch(ctx, root)
+		branch, err := extensions.CurrentFeatureBranch(ctx, root)
 		if err != nil {
 			return options, err
 		}
@@ -131,20 +131,13 @@ func ResolveInfrastructure(root string, options InfraOptions) (InfraResolution, 
 }
 
 // RunInfra executes a provider-neutral operation with explicit backend and stack.
-func RunInfra(ctx context.Context, root, operation string, options InfraOptions, stdin io.Reader, stdout, stderr io.Writer) (resultErr error) {
+func RunInfra(ctx context.Context, root, operation string, options InfraOptions, stdin io.Reader, stdout, stderr io.Writer) error {
 	if err := EnsureInfrastructureEnvironment(root, runningInCI()); err != nil {
 		return err
 	}
 	resolution, err := ResolveInfrastructure(root, options)
 	if err != nil {
 		return err
-	}
-	if operation == "init" || operation == "apply" || operation == "destroy" {
-		release, err := acquireInfrastructureOwnership(ctx, root, resolution)
-		if err != nil {
-			return err
-		}
-		defer func() { resultErr = errors.Join(resultErr, release()) }()
 	}
 	if stderr != nil {
 		fmt.Fprintf(stderr, "Infrastructure %s: %s stack=%s backend=%s (%s)\n", operation, resolution.ProjectName, resolution.Stack, resolution.BackendName, resolution.BackendURL)
@@ -357,16 +350,11 @@ func InfrastructureExists(ctx context.Context, root string, options InfraOptions
 }
 
 // PrepareInfrastructure installs program dependencies and selects the configured stack.
-func PrepareInfrastructure(ctx context.Context, root string, options InfraOptions, stdin io.Reader, stdout, stderr io.Writer) (resultErr error) {
+func PrepareInfrastructure(ctx context.Context, root string, options InfraOptions, stdin io.Reader, stdout, stderr io.Writer) error {
 	destination, err := ResolveInfrastructure(root, options)
 	if err != nil {
 		return err
 	}
-	release, err := acquireInfrastructureOwnership(ctx, root, destination)
-	if err != nil {
-		return err
-	}
-	defer func() { resultErr = errors.Join(resultErr, release()) }()
 	return prepareInfrastructure(ctx, destination, infraCommandRunner{stdin: stdin, stdout: stdout, stderr: stderr}, nil)
 }
 

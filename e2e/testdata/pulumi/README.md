@@ -47,4 +47,4 @@ The secrets CLI test uses this same client. It pulls dev, stage, prod, and previ
 PREMISE_TEST_FNOX=1 go test ./e2e -run '^TestSecretsPull' -count=1
 ```
 
-The application uses an `as_file` JSON secret in each fnox profile. These documents contain test defaults only. The live flow runs `pm secrets pull` after apply. Its `secrets:pull` task combines the document's message with the selected stack's bucket name. Preview deployment uses on-commit, manual environments use on-deploy, and preview deletion uses on-merge.
+Local env-file generation uses an `as_file` JSON secret in each fnox profile. These documents contain test defaults only. The live flow runs `pm secrets pull` after apply. Its Bash `secrets:pull` task writes the document's message and selected stack bucket name into an ignored env file. Preview deployment uses on-commit, manual environments use on-deploy, and preview deletion uses on-merge.

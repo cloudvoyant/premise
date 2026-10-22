@@ -80,7 +80,6 @@ type Project struct {
 	Path     string              `yaml:"path"`
 	CI       PlatformDeclaration `yaml:"ci,omitempty"`
 	Answers  map[string]string   `yaml:"answers,omitempty"`
-	Secrets  *ProjectSecrets     `yaml:"secrets,omitempty"`
 }
 
 type Template struct {
@@ -122,19 +121,10 @@ type InfraEnvironment struct {
 	Config  map[string]string `yaml:"config,omitempty"`
 }
 
-// TaskReference names a project-owned recovery task.
-type TaskReference struct {
-	Project string `yaml:"project"`
-	Task    string `yaml:"task"`
-}
-
-// Deployment declares ordering and client-owned recovery contracts.
+// Deployment selects applications and optional migration groups.
 type Deployment struct {
 	MigrationGroups map[string][]string     `yaml:"migration_groups,omitempty"`
 	Applications    []DeploymentApplication `yaml:"applications"`
-	Recovery        DeploymentRecovery      `yaml:"recovery"`
-	Records         string                  `yaml:"records,omitempty"`
-	RecordOutputs   []string                `yaml:"record_outputs,omitempty"`
 }
 
 // DeploymentApplication names optional extra deploy work and required recovery tasks.
@@ -144,13 +134,6 @@ type DeploymentApplication struct {
 	Deploy   string `yaml:"deploy,omitempty"`
 	Health   string `yaml:"health"`
 	Rollback string `yaml:"rollback"`
-}
-
-// DeploymentRecovery declares compensation without guessing database down migrations.
-type DeploymentRecovery struct {
-	Migration   *TaskReference `yaml:"migration,omitempty"`
-	FirstDeploy *TaskReference `yaml:"first_deploy"`
-	Database    *TaskReference `yaml:"database,omitempty"`
 }
 
 var validPlatforms = map[string]struct{}{"linux": {}, "macos": {}, "windows": {}}
@@ -495,9 +478,6 @@ func (manifest Config) Validate() error {
 		}
 		if err := ValidatePlatformDeclaration(project.CI); err != nil {
 			return fmt.Errorf("workspace.projects[%d].ci: %w", index, err)
-		}
-		if err := validateProjectSecrets(project); err != nil {
-			return err
 		}
 		projectNames[project.Name] = struct{}{}
 		projectPaths[project.Path] = struct{}{}
@@ -881,15 +861,6 @@ func validateInfrastructure(manifest Config) error {
 	for _, p := range manifest.Workspace.Projects {
 		projects[p.Name] = p
 	}
-	check := func(ref *TaskReference) error {
-		if ref == nil {
-			return nil
-		}
-		if _, ok := projects[ref.Project]; !ok || ref.Task == "" {
-			return fmt.Errorf("invalid deployment task %s/%s", ref.Project, ref.Task)
-		}
-		return nil
-	}
 	seen := map[string]bool{}
 	for _, a := range d.Applications {
 		if _, ok := projects[a.Project]; !ok {
@@ -921,14 +892,7 @@ func validateInfrastructure(manifest Config) error {
 			grouped[project] = true
 		}
 	}
-	if d.Recovery.FirstDeploy == nil {
-		return fmt.Errorf("deployment requires first_deploy recovery task")
-	}
-	for _, r := range []*TaskReference{d.Recovery.FirstDeploy, d.Recovery.Migration, d.Recovery.Database} {
-		if err := check(r); err != nil {
-			return err
-		}
-	}
+
 	return nil
 }
 

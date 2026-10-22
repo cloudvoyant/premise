@@ -24,7 +24,7 @@ type MigrationGroup struct {
 func PlanMigrations(root string, manifest Config) ([]MigrationGroup, error) {
 	deployment := manifest.Workspace.Deployment
 	if deployment == nil {
-		return nil, fmt.Errorf("workspace.deployment is not configured")
+		return []MigrationGroup{}, nil
 	}
 	migrating := map[string]bool{}
 	for _, app := range deployment.Applications {
@@ -83,7 +83,7 @@ func PlanMigrations(root string, manifest Config) ([]MigrationGroup, error) {
 
 // RunMigrations runs optional application tasks concurrently across independent groups.
 // Tasks within an explicitly shared group run in order. All workers stop before return.
-func RunMigrations(ctx context.Context, root string, options InfraOptions, group string, stdout, stderr io.Writer) (resultErr error) {
+func RunMigrations(ctx context.Context, root string, options InfraOptions, group string, stdout, stderr io.Writer) error {
 	manifest, err := LoadManifest(root + "/" + ManifestFilename)
 	if err != nil {
 		return err
@@ -92,9 +92,9 @@ func RunMigrations(ctx context.Context, root string, options InfraOptions, group
 	if err != nil {
 		return err
 	}
-	stdout, stderr = synchronizedDeploymentWriters(stdout, stderr)
+	stdout, stderr = synchronizedMigrationWriters(stdout, stderr)
 	runner := infraCommandRunner{stdout: stdout, stderr: stderr}
-	environment := map[string]string{"PM_BRANCH": options.Branch}
+	environment := map[string]string{"PM_ENV": options.Environment, "PM_BRANCH": options.Branch}
 	if manifest.Workspace.Infra != nil {
 		destination, err := ResolveInfrastructure(root, options)
 		if err != nil {
@@ -102,11 +102,6 @@ func RunMigrations(ctx context.Context, root string, options InfraOptions, group
 		}
 		environment["PM_STACK"], environment["PULUMI_BACKEND_URL"] = destination.Stack, destination.BackendURL
 		environment["PM_INFRA_BACKEND"] = options.Backend
-		release, err := acquireInfrastructureOwnership(ctx, root, destination)
-		if err != nil {
-			return err
-		}
-		defer func() { resultErr = errors.Join(resultErr, release()) }()
 
 	}
 	var workers sync.WaitGroup
@@ -122,7 +117,7 @@ func RunMigrations(ctx context.Context, root string, options InfraOptions, group
 		go func(selected MigrationGroup) {
 			defer workers.Done()
 			for _, project := range selected.Projects {
-				err := runDeploymentTask(ctx, root, manifest, TaskReference{Project: project, Task: "migrate"}, environment, runner, DeployOptions{InfraOptions: options})
+				err := runDeploymentTask(ctx, root, manifest, taskReference{Project: project, Task: "migrate"}, environment, runner, DeployOptions{InfraOptions: options})
 				if err != nil {
 					mutex.Lock()
 					failures = append(failures, err)
@@ -141,24 +136,24 @@ func RunMigrations(ctx context.Context, root string, options InfraOptions, group
 
 // Private helpers ------------------------------------------------------------
 
-type deploymentWriter struct {
+type migrationWriter struct {
 	destination io.Writer
 	mutex       *sync.Mutex
 }
 
-func (w deploymentWriter) Write(data []byte) (int, error) {
+func (w migrationWriter) Write(data []byte) (int, error) {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 	return w.destination.Write(data)
 }
 
-func synchronizedDeploymentWriters(stdout, stderr io.Writer) (io.Writer, io.Writer) {
+func synchronizedMigrationWriters(stdout, stderr io.Writer) (io.Writer, io.Writer) {
 	mutex := &sync.Mutex{}
 	if stdout != nil {
-		stdout = deploymentWriter{destination: stdout, mutex: mutex}
+		stdout = migrationWriter{destination: stdout, mutex: mutex}
 	}
 	if stderr != nil {
-		stderr = deploymentWriter{destination: stderr, mutex: mutex}
+		stderr = migrationWriter{destination: stderr, mutex: mutex}
 	}
 	return stdout, stderr
 }

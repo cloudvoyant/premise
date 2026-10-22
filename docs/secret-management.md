@@ -1,33 +1,22 @@
 # Secret management
 
-Application secrets live in GCP Secret Manager as JSON documents. Fnox retrieves each document and creates a temporary private file. Application tasks read that file through its environment variable.
+Fnox configuration owns local secret references. A project Mise task combines those values with saved infrastructure outputs and writes the env files that local runs need.
 
-Premise uses `fnox exec` for local runs and CI. It does not copy application secrets into GitHub or GitLab secrets. Deployment credentials use local OAuth or protected CI credentials and stay outside application secret documents.
+Pulumi supplies secrets to deployed applications through their cloud resources. Premise does not fetch application secrets during deployment or copy them into CI secrets. E2E tasks can use fnox for fixture and cleanup credentials.
 
 ## Usage
 
-Pin fnox in the workspace `mise.toml`:
+Pin the tools in the root `mise.toml`:
 
 ```toml
 [tools]
 fnox = "1.39.0"
+jq = "1.8.1"
 ```
 
-Declare an application's configuration and environment profiles in `premise.yaml`:
+Projects with a `secrets:pull` task must include `fnox.toml`. There is no secrets configuration in `premise.yaml`. The selected environment names the fnox profile: `dev`, `stage`, `prod`, or `preview`.
 
-```yaml
-workspace:
-  projects:
-    - name: web
-      template: registry:static-app
-      path: apps/web
-      secrets:
-        config: fnox.toml
-        profiles: { dev: dev, stage: stage, prod: prod, preview: preview }
-        file: .env.local
-```
-
-Create `apps/web/fnox.toml` with references to JSON documents:
+For example, `apps/web/fnox.toml` can reference JSON documents in GCP Secret Manager:
 
 ```toml
 [providers.gcp]
@@ -47,86 +36,61 @@ APP_CONFIG = { provider = "gcp", value = "web-prod", as_file = true }
 APP_CONFIG = { provider = "gcp", value = "web-preview", as_file = true }
 ```
 
-Each referenced secret contains JSON, such as `{"message":"hello"}`. Store real values in Secret Manager. Commit references only. GCP Secret Manager is separate from the GCS bucket that stores Pulumi state.
+Each document contains JSON such as `{"message":"hello"}`. Fnox retrieves the selected document and supplies its temporary filename as `APP_CONFIG`. Commit references only. Store real values in Secret Manager.
 
-Run an application command:
-
-```sh
-pm secrets exec --project web --env dev -- mise run start
-```
-
-The child receives `APP_CONFIG` as a temporary file path. Its JSON parser reads the values. Fnox removes the file after the child exits, including a failed exit. Premise does not parse the document or maintain a second set of scalar secret keys.
-
-Deployment and migration tasks automatically use fnox when their application declares `secrets`. The selected environment chooses the profile. Recovery tasks run without automatic secret resolution so a secret-provider failure cannot prevent cleanup. If recovery requires secrets, the client task explicitly calls fnox.
-
-### Generate an env file
-
-An env file is a snapshot for tools that require one, including end-to-end tests. Define the project task `secrets:pull`. It writes only dotenv content to standard output. Send diagnostics to standard error and never print credentials there.
+Define a Bash task in the project's `mise.toml`:
 
 ```toml
 [tasks."secrets:pull"]
-run = "python3 tasks/env.py"
+shell = "bash -c"
+run = '''
+set -euo pipefail
+umask 077
+git check-ignore --quiet -- .env.local
+scope=(--env "$PM_ENV")
+if [[ "$PM_ENV" == preview ]]; then scope+=(--branch "$PM_BRANCH"); fi
+bucket="$(pm infra query "${scope[@]}" --output bucketName)"
+temporary="$(mktemp .env.local.XXXXXX)"
+trap 'rm -f "$temporary"' EXIT
+jq -r --arg bucket "$bucket" '
+  "APP_MESSAGE=" + (.message | @json),
+  "BUCKET_NAME=" + ($bucket | @json)
+' "$APP_CONFIG" > "$temporary"
+mv "$temporary" .env.local
+'''
 ```
 
-For example, `tasks/env.py` combines the JSON document with a saved infrastructure output:
+The task owns the output filename and encoding. This example uses JSON quoting for its dotenv strings. Use the consuming application's dotenv encoder when its rules differ. The temporary file preserves the previous env file if the query or JSON conversion fails.
 
-```python
-import json
-import os
-import subprocess
-
-with open(os.environ["APP_CONFIG"]) as source:
-    secrets = json.load(source)
-
-args = ["pm", "infra", "query", "--env", os.environ["PM_ENV"],
-        "--output", "bucketName"]
-if os.environ["PM_ENV"] == "preview":
-    args += ["--branch", os.environ["PM_BRANCH"]]
-bucket = subprocess.check_output(args, text=True).strip()
-
-print("APP_MESSAGE=" + json.dumps(secrets["message"]))
-print("BUCKET_NAME=" + json.dumps(bucket))
-```
-
-JSON string quoting works for the fixture's dotenv reader. A client with multiline or other special values must use its dotenv library's encoder.
-
-Add the destination to `.gitignore`, then run:
+Ignore `.env.local` and its `.env.local.*` temporary files, then run:
 
 ```sh
 pm secrets pull --project web --env dev
 pm secrets pull --project web --env preview --branch feature/example
 ```
 
-Premise captures the task output and writes the ignored destination with mode `0600`. It replaces the file only after the task succeeds. The default filename is `.env.local`. Omit `--project` to select all applications with a secrets declaration.
+Premise sets `PM_ENV` and `PM_BRANCH`, selects the matching fnox profile, and runs the task. Omit `--project` to run all declared project tasks with that name. Projects without the task are skipped.
 
-`PM_ENV` and `PM_BRANCH` identify the selected environment. Infra queries inherit `PM_INFRA_BACKEND` when a deployment selects a backend. A profile can use `{branch}` to select the normalized preview identity. That profile must exist in fnox.
+The application or Mise loads the generated file for local runs. There is no public `pm secrets exec` or `pm secrets sync` command.
 
-## CI authentication
+## Deployment and CI
 
-Run native authentication before the environment flow:
+Client Pulumi programs obtain application secrets from the chosen secret provider and configure the deployed resources. For example, a client can bind a Secret Manager reference to a service. This is client infrastructure code.
 
-```sh
-pm infra auth --ci --env-file "$GITHUB_ENV"
-pm ci flow on-deploy --environment stage --release none
-```
+Deployment credentials use local OAuth, CI workload identity, or protected CI credentials. They stay outside application secret documents. Run `pm infra auth --ci` before infrastructure work. Provider adapters own authentication. Mise installs the tools.
 
-The provider identity needs access to the referenced secrets, infrastructure resources, and state backend. GCP uses Application Default Credentials locally and workload identity federation in CI. A gcloud CLI login alone does not create Application Default Credentials.
+If an E2E task needs database or authentication-provider credentials for fixturing, configure those references in fnox. The task can use the same env-file generation path in CI. Ordinary application deployment does not generate local env files or automatically invoke fnox.
 
-Use protected CI credentials only for deployment authentication when OAuth or workload identity is unavailable. Do not store them in the application's JSON document. Do not generate an application env file in CI unless a task requires it.
+GCP fnox access requires Application Default Credentials and permission to read the selected secret. A gcloud CLI login alone does not establish that access. GCP Secret Manager is separate from the GCS backend used for Pulumi state.
 
-Fnox and its child inherit the job's credentials. Scope the job identity to the resources it needs. Fnox manages temporary-file lifetime. It does not make arbitrary application output safe to log. Tasks must not print JSON documents, transformed secret values, or shell traces.
+## Failures and rotation
 
-## Rotation and failures
+Fnox owns secret resolution and temporary JSON files. The project task owns env-file creation. Use private permissions, ignored destinations, and atomic replacement as shown above.
 
-Each execution fetches secrets through fnox with daemon caching disabled. Rotate the source document, then run the command again. Regenerate an env snapshot when its values change.
-
-If a profile, document, or task fails, the operation fails. A failed pull leaves the previous env file intact. The pull suppresses task diagnostics because they can contain secret values. Interactive execution forwards child output.
-
-Recovery records contain release identities and artifact references. They do not contain application secrets. Clients own migration compatibility and any recovery task that requires secrets.
+Premise suppresses pull-task output because it can contain secret values. A task or provider failure fails the pull. Do not print credentials or enable shell tracing. Rotate the provider document and pull again to update local files.
 
 ## Architecture and references
 
 - [Secrets architecture](architecture/secrets.md)
-- [fnox exec](https://fnox.jdx.dev/cli/exec.html)
 - [fnox GCP Secret Manager](https://fnox.jdx.dev/providers/gcp-sm.html)
 - [Provider authentication](providers/README.md)

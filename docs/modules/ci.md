@@ -40,7 +40,7 @@ flowchart TD
     quality --> done[Flow completes]
 ```
 
-`on-commit` checks feature work. With `--environment preview`, it runs the preview environment sequence after checks and publication. `on-merge` checks trunk work. With `--environment preview --branch NAME`, it destroys that branch's preview. `on-deploy` runs a manually selected environment.
+`on-commit` checks feature work. With `--environment preview`, it runs the preview environment sequence after checks and publication. `on-merge` checks trunk work. The hosted workflow deploys dev after checks and publication. With `--environment preview --branch NAME`, the local flow destroys that branch's preview. `on-deploy` runs a manually selected environment. Workflows use the has_infra plan output from premise.yaml to skip deployment jobs for workspaces without infra.
 
 ```mermaid
 flowchart TD
@@ -58,7 +58,7 @@ flowchart TD
     Merge[on-merge with preview environment] --> Cleanup[Destroy preview]
 ```
 
-The CLI calls infrastructure, migration, and deployment module APIs. Clients apply database changes before an existing environment's migrations. See the [infrastructure module](infrastructure.md) for recovery.
+Hosted workflows call pm infra, pm migrate, and pm deploy in separate steps. The local CI flow calls the same module APIs. Clients apply database changes before an existing environment's migrations. See the [infrastructure module](infrastructure.md) for application rollback.
 
 ### Hosted matrix
 

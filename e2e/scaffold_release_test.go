@@ -76,7 +76,7 @@ func TestFreshBunScaffoldIsCIAndReleaseReady(t *testing.T) {
 				"permissions:\n  contents: write\n  id-token: write",
 				"uses: cloudvoyant/premise@v0",
 				"flow: on-merge",
-				"release: auto",
+				"release: ${{ github.event_name == 'push' && 'auto' || 'none' }}",
 			} {
 				assertFileContains(t, path, expected)
 			}

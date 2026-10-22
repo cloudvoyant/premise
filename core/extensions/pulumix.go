@@ -28,7 +28,7 @@ func (runner Pulumi) Run(ctx context.Context, directory, name string, arguments 
 	command.Dir = directory
 	command.Env = runner.Environment
 	if name == "pulumi" {
-		command.Env = PulumiEnvironment(command.Env)
+		command.Env = withEmptyStatePassphrase(command.Env)
 	}
 	command.Stdin, command.Stdout, command.Stderr = runner.Stdin, runner.Stdout, runner.Stderr
 	if err := command.Run(); err != nil {
@@ -37,8 +37,10 @@ func (runner Pulumi) Run(ctx context.Context, directory, name string, arguments 
 	return nil
 }
 
-// PulumiEnvironment uses the agreed empty state passphrase pending backend encryption.
-func PulumiEnvironment(environment []string) []string {
+// Private helpers ------------------------------------------------------------
+
+// withEmptyStatePassphrase overrides inherited passphrase settings until backend encryption is available.
+func withEmptyStatePassphrase(environment []string) []string {
 	result := make([]string, 0, len(environment)+1)
 	for _, entry := range environment {
 		key, _, _ := strings.Cut(entry, "=")

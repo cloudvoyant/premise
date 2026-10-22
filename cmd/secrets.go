@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"github.com/cloudvoyant/premise/core"
+	"github.com/cloudvoyant/premise/core/extensions"
 	"github.com/spf13/cobra"
 )
 
@@ -10,11 +11,11 @@ import (
 func SecretsCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "secrets",
-		Short: "Run with JSON secrets or generate application env files",
+		Short: "Generate local env files using project tasks",
 		Args:  cobra.NoArgs,
 		RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
-	command.AddCommand(SecretsPullCommand(), SecretsExecCommand())
+	command.AddCommand(SecretsPullCommand())
 	return command
 }
 
@@ -32,7 +33,7 @@ func SecretsPullCommand() *cobra.Command {
 			environment, _ := cmd.Flags().GetString("env")
 			branch, _ := cmd.Flags().GetString("branch")
 			if environment == "preview" && branch == "" {
-				branch, err = core.CurrentFeatureBranch(cmd.Context(), root)
+				branch, err = extensions.CurrentFeatureBranch(cmd.Context(), root)
 			}
 			if err != nil {
 				return err
@@ -41,35 +42,7 @@ func SecretsPullCommand() *cobra.Command {
 		},
 	}
 	command.Flags().String("env", "dev", "Application environment: dev, stage, prod, preview")
-	command.Flags().String("project", "", "Application project (required for exec)")
-	command.Flags().String("branch", "", "Feature branch identity for preview")
-	return command
-}
-
-func SecretsExecCommand() *cobra.Command {
-	command := &cobra.Command{
-		Use:   "exec -- command [args...]",
-		Short: "Run a command with environment-scoped application values",
-		Args:  cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			root, err := premiseRoot()
-			if err != nil {
-				return err
-			}
-			project, _ := cmd.Flags().GetString("project")
-			environment, _ := cmd.Flags().GetString("env")
-			branch, _ := cmd.Flags().GetString("branch")
-			if environment == "preview" && branch == "" {
-				branch, err = core.CurrentFeatureBranch(cmd.Context(), root)
-			}
-			if err != nil {
-				return err
-			}
-			return core.ExecProjectSecrets(cmd.Context(), root, project, environment, branch, args, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
-		},
-	}
-	command.Flags().String("env", "dev", "Application environment: dev, stage, prod, preview")
-	command.Flags().String("project", "", "Application project (required for exec)")
+	command.Flags().String("project", "", "Application project; defaults to all projects with secrets:pull")
 	command.Flags().String("branch", "", "Feature branch identity for preview")
 	return command
 }

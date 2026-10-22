@@ -1,28 +1,27 @@
-# Application secrets architecture
+# Local env files architecture
 
 ## Overview
 
-Premise selects an application and environment. Fnox retrieves a JSON secret document and owns its temporary file. The application reads that file. Local commands and CI use the same path.
+Fnox stores secret references and environment profiles. A project Mise task writes the env file used by local runs or E2E tests. Client Pulumi code configures secrets for deployed applications.
 
-Env-file generation belongs to a project Mise task. That task can combine secret fields with saved Pulumi outputs. Premise captures its dotenv output and writes a private ignored file.
+Premise has one public secrets command: `pm secrets pull`. It does not introduce another secret schema, a process-execution command, or CI secret synchronization.
 
 ## Requirement
 
 ### Functional
 
-- Select one explicit fnox profile for each environment.
-- Run application commands through fnox exec locally and in CI.
-- Generate an optional env file from JSON secrets and infrastructure queries.
-- Preserve the existing env file when generation fails.
-- Run deployment and migration tasks with their application's secret profile.
+- Discover optional project `secrets:pull` tasks.
+- Select the fnox profile using the requested environment.
+- Give the task environment and preview branch context.
+- Let Bash combine fnox values and saved infra queries into env files.
+- Keep deployed application secrets in the client Pulumi program.
 
 ### Non-Functional
 
-- Store secret references in Git and secret values in the provider.
-- Give fnox ownership of resolution and temporary-file cleanup.
-- Keep cloud authentication in provider adapters.
-- Keep tool process boundaries in core/extensions.
-- Avoid CI copies of application secrets and a second scalar-key schema.
+- Keep provider references in fnox.toml and out of premise.yaml.
+- Keep secret values out of Git and command output.
+- Use standard tool behavior and client tasks.
+- Let the client task own filenames, permissions, and atomic replacement.
 
 ## Design
 
@@ -30,22 +29,18 @@ Env-file generation belongs to a project Mise task. That task can combine secret
 
 ```mermaid
 flowchart LR
-    CLI[Premise command] --> Secrets[Secrets module]
-    CI[CI flow] --> Deploy[Deploy and migration tasks]
-    Deploy --> Secrets
-    Secrets --> Fnox[Fnox extension]
-    Fnox --> Mise[Mise selects fnox version]
-    Mise --> Exec[fnox exec]
-    Exec --> Store[GCP Secret Manager]
-    Exec --> File[Temporary JSON file]
-    File --> Task[Application or Mise task]
+    User[pm secrets pull] --> Project[Find project Mise task]
+    Project --> Fnox[Fnox profile matches environment]
+    Fnox --> Provider[Secret provider]
+    Fnox --> Task[Bash secrets:pull task]
+    Task --> Query[pm infra query]
+    Query --> State[Selected Pulumi backend and stack]
+    Task --> File[Ignored private env file]
+    File --> Local[Local application or E2E tests]
+    Pulumi[Client Pulumi program] --> Remote[Deployed application secret bindings]
 ```
 
-- The secrets module selects the project, profile, and output destination.
-- The fnox extension launches the executable through Mise.
-- Fnox retrieves the document and manages its temporary file.
-- The client task parses JSON and owns application-specific values.
-- Provider adapters authenticate infrastructure tools and CI identities.
+The secrets module selects projects and environment context. The fnox extension supplies provider values to the task. The task writes its files. Pulumi owns deployed secret bindings.
 
 ### Data and Control Flow
 
@@ -53,66 +48,51 @@ flowchart LR
 sequenceDiagram
     actor User
     participant PM as pm secrets pull
-    participant Fnox as fnox exec
-    participant Store as Secret Manager
-    participant Task as mise secrets:pull
+    participant Fnox
+    participant Task as Bash Mise task
     participant Infra as pm infra query
     User->>PM: Project and environment
-    PM->>Fnox: Explicit configuration and profile
-    Fnox->>Store: Fetch JSON document
-    Store-->>Fnox: Secret payload
-    Fnox->>Task: APP_CONFIG points to private temporary file
-    Task->>Infra: Read selected environment output
+    PM->>Fnox: Project fnox.toml and environment profile
+    Fnox->>Task: JSON secret file path
+    Task->>Infra: Query selected environment
     Infra-->>Task: Bucket name
-    Task-->>PM: Dotenv content on stdout
-    Fnox->>Fnox: Remove temporary file
-    PM->>PM: Replace ignored env file with mode 0600
+    Task->>Task: Write temporary private env file
+    Task->>Task: Replace ignored destination
+    Task-->>Fnox: Exit
+    Fnox->>Fnox: Remove temporary secret file
 ```
 
-If fnox or the task fails, Premise keeps the previous env file. It does not print captured content or task diagnostics. `pm secrets exec` streams child output, so applications must avoid printing secrets.
-
-CI authenticates first. Deploy and migration tasks with a secrets declaration then use the same fnox execution path. Recovery runs without automatic secret resolution.
+The task receives `PM_ENV` and `PM_BRANCH`. It can select more than one local destination. The example task preserves the existing destination on failure. Premise suppresses output from the pull task.
 
 ### Interfaces and Contracts
 
-`ProjectSecrets` contains `config`, `profiles`, and the optional env `file`. Fnox configuration declares JSON documents with `as_file = true`. Premise does not expose scalar key selection or CI secret synchronization.
+`PullProjectSecrets` selects a named project or all projects with `secrets:pull`. Each selected project must contain `fnox.toml`. Fnox owns secret references and the profiles named dev, stage, prod, and preview.
 
-The `secrets:pull` task receives `PM_ENV`, `PM_BRANCH`, and inherited backend selection. It emits dotenv content on stdout. The caller chooses an ignored `.env` destination. The client owns JSON field names and dotenv encoding.
-
-`InfraProvider` owns cloud authentication. `CIProvider` owns runner outputs and identity exchange. Application secrets come from fnox, so CI adapters do not copy them between stores.
+No `ProjectSecrets` schema exists in premise.yaml. There is no declarative env mapping. The Bash task is the mapping and file-writing contract.
 
 ## Implementation
 
 ### Owned modules
 
 ```text
-cmd/
-  secrets.go                 # Flags and calls into the secrets module
-core/
-  secrets.go                 # Profiles, task execution, private env files
-  infra.go                   # Setup, apply, saved-state queries, authentication
-  deploy.go                  # Ordering, deployment, records, and recovery
-  release.go                 # Typed release values from the CI environment
-  extensions/
-    fnoxx.go                 # fnox exec process boundary
-    pulumix.go               # Pulumi process boundary through Mise
-  providers/
-    provider.go              # CIProvider and InfraProvider contracts
-    github.go                # GitHub outputs and identity exchange
-    gcp.go                   # GCP credentials and storage access
+cmd/secrets.go                 # Public pull command
+core/secrets.go                # Task discovery and environment context
+core/infra.go                  # Saved-state queries and native infra operations
+core/deploy.go                 # Application tasks and client rollback
+core/extensions/fnoxx.go       # Fnox process boundary
+core/extensions/pulumix.go     # Pulumi process boundary
+core/extensions/gitx.go        # Preview branch lookup
+core/providers/provider.go     # CI and infra provider interfaces
 ```
-
-Existing tool wrappers remain in place until a separate migration. The local review notes contain the requested tracker draft for that work.
 
 ### Validation
 
-The local CLI test executes real fnox across dev, stage, prod, and preview profiles. It tests private JSON files, successful cleanup, failed-child cleanup, and identical local/CI behavior. A second CLI test generates ignored env files and preserves an existing file after failure.
+The CLI test uses real fnox and a Bash task to generate private ignored env files. The live GCS test also queries the real environment bucket. It deploys a static page, runs a fake migration, and uses GCS object versions for application rollback.
 
-The opt-in live GCS flow combines a JSON secret with the bucket output in each environment. It also checks backend selection, migration execution, application upload, rollback, and merge cleanup. Run it separately from CI.
+Infrastructure and migration failures stop the pipeline. Application deploy or health failures call client rollback tasks. Native backend locking and CI environment concurrency replace custom recovery storage.
 
 ## References
 
 - [Secret management](../secret-management.md)
 - [Infrastructure module](../modules/infrastructure.md)
-- [fnox exec](https://fnox.jdx.dev/cli/exec.html)
-- [fnox GCP Secret Manager](https://fnox.jdx.dev/providers/gcp-sm.html)
+- [Pulumi rollback guidance](https://www.pulumi.com/docs/support/faq/infrastructure/)

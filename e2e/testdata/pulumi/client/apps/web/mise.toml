@@ -22,8 +22,20 @@ run = '../../tasks/static.sh health'
 [tasks.rollback]
 run = '../../tasks/static.sh rollback'
 
-[tasks.cleanup]
-run = '../../tasks/static.sh cleanup'
-
 [tasks."secrets:pull"]
-run = 'python3 ../../tasks/env.py'
+shell = "bash -c"
+run = '''
+set -euo pipefail
+umask 077
+git check-ignore --quiet -- .env.local
+args=(--env "$PM_ENV")
+if [[ "$PM_ENV" == preview ]]; then args+=(--branch "$PM_BRANCH"); fi
+bucket="$(pm infra query "${args[@]}" --output bucketName)"
+temporary="$(mktemp .env.local.XXXXXX)"
+trap 'rm -f "$temporary"' EXIT
+jq -r --arg bucket "$bucket" '
+  "APP_MESSAGE=" + (.message | @json),
+  "BUCKET_NAME=" + ($bucket | @json)
+' "$APP_CONFIG" > "$temporary"
+mv "$temporary" .env.local
+'''

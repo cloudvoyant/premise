@@ -21,30 +21,33 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+  PM_ENV: ${{ inputs.environment }}
   PREVIEW_BRANCH: ${{ inputs.environment == 'preview' && (inputs.branch || github.ref_name) || '' }}
   PM_BRANCH: ${{ inputs.environment == 'preview' && (inputs.branch || github.ref_name) || '' }}
-  INFRA_BACKEND: ${{ vars.PREMISE_INFRA_BACKEND }}
   GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
   GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
 
 jobs:
-  legacy:
-    if: vars.PREMISE_DEPLOY_ENABLED != 'true'
+  plan:
     runs-on: ubuntu-latest
+    outputs:
+      has_infra: ${{ steps.plan.outputs.has_infra }}
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.branch || github.sha }}
           persist-credentials: false
-      - uses: cloudvoyant/premise@v0.5.0-rc.261
+      - uses: cloudvoyant/premise@v0.5.0-rc.265
+        id: plan
         with:
+          command: plan
           flow: on-deploy
-          environment: ${{ inputs.environment }}
-          premise-version: v0.5.0-rc.261
+          premise-version: v0.5.0-rc.265
           install-premise: pre-built
 
   deploy:
-    if: vars.PREMISE_DEPLOY_ENABLED == 'true'
+    needs: plan
+    if: needs.plan.outputs.has_infra == 'true'
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     steps:
@@ -55,17 +58,26 @@ jobs:
       - uses: cloudvoyant/premise@v0.5.0-rc.261
         with:
           setup-only: true
-          release: none
           premise-version: v0.5.0-rc.261
           install-premise: pre-built
       - name: Authenticate infrastructure providers
         run: pm infra auth --ci --env-file "$GITHUB_ENV"
-      - name: Run environment flow
-        env:
-          PM_ARTIFACTS: ${{ vars.PREMISE_ARTIFACT_IDENTITIES }}
+      - name: Inspect environment
+        id: infrastructure
         run: |
-          PM_RELEASE="$(git rev-parse HEAD)"
-          export PM_RELEASE
-          args=(ci flow on-deploy --environment "$DEPLOY_ENVIRONMENT" --release none)
-          if [[ -n "$INFRA_BACKEND" ]]; then args+=(--backend "$INFRA_BACKEND"); fi
-          pm "${args[@]}"
+          echo "exists=$(pm infra exists --env "$PM_ENV" --branch "$PM_BRANCH")" >> "$GITHUB_OUTPUT"
+          echo "PM_RELEASE=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - name: Prepare infrastructure
+        run: pm infra setup --env "$PM_ENV" --branch "$PM_BRANCH"
+      - name: Migrate existing environment
+        if: steps.infrastructure.outputs.exists == 'true'
+        run: pm migrate --env "$PM_ENV" --branch "$PM_BRANCH"
+      - name: Preview infrastructure
+        run: pm infra plan --env "$PM_ENV" --branch "$PM_BRANCH"
+      - name: Apply infrastructure
+        run: pm infra apply --env "$PM_ENV" --branch "$PM_BRANCH" --yes
+      - name: Migrate new environment
+        if: steps.infrastructure.outputs.exists != 'true'
+        run: pm migrate --env "$PM_ENV" --branch "$PM_BRANCH"
+      - name: Deploy applications and check health
+        run: pm deploy --env "$PM_ENV" --branch "$PM_BRANCH"

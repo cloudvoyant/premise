@@ -18,12 +18,8 @@ func DeployCommand() *cobra.Command {
 				return err
 			}
 			release, _ := cmd.Flags().GetString("release")
-			artifacts, _ := cmd.Flags().GetStringToString("artifact")
-			runID, _ := cmd.Flags().GetString("run-id")
-			identities, err := core.ReadReleaseEnvironment(core.ReleaseEnvironment{Release: release, Artifacts: artifacts})
-			if err != nil {
-				return err
-			}
+
+			identities := core.ReadReleaseEnvironment(core.ReleaseEnvironment{Release: release})
 
 			environment, _ := cmd.Flags().GetString("env")
 			branch, _ := cmd.Flags().GetString("branch")
@@ -36,9 +32,8 @@ func DeployCommand() *cobra.Command {
 			}
 			deployment := core.DeployOptions{
 				InfraOptions: options,
-				RunID:        runID,
-				Release:      identities.Release,
-				Artifacts:    identities.Artifacts,
+
+				Release: identities.Release,
 			}
 			return core.RunApplicationDeployment(cmd.Context(), root, deployment, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
@@ -48,8 +43,6 @@ func DeployCommand() *cobra.Command {
 	command.Flags().Bool("shared", false, "Select only shared infrastructure")
 	command.Flags().String("backend", "", "Named saved backend; defaults to environment/workspace selection")
 	command.Flags().String("release", "", "Immutable release revision")
-	command.Flags().StringToString("artifact", nil, "Project=pinned artifact identity")
-	command.Flags().String("run-id", "", "Deployment identity; generated automatically for a local run")
 
 	return command
 }

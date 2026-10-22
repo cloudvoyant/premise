@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/cloudvoyant/premise/core/extensions"
 	"github.com/cloudvoyant/premise/core/providers"
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -31,12 +32,13 @@ func WriteCIPlanOutputs(output io.Writer, provider string, plan CISchedule) erro
 		return err
 	}
 	return adapter.WritePlan(output, providers.CIPlan{
-		Mode:          plan.Mode,
-		Runner:        plan.Runner,
-		HasNative:     plan.HasNative,
-		Matrix:        plan.Matrix,
-		Migrations:    plan.Migrations,
-		HasMigrations: len(plan.Migrations) > 0,
+		Mode:              plan.Mode,
+		Runner:            plan.Runner,
+		HasNative:         plan.HasNative,
+		HasInfrastructure: plan.HasInfrastructure,
+		Matrix:            plan.Matrix,
+		Migrations:        plan.Migrations,
+		HasMigrations:     len(plan.Migrations) > 0,
 	})
 }
 
@@ -159,14 +161,15 @@ type CIMatrixRow struct {
 }
 
 type CISchedule struct {
-	Mode        string              `json:"mode"`
-	Runner      string              `json:"runner,omitempty"`
-	HasNative   bool                `json:"has_native"`
-	Matrix      []CIMatrixRow       `json:"matrix"`
-	Excluded    []CIPlatformProject `json:"excluded"`
-	Migrations  []MigrationGroup    `json:"migrations"`
-	Environment string              `json:"environment,omitempty"`
-	Branch      string              `json:"branch,omitempty"`
+	Mode              string              `json:"mode"`
+	Runner            string              `json:"runner,omitempty"`
+	HasInfrastructure bool                `json:"has_infra"`
+	HasNative         bool                `json:"has_native"`
+	Matrix            []CIMatrixRow       `json:"matrix"`
+	Excluded          []CIPlatformProject `json:"excluded"`
+	Migrations        []MigrationGroup    `json:"migrations"`
+	Environment       string              `json:"environment,omitempty"`
+	Branch            string              `json:"branch,omitempty"`
 }
 
 // PlanCISchedule chooses one whole-runner flow or one unified matrix.
@@ -310,30 +313,17 @@ func RunCIFlowWithOptions(ctx context.Context, root string, flow CIFlow, environ
 			branch = os.Getenv("PM_BRANCH")
 		}
 		if target == "preview" && branch == "" {
-			branch, err = CurrentFeatureBranch(ctx, root)
+			branch, err = extensions.CurrentFeatureBranch(ctx, root)
 			if err != nil {
 				return err
 			}
 		}
 		infrastructure := InfraOptions{Environment: target, Branch: branch, Backend: options.Backend}
-		if flow == CIFlowOnMerge {
+		if flow == CIFlowOnMerge && target == "preview" {
 			return RunInfra(ctx, root, "destroy", infrastructure, nil, stdout, stderr)
 		}
-		if manifest.Workspace.Deployment == nil {
-			if err := PrepareInfrastructure(ctx, root, infrastructure, nil, stdout, stderr); err != nil {
-				return err
-			}
-			if err := RunInfra(ctx, root, "plan", infrastructure, nil, stdout, stderr); err != nil {
-				return err
-			}
-			infrastructure.Yes = true
-			return RunInfra(ctx, root, "apply", infrastructure, nil, stdout, stderr)
-		}
-		release, err := ReadReleaseEnvironment(ReleaseEnvironment{})
-		if err != nil {
-			return err
-		}
-		return RunDeployment(ctx, root, DeployOptions{InfraOptions: infrastructure, Release: release.Release, Artifacts: release.Artifacts}, nil, stdout, stderr)
+		release := ReadReleaseEnvironment(ReleaseEnvironment{})
+		return RunDeployment(ctx, root, DeployOptions{InfraOptions: infrastructure, Release: release.Release}, nil, stdout, stderr)
 	}
 
 	projects, err := SelectCIProjects(root, manifest, flow)
@@ -864,8 +854,8 @@ func ciTarget(flow CIFlow, environment string) (string, error) {
 		}
 		return "preview", nil
 	case CIFlowOnMerge:
-		if environment != "" && environment != "preview" {
-			return "", errors.New("on-merge only accepts preview for cleanup")
+		if environment != "" && environment != "preview" && environment != "dev" {
+			return "", errors.New("on-merge only accepts dev deployment or preview cleanup")
 		}
 		if environment == "preview" {
 			return "preview", nil

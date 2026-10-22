@@ -53,6 +53,6 @@ Key compatibility measures:
 
 ## Pulumi environments and application secrets
 
-Use the environment stack commands for infrastructure and the ordered deployment executor for provisioning, migration, full updates and recovery. Application JSON secrets use fnox exec through Mise locally and in CI. Deployment administration credentials use provider-supported OAuth or CI secrets.
+Use the environment stack commands for infrastructure and the separate deployment steps for setup, migration, infra updates and application rollback. Project Mise tasks use fnox to generate local and E2E env files. Pulumi configures deployed application secret bindings. Deployment administration credentials use provider-supported OAuth or CI secrets.
 
 See [infrastructure deployment](modules/infrastructure.md) and [secret management](secret-management.md) for configuration, commands and recovery.

@@ -2,7 +2,6 @@ package e2e_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -17,7 +16,7 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-func TestInfraGCSCIFlowsDeployStaticAppAcrossEnvironmentsAndRecoverPreviousVersion(t *testing.T) {
+func TestInfraGCSCIFlowsDeployAcrossEnvironmentsAndRestorePreviousObjectVersion(t *testing.T) {
 	// Arrange.
 	if os.Getenv("PREMISE_TEST_GCS") != "1" {
 		t.Skip("set PREMISE_TEST_GCS=1 with GCP credentials and a remote backend")
@@ -86,7 +85,7 @@ func TestInfraGCSCIFlowsDeployStaticAppAcrossEnvironmentsAndRecoverPreviousVersi
 			}
 
 			for attempt := 0; attempt < 2; attempt++ {
-				command := exec.CommandContext(ctx, binary, "ci", "flow", "on-merge", "--environment", "preview", "--branch", branch, "--release", "none")
+				command := exec.CommandContext(ctx, binary, "ci", "flow", "on-merge", "--environment", "preview", "--branch", branch)
 				command.Dir = client
 				command.Env = append(os.Environ(), "MISE_TRUSTED_CONFIG_PATHS="+client)
 				if environment != "preview" {
@@ -114,14 +113,12 @@ func TestInfraGCSCIFlowsDeployStaticAppAcrossEnvironmentsAndRecoverPreviousVersi
 
 	// Act.
 	t.Setenv("PM_RELEASE", "A")
-	references, _ := json.Marshal(map[string]string{"web": filepath.Join(client, "apps/web/releases/A/index.html")})
-	t.Setenv("PM_ARTIFACTS", string(references))
 
 	plan := infraCommand(t, client, binary, "ci", "plan", "--ci-output")
 	if !strings.Contains(plan, "has_migrations=true\n") || !strings.Contains(plan, "migration_matrix=") {
 		t.Fatal("CI provider did not emit migration scheduling outputs")
 	}
-	infraCommand(t, client, binary, "ci", "flow", "on-commit", "--release", "none")
+	infraCommand(t, client, binary, "ci", "flow", "on-commit")
 	for _, environment := range environments {
 		t.Logf("Run environment CI flow for %s", environment)
 		attempted[environment] = true
@@ -133,7 +130,7 @@ func TestInfraGCSCIFlowsDeployStaticAppAcrossEnvironmentsAndRecoverPreviousVersi
 		if environment == "preview" {
 			flow = "on-commit"
 		}
-		infraCommand(t, client, binary, "ci", "flow", flow, "--environment", environment, "--release", "none")
+		infraCommand(t, client, binary, "ci", "flow", flow, "--environment", environment)
 		bucket := strings.TrimSpace(infraCommand(t, client, binary, append(arguments(environment, "query"), "--output", "bucketName")...))
 		buckets[environment] = bucket
 		pull := []string{"secrets", "pull", "--project", "web", "--env", environment}
@@ -172,16 +169,15 @@ func TestInfraGCSCIFlowsDeployStaticAppAcrossEnvironmentsAndRecoverPreviousVersi
 	fresh := filepath.Join(t.TempDir(), "client")
 	copyInfraFixture(t, client, fresh)
 	t.Setenv("PM_BRANCH", "")
-	infraCommand(t, fresh, binary, "ci", "flow", "on-deploy", "--environment", "stage", "--release", "none")
+	infraCommand(t, fresh, binary, "ci", "flow", "on-deploy", "--environment", "stage")
 	if bucket := strings.TrimSpace(infraCommand(t, fresh, binary, "infra", "query", "--env", "stage", "--output", "bucketName")); bucket != buckets["stage"] {
 		t.Fatal("fresh checkout did not reuse the selected remote backend")
 	}
 	t.Setenv("PM_BRANCH", branch)
 	t.Setenv("PM_RELEASE", "B")
-	references, _ = json.Marshal(map[string]string{"web": filepath.Join(client, "apps/web/releases/B/index.html")})
-	t.Setenv("PM_ARTIFACTS", string(references))
+
 	t.Setenv("PREMISE_TEST_FAIL_HEALTH", "preview")
-	command := exec.Command(binary, "ci", "flow", "on-deploy", "--environment", "preview", "--release", "none")
+	command := exec.Command(binary, "ci", "flow", "on-deploy", "--environment", "preview")
 	command.Dir = client
 	command.Env = append(os.Environ(), "MISE_TRUSTED_CONFIG_PATHS="+client)
 	output, failed := command.CombinedOutput()

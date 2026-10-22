@@ -83,20 +83,15 @@ inputs:
     description: "Immutable application release identity (defaults to triggering SHA)"
     required: false
     default: ""
-  artifact:
-    description: "Pinned project artifact identities, as project=identity pairs"
-    required: false
-    default: ""
-  run-id:
-    description: "Deployment identity shared by all phase jobs"
-    required: false
-    default: ""
   migration-group:
     description: "Migration group from the deployment plan"
     required: false
     default: ""
 
 outputs:
+  has_infra:
+    description: "Whether premise.yaml declares client infrastructure"
+    value: ${{ steps.schedule.outputs.has_infra }}
   has_migrations:
     description: "Whether the CI plan includes application migrations"
     value: ${{ steps.schedule.outputs.has_migrations }}
@@ -306,18 +301,16 @@ runs:
         INFRA_BACKEND: ${{ inputs.backend }}
         PREVIEW_BRANCH: ${{ inputs.branch }}
         DEPLOY_REVISION: ${{ inputs.deployment-revision || github.sha }}
-        DEPLOY_ARTIFACT: ${{ inputs.artifact }}
         PM_RELEASE: ${{ inputs.deployment-revision || github.sha }}
-        PM_ARTIFACTS: ${{ inputs.artifact }}
         PM_BRANCH: ${{ inputs.branch }}
         PM_INFRA_BACKEND: ${{ inputs.backend }}
-        DEPLOY_RUN_ID: ${{ inputs.run-id }}
         MIGRATION_GROUP: ${{ inputs.migration-group }}
       run: |
         set -euo pipefail
         case "$COMMAND" in
           flow|flow-matrix)
-            args=(ci flow "$FLOW" --release none)
+            args=(ci flow "$FLOW")
+            if [[ "$FLOW" != on-deploy ]]; then args+=(--release none); fi
             if [[ "$COMMAND" == flow-matrix ]]; then
               : "${PROJECT:?flow-matrix requires project}"
               : "${PLATFORM:?flow-matrix requires platform}"
@@ -356,9 +349,7 @@ runs:
             if [[ -n "$PREVIEW_BRANCH" ]]; then args+=(--branch "$PREVIEW_BRANCH"); fi
             if [[ "$COMMAND" == deploy ]]; then
               args+=(--release "$DEPLOY_REVISION")
-              if [[ -n "$DEPLOY_ARTIFACT" ]]; then args+=(--artifact "$DEPLOY_ARTIFACT"); fi
             fi
-            if [[ "$COMMAND" == deploy && -n "$DEPLOY_RUN_ID" ]]; then args+=(--run-id "$DEPLOY_RUN_ID"); fi
             if [[ "$COMMAND" == migrate && -n "$MIGRATION_GROUP" ]]; then args+=(--group "$MIGRATION_GROUP"); fi
             ;;
           *)

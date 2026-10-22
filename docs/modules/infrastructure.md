@@ -65,18 +65,17 @@ For example, one Go declaration serves every stack:
 package main
 
 import (
-    "github.com/pulumi/pulumi-aws/sdk/v7/go/aws/s3"
+    "github.com/pulumi/pulumi-gcp/sdk/v9/go/gcp/storage"
     "github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 )
 
 func main() {
     pulumi.Run(func(ctx *pulumi.Context) error {
-        bucket, err := s3.NewBucket(ctx, "uploads", &s3.BucketArgs{})
+        bucket, err := storage.NewBucket(ctx, "uploads", &storage.BucketArgs{Location: pulumi.String("US")})
         if err != nil {
             return err
         }
-        ctx.Export("bucketName", bucket.Bucket)
-        ctx.Export("bucketArn", bucket.Arn)
+        ctx.Export("bucketName", bucket.Name)
         return nil
     })
 }
@@ -85,11 +84,10 @@ func main() {
 The TypeScript equivalent uses the same logical resource name:
 
 ```ts
-import * as aws from "@pulumi/aws";
+import * as gcp from "@pulumi/gcp";
 
-const bucket = new aws.s3.Bucket("uploads");
-export const bucketName = bucket.bucket;
-export const bucketArn = bucket.arn;
+const bucket = new gcp.storage.Bucket("uploads", { location: "US" });
+export const bucketName = bucket.name;
 ```
 
 Declare the SDK and provider versions in the language's dependency files.
@@ -105,16 +103,16 @@ infra:
   backend: team
   backends:
     team:
-      url: s3://existing-state-bucket/product
+      url: gs://existing-state-bucket/product
   environments:
     dev:
-      config: {aws:region: us-east-1}
+      config: {gcp:project: my-project}
     stage:
-      config: {aws:region: us-east-1}
+      config: {gcp:project: my-project}
     prod:
-      config: {aws:region: us-east-1}
+      config: {gcp:project: my-project}
     preview:
-      config: {aws:region: us-east-1}
+      config: {gcp:project: my-project}
 ```
 
 `--backend NAME` selects a declared backend. The environment's backend overrides the workspace default.
@@ -207,7 +205,7 @@ DATABASE_URL="$(pm infra query "${scope[@]}" --output databaseUrl --show-secrets
 exec bun run db:migrate
 ```
 
-Migration tasks select their own infrastructure inputs through queries. Applications with a secrets declaration run through fnox exec with the selected environment profile.
+Migration tasks select their inputs through saved infra queries. Pulumi configures deployed secret bindings. Local and E2E env files come from the project secrets:pull task.
 Use [secret management](../secret-management.md) explicitly for local application credentials.
 CI supplies the variables that the application task needs.
 
@@ -235,7 +233,7 @@ flowchart TD
     Need -->|No| After[Optional migrations]
     Need -->|Yes| Deploy[Application deploy and health]
     After --> Deploy
-    Deploy --> Record[Save successful artifact references]
+    Deploy --> Healthy[Deployment succeeds]
 ```
 
 Existing environments migrate before the update. New environments apply first, then migrate.
@@ -251,8 +249,6 @@ workspace:
         deploy: deploy
         health: health
         rollback: rollback
-    recovery:
-      first_deploy: {project: web, task: cleanup}
 ```
 
 The `deploy` task is optional when Pulumi deploys the application.
@@ -264,59 +260,30 @@ A migration task receives the environment argument and can query saved infrastru
 pm migrate --env stage
 pm infra plan --env stage
 pm infra apply --env stage --yes
-pm deploy --env stage --release COMMIT_SHA --artifact web=RETAINED_ARTIFACT
+pm deploy --env stage --release COMMIT_SHA
 ```
 
-To run the full sequence with recovery:
+To run the equivalent sequence locally:
 
 ```sh
 export PM_RELEASE=COMMIT_SHA
-export PM_ARTIFACTS='{"web":"RETAINED_ARTIFACT"}'
-pm ci flow on-deploy --environment stage --release none
+pm ci flow on-deploy --environment stage
 ```
 
 For a feature-push preview, run `pm ci flow on-commit --environment preview --branch FEATURE_BRANCH --release none`. Cleanup uses `pm ci flow on-merge --environment preview --branch FEATURE_BRANCH --release none`. The on-deploy workflow remains manual-only.
 Use `--backend NAME` to override the configured backend. Child tasks inherit `PM_INFRA_BACKEND`, so their infra queries use the same selection.
 The flow uses the same public module operations as the individual commands.
-It keeps an environment lock until success or recovery and waits for every migration worker.
-A failed migration stops the sequence. A failed update or health check attempts client recovery.
-The original flow still fails after successful recovery. Premise does not run down migrations.
+It waits for every migration worker. Hosted CI serializes the environment, and Pulumi locks infrastructure state during updates.
+A failed migration or infrastructure update stops the sequence. A failed application deploy or health check calls the client rollback task.
+The original flow still fails after successful application rollback. Premise does not run down migrations.
 
-### Retain artifacts for recovery
+### Application rollback and infrastructure failures
 
-Keep immutable artifacts outside the runner checkout, for example in an artifact bucket or package registry.
-`PM_ARTIFACTS` accepts a JSON map or comma-separated `project=reference` pairs.
-Premise stores references, not application files, in `last-success.json`.
-Client rollback tasks receive `PM_PREVIOUS_RELEASE`, `PM_PREVIOUS_ARTIFACTS`, and selected nonsecret `PM_PREVIOUS_OUTPUTS`.
-They restore those artifacts. The first-deploy cleanup task handles a failed deployment with no prior success.
+Terraform and Pulumi do not automatically undo a failed infrastructure update. Fix the failure and apply again, or revert the code, review the new preview, and apply against the current state. Restoring an older state file does not restore real cloud resources.
 
-Records live under the selected backend's `.premise-releases/PROJECT/STACK` prefix by default.
-Set `workspace.deployment.records` to another existing GCS or S3 prefix when needed.
-Each run has a record and migration outcomes. The lock uses conditional writes so another process cannot claim the same environment.
-A successful run replaces `last-success.json`; a failed run preserves the previous successful release.
+`pm deploy` invokes each application's client-owned rollback task if deploy or health fails. The task uses the platform's previous revision or immutable artifact history. Premise does not keep an artifact ledger or recovery state machine. A successful rollback does not turn the failed deployment green.
 
-### Add infrastructure and prepare a runner
-
-`pm init` without infrastructure omits `on-deploy.yml` and the Pulumi tool pin.
-`pm infra setup --language go` adds an official starter and the missing manual workflow to an existing workspace.
-It preserves client files and existing tool pins. `--pulumi-version VERSION` selects another pin.
-
-`pm infra setup --env ENV` prepares an existing program for execution.
-It runs the infra directory's own Mise `setup` or `install` task when declared; otherwise it runs `pulumi install`.
-It then initializes or selects the configured stack and restores its configuration.
-Declare provider tools in Mise and authenticate with `pm infra auth --ci` before running CI flows.
-The optional root `ci:auth` task handles unsupported providers after native authentication.
-Do not use cloud-provider GitHub Actions for authentication or tool setup.
-
-### Keep workflow placement stable
-
-Only `on-commit.yml`, `on-deploy.yml`, and `on-merge.yml` are allowed.
-The commit flow keeps plan, task fan-out, release publication, and package publication in that order.
-Feature preview deployment follows those jobs through the environment CI flow.
-Independent migration groups still run concurrently inside that flow.
-`on-deploy.yml` is manual-only. Preview cleanup stays in `on-merge.yml`, including branch deletion.
-Publishing packages never selects a deployment environment.
-Infrastructure tests run separately on demand, not in CI.
+Infrastructure and migration failures stop the pipeline. They do not trigger application rollback or database down migrations. Pulumi owns state locking. The hosted workflows serialize each environment with GitHub concurrency groups.
 
 ## API
 
@@ -329,10 +296,10 @@ Infrastructure tests run separately on demand, not in CI.
 | `RunInfra`                              | Preview, apply, query, or destroy infrastructure through pinned Pulumi.  |
 | `QueryInfrastructure`                   | Read a selected saved output or resource property.                       |
 | `PlanMigrations` / `RunMigrations`      | Discover optional tasks and run independent groups.                      |
-| `RunApplicationDeployment`              | Deploy and check artifacts, with recovery on failure.                    |
-| `RunDeployment`                         | Coordinate the complete environment CI flow and its recovery.            |
+| `RunApplicationDeployment`              | Deploy and check applications, with client rollback on failure.          |
+| `RunDeployment`                         | Run the local equivalent of the separate hosted environment steps.       |
 
-The Pulumi process boundary lives in `core/extensions/pulumix.go`. Infrastructure operations, setup, and queries live in `core/infra.go`. Deployment phases and recovery records live in `core/deploy.go`.
+The Pulumi process boundary lives in `core/extensions/pulumix.go`. Infrastructure operations, setup, and queries live in `core/infra.go`. Application deployment and rollback task execution live in `core/deploy.go`.
 Provider authentication, CI output adapters, and storage operations live under `core/providers`.
 
 ## Validation

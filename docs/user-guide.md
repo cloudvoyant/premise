@@ -94,7 +94,7 @@ Declare `workspace.infra.directory`, backend choices, and environment values in 
 Supply an existing remote backend through a named selection or `PULUMI_BACKEND_URL`:
 
 ```sh
-export PULUMI_BACKEND_URL=s3://YOUR_STATE_BUCKET/product
+export PULUMI_BACKEND_URL=gs://YOUR_STATE_BUCKET/product
 pm infra auth
 pm infra init --env dev
 pm infra plan --env dev
@@ -124,7 +124,7 @@ Destroy this preview when you finish:
 pm infra destroy --env preview
 ```
 
-After you enable `PREMISE_DEPLOY_ENABLED` and configure provider credentials, `on-commit.yml` deploys feature-branch previews. `on-merge.yml` cleans them up after a same-repository PR merge or branch deletion. `on-deploy.yml` runs only when started manually. Persistent environments require interactive confirmation for destruction.
+When premise.yaml declares infrastructure and provider credentials are configured, `on-commit.yml` deploys feature-branch previews. `on-merge.yml` deploys dev on main and cleans up previews after a same-repository PR merge or branch deletion. `on-deploy.yml` runs only when started manually. Persistent environments require interactive confirmation for destruction.
 Publishing a library on merge does not create a GitHub deployment or select a `production` environment. Publication tokens belong in repository or organization secrets.
 
 ## Deploy with migrations
@@ -133,8 +133,7 @@ Use `pm ci flow on-deploy` for the complete environment sequence:
 
 ```sh
 export PM_RELEASE=COMMIT_SHA
-export PM_ARTIFACTS='{"web":"IMMUTABLE_ARTIFACT_REFERENCE"}'
-pm ci flow on-deploy --environment stage --release none
+pm ci flow on-deploy --environment stage
 ```
 
 For an existing stack, the order is migrate, infra plan, infra apply, then application deploy and health checks.
@@ -143,21 +142,18 @@ Clients must apply database infrastructure changes separately before schema migr
 
 You can also run `pm migrate`, `pm infra plan`, `pm infra apply`, and `pm deploy` individually with `--env ENV`.
 `pm deploy` only deploys and checks application artifacts; it has no subcommands.
-The complete CI flow retains successful artifact references and attempts recovery on failure.
-See the [infrastructure guide](modules/infrastructure.md) for configuration and recovery inputs.
+Infra and migration failures stop the flow. Application deploy or health failures call the client rollback task, which uses platform revision history.
+See the [infrastructure guide](modules/infrastructure.md) for configuration and rollback tasks.
 
 ## Pull application secrets
 
-Declare the application's fnox configuration and environment profiles in `premise.yaml`. Fnox retrieves JSON documents as temporary files locally and in CI.
+Projects with a `secrets:pull` task keep their secret references and environment profiles in `fnox.toml`. No secrets configuration is needed in `premise.yaml`.
 
 ```sh
-pm secrets exec --env dev --project web -- mise run start
 pm secrets pull --env dev --project web
 ```
 
-`exec` supplies JSON file paths to the child process. `pull` runs the project's `secrets:pull` Mise task and writes its output to a private ignored env file. The task can combine secret fields with `pm infra query` values.
-
-Deployment and migration tasks automatically use fnox when the application declares secrets. CI authenticates directly to the secret provider. Deployment OAuth credentials and protected CI tokens stay separate from application documents. See [Secret management](secret-management.md) and the [architecture diagrams](architecture/secrets.md).
+The Bash Mise task writes private ignored env files. It can combine fnox values with `pm infra query` results. Local applications load those files. Client Pulumi programs configure secrets for remote applications. See [Secret management](secret-management.md) and the [architecture diagrams](architecture/secrets.md).
 
 ## Publish a release
 

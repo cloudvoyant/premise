@@ -87,6 +87,6 @@ pm infra plan --env preview --branch feature/example
 ```
 
 Configure an existing remote backend before initialization. One program serves separate environment and branch-preview stacks.
-Applications expose optional migration tasks. The environment CI flow orders migrations, infrastructure updates, application deployment, health checks, and recovery. Clients apply database infrastructure changes separately before schema migrations.
-Application JSON secrets use fnox exec through Mise locally and in CI. Deployment credentials use OAuth or protected CI secrets.
+Applications expose optional migration tasks. The environment CI flow orders migrations, infrastructure updates, application deployment, health checks, and client rollback. Clients apply database infrastructure changes separately before schema migrations.
+Local and E2E env files use fnox through project Mise tasks. Client Pulumi programs configure deployed application secrets. Deployment credentials use OAuth or protected CI secrets.
 See [infrastructure deployment](docs/modules/infrastructure.md) and [secret management](docs/secret-management.md).

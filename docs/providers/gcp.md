@@ -68,9 +68,9 @@ GitHub exposes `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKE
 
 ## Permissions
 
-Enable APIs for the client-owned resources. Grant create, update, and delete access in their destination projects. Grant object read, write, and delete access plus bucket metadata access on the existing state bucket. Deployment records need object read, conditional write, and conditional delete access on their GCS prefix.
+Enable APIs for the client-owned resources. Grant create, update, and delete access in their destination projects. Grant object read, write, and delete access plus bucket metadata access on the existing state bucket.
 
-Fnox requires Secret Manager access locally and in CI. Grant the selected identity access to the referenced JSON documents. Preview cleanup requires the same deployment rights as creation. Preserve the state bucket and project after cleanup.
+Local env generation and E2E credential tasks using fnox require Secret Manager access. Grant their selected identities access to the referenced documents. Client Pulumi programs own remote application secret bindings. Preview cleanup requires the same deployment rights as creation. Preserve the state bucket and project after cleanup.
 
 ## References
 

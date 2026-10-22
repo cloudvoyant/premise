@@ -39,7 +39,7 @@ func InfrastructureProvider(name string) (InfraProvider, bool) {
 // AdministrationSecretKeys returns credential names that must not reach application tasks.
 func AdministrationSecretKeys() map[string]bool {
 	keys := map[string]bool{}
-	for _, key := range slices.Concat(awsSecretKeys, githubSecretKeys, gitlabSecretKeys, pulumiSecretKeys) {
+	for _, key := range slices.Concat(githubSecretKeys, gitlabSecretKeys, pulumiSecretKeys) {
 		keys[key] = true
 	}
 	return keys

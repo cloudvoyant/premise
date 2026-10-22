@@ -6,6 +6,7 @@ import (
 
 	core "github.com/cloudvoyant/premise/core"
 	"github.com/cloudvoyant/premise/core/backends"
+	"github.com/cloudvoyant/premise/core/extensions"
 	"github.com/spf13/cobra"
 )
 
@@ -53,7 +54,7 @@ func CIPlanCommand() *cobra.Command {
 			}
 			if environment != "" {
 				if environment == "preview" && branch == "" {
-					branch, err = core.CurrentFeatureBranch(cmd.Context(), root)
+					branch, err = extensions.CurrentFeatureBranch(cmd.Context(), root)
 					if err != nil {
 						return err
 					}
@@ -63,6 +64,7 @@ func CIPlanCommand() *cobra.Command {
 				}
 			}
 			plan.Environment, plan.Branch = environment, branch
+			plan.HasInfrastructure = manifest.Workspace.Infra != nil
 			if manifest.Workspace.Deployment != nil {
 				plan.Migrations, err = core.PlanMigrations(root, manifest)
 				if err != nil {
@@ -103,6 +105,9 @@ func CIFlowCommand() *cobra.Command {
 			flow, err := core.ParseCIFlow(args[0])
 			if err != nil {
 				return err
+			}
+			if flow == core.CIFlowOnDeploy && cmd.Flags().Changed("release") {
+				return fmt.Errorf("--release applies only to on-commit and on-merge")
 			}
 			releaseMode, err := core.ParseCIReleaseMode(releaseModeFlag)
 			if err != nil {
