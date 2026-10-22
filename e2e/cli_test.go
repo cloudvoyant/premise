@@ -9,7 +9,9 @@ import (
 	"testing"
 )
 
-func TestCLIGenerateRequiresInitializedWorkspace(t *testing.T) {
+// Private helpers ------------------------------------------------------------
+
+func testCLIGenerateRequiresInitializedWorkspace(t *testing.T) {
 	repositoryRoot := repositoryRoot(t)
 	binaryName := "premise"
 	if runtime.GOOS == "windows" {
@@ -34,7 +36,7 @@ func TestCLIGenerateRequiresInitializedWorkspace(t *testing.T) {
 	}
 }
 
-func TestCLIInstallRequiresWorkspaceRoot(t *testing.T) {
+func testCLIInstallRequiresWorkspaceRoot(t *testing.T) {
 	repositoryRoot := repositoryRoot(t)
 	binaryName := "premise"
 	if runtime.GOOS == "windows" {
@@ -64,7 +66,7 @@ func TestCLIInstallRequiresWorkspaceRoot(t *testing.T) {
 	}
 }
 
-func TestCLIWorkspaceAndTemplateLifecycle(t *testing.T) {
+func testCLIWorkspaceAndTemplateLifecycle(t *testing.T) {
 	repositoryRoot := repositoryRoot(t)
 	binaryName := "premise"
 	if runtime.GOOS == "windows" {

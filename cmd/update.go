@@ -14,28 +14,37 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Public API -----------------------------------------------------------------
+
+// UpdateCommand creates the update command.
+func UpdateCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "update [version]",
+		Short: "Update the premise CLI",
+		Long:  "Downloads the Premise installer and replaces the current CLI with the latest or requested release.",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			version := ""
+			if len(args) == 1 {
+				var err error
+				version, err = normalizeUpdateVersion(args[0])
+				if err != nil {
+					return err
+				}
+			}
+			return updatePremise(cmd.Context(), version, updateInstallerURL, http.DefaultClient, os.Executable, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
+
+	return command
+}
+
+// Private helpers ------------------------------------------------------------
+
 const (
 	updateInstallerURL    = "https://raw.githubusercontent.com/cloudvoyant/premise/main/install.sh"
 	maximumInstallerBytes = 1 << 20
 )
-
-var updateCmd = &cobra.Command{
-	Use:   "update [version]",
-	Short: "Update the premise CLI",
-	Long:  "Downloads the Premise installer and replaces the current CLI with the latest or requested release.",
-	Args:  cobra.MaximumNArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		version := ""
-		if len(args) == 1 {
-			var err error
-			version, err = normalizeUpdateVersion(args[0])
-			if err != nil {
-				return err
-			}
-		}
-		return updatePremise(cmd.Context(), version, updateInstallerURL, http.DefaultClient, os.Executable, cmd.OutOrStdout(), cmd.ErrOrStderr())
-	},
-}
 
 func normalizeUpdateVersion(value string) (string, error) {
 	value = strings.TrimSpace(value)

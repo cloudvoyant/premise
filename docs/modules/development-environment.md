@@ -8,8 +8,8 @@ The development-environment module installs the tools declared by the workspace 
 
 ### API
 
-| API                                          | Use                                                                |
-| -------------------------------------------- | ------------------------------------------------------------------ |
+| API | Use |
+| --- | --- |
 | `InstallDevTools(ctx, root, stdout, stderr)` | Install workspace and project tools from their Mise configuration. |
 
 ### Usage

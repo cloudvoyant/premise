@@ -81,7 +81,7 @@ After validation, Premise writes the planned root files and renames the staged p
 ## References
 
 - [Overall Premise Architecture](architecture.md)
-- [User Guide](user-guide.md)
+- [User Guide](guides/README.md)
 - [ADR 0003: Focused template-root merge policies](../adr/0003-template-root-merging.md)
 - [Mise configuration](https://mise.jdx.dev/configuration.html)
 - [Git attributes](https://git-scm.com/docs/gitattributes)

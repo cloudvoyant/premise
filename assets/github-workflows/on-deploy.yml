@@ -1,4 +1,3 @@
----
 name: On Deploy
 
 "on":
@@ -6,25 +5,77 @@ name: On Deploy
     inputs:
       environment:
         description: Target environment
-        required: false
+        type: choice
+        options: [dev, stage, prod, preview]
         default: stage
+      branch:
+        description: Feature branch for a preview
+        default: ""
 
 permissions:
   contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-${{ inputs.environment }}-${{ inputs.environment == 'preview' && (inputs.branch || github.ref_name) || 'persistent' }}
+  cancel-in-progress: false
+
+env:
+  PM_ENV: ${{ inputs.environment }}
+  PREVIEW_BRANCH: ${{ inputs.environment == 'preview' && (inputs.branch || github.ref_name) || '' }}
+  PM_BRANCH: ${{ inputs.environment == 'preview' && (inputs.branch || github.ref_name) || '' }}
 
 jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      has_infra: ${{ steps.plan.outputs.has_infra }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.branch || github.sha }}
+          persist-credentials: false
+      - uses: cloudvoyant/premise@v0.5.0-rc.272
+        id: plan
+        with:
+          command: plan
+          flow: on-deploy
+          premise-version: v0.5.0-rc.272
+          install-premise: pre-built
+
   deploy:
+    needs: plan
+    if: needs.plan.outputs.has_infra == 'true'
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.branch || github.sha }}
           persist-credentials: false
-
-      - name: Run on-release flow
-        uses: cloudvoyant/premise@v0
+      - uses: cloudvoyant/premise@v0.5.0-rc.272
         with:
-          flow: on-release
-          environment: ${{ inputs.environment }}
-          install-premise: build
+          setup-only: true
+          premise-version: v0.5.0-rc.272
+          install-premise: pre-built
+      - name: Authenticate infrastructure providers
+        run: mise exec -- pm infra auth --ci --env-file "$GITHUB_ENV"
+      - name: Inspect environment
+        id: infrastructure
+        run: |
+          echo "exists=$(pm infra exists --env "$PM_ENV" --branch "$PM_BRANCH")" >> "$GITHUB_OUTPUT"
+          echo "PM_RELEASE=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - name: Prepare infrastructure
+        run: pm infra setup --env "$PM_ENV" --branch "$PM_BRANCH"
+      - name: Migrate existing environment
+        if: steps.infrastructure.outputs.exists == 'true'
+        run: pm migrate --env "$PM_ENV" --branch "$PM_BRANCH"
+      - name: Preview infrastructure
+        run: pm infra plan --env "$PM_ENV" --branch "$PM_BRANCH"
+      - name: Apply infrastructure
+        run: pm infra apply --env "$PM_ENV" --branch "$PM_BRANCH" --yes
+      - name: Migrate new environment
+        if: steps.infrastructure.outputs.exists != 'true'
+        run: pm migrate --env "$PM_ENV" --branch "$PM_BRANCH"
+      - name: Deploy applications and check health
+        run: pm deploy --env "$PM_ENV" --branch "$PM_BRANCH"

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -23,11 +24,12 @@ var (
 	ErrNotPremiseProject = errors.New("not a premise project")
 )
 
-// Config is the validated in-memory form of premise.yaml.
 // WorkflowAsset is a client GitHub Actions workflow embedded in the CLI.
 type WorkflowAsset struct {
 	Path    string
 	Content string
+	// InfrastructureOnly omits deployment workflows from ordinary workspace setup.
+	InfrastructureOnly bool
 }
 
 // WorkspaceScaffold contains the embedded files used to initialize a workspace.
@@ -36,6 +38,7 @@ type WorkspaceScaffold struct {
 	WorkflowAssets []WorkflowAsset
 }
 
+// Config is the validated in-memory form of premise.yaml.
 type Config struct {
 	Workspace        Workspace         `yaml:"workspace"`
 	TemplateRegistry *TemplateRegistry `yaml:"template_registry,omitempty"`
@@ -47,12 +50,14 @@ type TemplateRegistry struct {
 }
 
 type Workspace struct {
-	Name            string      `yaml:"name"`
-	Kind            ProjectKind `yaml:"kind,omitempty"`
-	SchemaVersion   string      `yaml:"schema-version"`
-	PackageManagers []string    `yaml:"package_managers,omitempty"`
-	Providers       Providers   `yaml:"providers"`
-	Projects        []Project   `yaml:"projects"`
+	Name            string          `yaml:"name"`
+	Kind            ProjectKind     `yaml:"kind,omitempty"`
+	SchemaVersion   string          `yaml:"schema-version"`
+	PackageManagers []string        `yaml:"package_managers,omitempty"`
+	Providers       Providers       `yaml:"providers"`
+	Projects        []Project       `yaml:"projects"`
+	Infra           *Infrastructure `yaml:"infra,omitempty"`
+	Deployment      *Deployment     `yaml:"deployment,omitempty"`
 }
 
 type Providers struct {
@@ -93,6 +98,47 @@ type Question struct {
 	Populate string   `yaml:"populate"`
 	Choices  []string `yaml:"choices,omitempty"`
 }
+
+// Infrastructure declares named state backends and non-secret environment settings.
+type Infrastructure struct {
+	Directory       string                      `yaml:"directory,omitempty"`
+	SharedDirectory string                      `yaml:"shared_directory,omitempty"`
+	Providers       []string                    `yaml:"providers,omitempty"`
+	Backend         string                      `yaml:"backend,omitempty"`
+	Backends        map[string]InfraBackend     `yaml:"backends,omitempty"`
+	Environments    map[string]InfraEnvironment `yaml:"environments,omitempty"`
+}
+
+// InfraBackend identifies an existing DIY state store. Backend changes never migrate state.
+type InfraBackend struct {
+	URL        string `yaml:"url"`
+	AllowLocal bool   `yaml:"allow_local,omitempty"`
+}
+
+// InfraEnvironment holds explicit, non-secret configuration for an environment.
+type InfraEnvironment struct {
+	Backend string            `yaml:"backend,omitempty"`
+	Config  map[string]string `yaml:"config,omitempty"`
+}
+
+// Deployment selects applications and optional migration groups.
+type Deployment struct {
+	MigrationGroups map[string][]string     `yaml:"migration_groups,omitempty"`
+	Applications    []DeploymentApplication `yaml:"applications"`
+}
+
+// DeploymentApplication names optional extra deploy work and required recovery tasks.
+// Pulumi deploys the app unless Deploy names an additional project task.
+type DeploymentApplication struct {
+	Project  string `yaml:"project"`
+	Deploy   string `yaml:"deploy,omitempty"`
+	Health   string `yaml:"health"`
+	Rollback string `yaml:"rollback"`
+}
+
+var validPlatforms = map[string]struct{}{"linux": {}, "macos": {}, "windows": {}}
+
+// Public API -----------------------------------------------------------------
 
 func NewManifest(name string) Config {
 	return Config{
@@ -213,6 +259,13 @@ func InitializeTemplateRegistry(root string) (string, error) {
 }
 
 func InitializeWorkspace(root, workspaceMiseTemplate string, workflowAssets ...WorkflowAsset) (string, error) {
+	var workflows []WorkflowAsset
+	for _, asset := range workflowAssets {
+		if !asset.InfrastructureOnly {
+			workflows = append(workflows, asset)
+		}
+	}
+	workflowAssets = workflows
 	if strings.TrimSpace(workspaceMiseTemplate) == "" {
 		return "", errors.New("workspace mise template is empty")
 	}
@@ -247,160 +300,6 @@ func InitializeWorkspace(root, workspaceMiseTemplate string, workflowAssets ...W
 		return "", err
 	}
 	return manifestPath, nil
-}
-
-func preflightWorkspace(root string, assets []WorkflowAsset) error {
-	for _, path := range []string{
-		filepath.Join(root, ManifestFilename),
-		filepath.Join(root, "apps"),
-		filepath.Join(root, "libs"),
-		filepath.Join(root, "mise.toml"),
-	} {
-		if err := rejectSymlinkComponents(root, path); err != nil {
-			return err
-		}
-	}
-	for _, directory := range []string{"apps", "libs"} {
-		path := filepath.Join(root, directory)
-		if info, err := os.Stat(path); err == nil && !info.IsDir() {
-			return fmt.Errorf("workspace %s is not a directory", path)
-		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("inspect workspace %s: %w", path, err)
-		}
-	}
-	misePath := filepath.Join(root, "mise.toml")
-	if info, err := os.Stat(misePath); err == nil {
-		if info.IsDir() {
-			return fmt.Errorf("workspace mise config %s is a directory", misePath)
-		}
-		monorepo, err := hasMonorepoRoot(root)
-		if err != nil {
-			return fmt.Errorf("validate existing workspace mise config: %w", err)
-		}
-		if !monorepo {
-			return errors.New("existing mise.toml must declare top-level monorepo_root = true")
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect workspace mise config: %w", err)
-	}
-	rootAbs, err := filepath.Abs(root)
-	if err != nil {
-		return fmt.Errorf("resolve workspace root: %w", err)
-	}
-	rootAbs = filepath.Clean(rootAbs)
-	seen := make(map[string]struct{}, len(assets))
-	for _, asset := range assets {
-		if strings.TrimSpace(asset.Path) == "" {
-			return errors.New("workflow asset path is empty")
-		}
-		path := filepath.Clean(filepath.Join(root, asset.Path))
-		if err := rejectSymlinkComponents(root, path); err != nil {
-			return err
-		}
-		pathAbs, err := filepath.Abs(path)
-		if err != nil {
-			return fmt.Errorf("resolve workflow %s: %w", path, err)
-		}
-		if pathAbs != rootAbs && !strings.HasPrefix(pathAbs, rootAbs+string(filepath.Separator)) {
-			return fmt.Errorf("workflow %s is outside workspace root", asset.Path)
-		}
-		if _, ok := seen[pathAbs]; ok {
-			return fmt.Errorf("workflow %s is duplicated", path)
-		}
-		seen[pathAbs] = struct{}{}
-		if _, err := os.Lstat(path); err == nil {
-			return fmt.Errorf("workflow %s already exists", path)
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("inspect workflow %s: %w", path, err)
-		}
-	}
-	return nil
-}
-
-func rejectSymlinkComponents(root, path string) error {
-	rootAbs, err := filepath.Abs(root)
-	if err != nil {
-		return fmt.Errorf("resolve workspace root: %w", err)
-	}
-	pathAbs, err := filepath.Abs(path)
-	if err != nil {
-		return fmt.Errorf("resolve workspace path: %w", err)
-	}
-	rel, err := filepath.Rel(filepath.Clean(rootAbs), filepath.Clean(pathAbs))
-	if err != nil {
-		return fmt.Errorf("compare workspace path: %w", err)
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("workspace path %s is outside workspace root", path)
-	}
-	current := filepath.Clean(rootAbs)
-	for _, component := range strings.Split(rel, string(filepath.Separator)) {
-		if component == "." || component == "" {
-			continue
-		}
-		current = filepath.Join(current, component)
-		info, err := os.Lstat(current)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return fmt.Errorf("inspect workspace path %s: %w", current, err)
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("workspace path %s contains a symlink", path)
-		}
-	}
-	return nil
-}
-
-func ensureWorkflowAssets(root string, assets []WorkflowAsset) error {
-	if len(assets) == 0 {
-		return nil
-	}
-	for _, asset := range assets {
-		if strings.TrimSpace(asset.Path) == "" {
-			return errors.New("workflow asset path is empty")
-		}
-		path := filepath.Join(root, asset.Path)
-		if _, err := os.Lstat(path); err == nil {
-			return fmt.Errorf("workflow %s already exists", path)
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("inspect workflow %s: %w", path, err)
-		}
-	}
-	for _, asset := range assets {
-		path := filepath.Join(root, asset.Path)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return fmt.Errorf("create workflow directory: %w", err)
-		}
-		if err := os.WriteFile(path, []byte(asset.Content), 0o644); err != nil {
-			return fmt.Errorf("write workflow %s: %w", path, err)
-		}
-	}
-	return nil
-}
-
-func ensureWorkspaceMise(root, workspaceMiseTemplate string) error {
-	path := filepath.Join(root, "mise.toml")
-	if info, err := os.Stat(path); err == nil {
-		if info.IsDir() {
-			return fmt.Errorf("workspace mise config %s is a directory", path)
-		}
-		monorepo, err := hasMonorepoRoot(root)
-		if err != nil {
-			return fmt.Errorf("validate existing workspace mise config: %w", err)
-		}
-		if !monorepo {
-			return errors.New("existing mise.toml must declare top-level monorepo_root = true")
-		}
-		return nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect workspace mise config: %w", err)
-	}
-	if err := os.WriteFile(path, []byte(workspaceMiseTemplate), 0o644); err != nil {
-		return fmt.Errorf("write workspace mise config: %w", err)
-	}
-	return nil
 }
 
 // HasProjectMiseConfigs reports whether the conventional app or library roots
@@ -583,10 +482,8 @@ func (manifest Config) Validate() error {
 		projectNames[project.Name] = struct{}{}
 		projectPaths[project.Path] = struct{}{}
 	}
-	return nil
+	return validateInfrastructure(manifest)
 }
-
-var validPlatforms = map[string]struct{}{"linux": {}, "macos": {}, "windows": {}}
 
 func ValidatePlatformDeclaration(declaration PlatformDeclaration) error {
 	seen := map[string]struct{}{}
@@ -604,6 +501,8 @@ func ValidatePlatformDeclaration(declaration PlatformDeclaration) error {
 	return nil
 }
 
+// DeclaredTemplates returns registry source templates for discovery and generation.
+// Unlike PublicationTargets, it never converts workspace applications into packages.
 func (manifest Config) DeclaredTemplates() []Template {
 	if manifest.TemplateRegistry == nil {
 		return nil
@@ -683,36 +582,6 @@ func (manifest *Config) AddProject(project Project) error {
 	return manifest.Validate()
 }
 
-func validateTemplatePath(templatePath string) error {
-	if strings.TrimSpace(templatePath) == "" {
-		return errors.New("path is required")
-	}
-	if filepath.IsAbs(templatePath) || strings.Contains(templatePath, `\`) {
-		return errors.New("path must be relative to the registry root and use forward slashes")
-	}
-	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(templatePath)))
-	if clean != templatePath || clean == "." || escapesRoot(clean) {
-		return errors.New("path must be a normalized directory below the registry root")
-	}
-	return nil
-}
-
-func validateWorkspaceFilePattern(pattern string) error {
-	if strings.TrimSpace(pattern) == "" {
-		return errors.New("pattern is required")
-	}
-	if filepath.IsAbs(pattern) || strings.ContainsAny(pattern, `/\\`) || pattern == "." || pattern == ".." {
-		return errors.New("pattern must match direct files in the registry root")
-	}
-	if _, err := filepath.Match(pattern, "workspace-file"); err != nil {
-		return fmt.Errorf("invalid glob %q: %w", pattern, err)
-	}
-	if pattern == ManifestFilename {
-		return fmt.Errorf("%s is registry metadata and cannot be copied", ManifestFilename)
-	}
-	return nil
-}
-
 func ValidateProjectName(name string) error {
 	if !projectNamePattern.MatchString(name) || name == "." || name == ".." {
 		return fmt.Errorf("%q must start with a letter or number and contain only letters, numbers, dots, underscores, or hyphens", name)
@@ -750,7 +619,302 @@ func ResolveSubstitutions(template Template, answers map[string]string) (map[str
 	return replacements, nil
 }
 
+// Private helpers ------------------------------------------------------------
+
+func preflightWorkspace(root string, assets []WorkflowAsset) error {
+	for _, path := range []string{
+		filepath.Join(root, ManifestFilename),
+		filepath.Join(root, "apps"),
+		filepath.Join(root, "libs"),
+		filepath.Join(root, "mise.toml"),
+	} {
+		if err := rejectSymlinkComponents(root, path); err != nil {
+			return err
+		}
+	}
+	for _, directory := range []string{"apps", "libs"} {
+		path := filepath.Join(root, directory)
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return fmt.Errorf("workspace %s is not a directory", path)
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("inspect workspace %s: %w", path, err)
+		}
+	}
+	misePath := filepath.Join(root, "mise.toml")
+	if info, err := os.Stat(misePath); err == nil {
+		if info.IsDir() {
+			return fmt.Errorf("workspace mise config %s is a directory", misePath)
+		}
+		monorepo, err := hasMonorepoRoot(root)
+		if err != nil {
+			return fmt.Errorf("validate existing workspace mise config: %w", err)
+		}
+		if !monorepo {
+			return errors.New("existing mise.toml must declare top-level monorepo_root = true")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect workspace mise config: %w", err)
+	}
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("resolve workspace root: %w", err)
+	}
+	rootAbs = filepath.Clean(rootAbs)
+	seen := make(map[string]struct{}, len(assets))
+	for _, asset := range assets {
+		if strings.TrimSpace(asset.Path) == "" {
+			return errors.New("workflow asset path is empty")
+		}
+		path := filepath.Clean(filepath.Join(root, asset.Path))
+		if err := rejectSymlinkComponents(root, path); err != nil {
+			return err
+		}
+		pathAbs, err := filepath.Abs(path)
+		if err != nil {
+			return fmt.Errorf("resolve workflow %s: %w", path, err)
+		}
+		if pathAbs != rootAbs && !strings.HasPrefix(pathAbs, rootAbs+string(filepath.Separator)) {
+			return fmt.Errorf("workflow %s is outside workspace root", asset.Path)
+		}
+		if _, ok := seen[pathAbs]; ok {
+			return fmt.Errorf("workflow %s is duplicated", path)
+		}
+		seen[pathAbs] = struct{}{}
+		if _, err := os.Lstat(path); err == nil {
+			return fmt.Errorf("workflow %s already exists", path)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("inspect workflow %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
+func rejectSymlinkComponents(root, path string) error {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("resolve workspace root: %w", err)
+	}
+	pathAbs, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("resolve workspace path: %w", err)
+	}
+	rel, err := filepath.Rel(filepath.Clean(rootAbs), filepath.Clean(pathAbs))
+	if err != nil {
+		return fmt.Errorf("compare workspace path: %w", err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("workspace path %s is outside workspace root", path)
+	}
+	current := filepath.Clean(rootAbs)
+	for _, component := range strings.Split(rel, string(filepath.Separator)) {
+		if component == "." || component == "" {
+			continue
+		}
+		current = filepath.Join(current, component)
+		info, err := os.Lstat(current)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect workspace path %s: %w", current, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("workspace path %s contains a symlink", path)
+		}
+	}
+	return nil
+}
+
+func ensureWorkflowAssets(root string, assets []WorkflowAsset) error {
+	if len(assets) == 0 {
+		return nil
+	}
+	for _, asset := range assets {
+		if strings.TrimSpace(asset.Path) == "" {
+			return errors.New("workflow asset path is empty")
+		}
+		path := filepath.Join(root, asset.Path)
+		if _, err := os.Lstat(path); err == nil {
+			return fmt.Errorf("workflow %s already exists", path)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("inspect workflow %s: %w", path, err)
+		}
+	}
+	for _, asset := range assets {
+		path := filepath.Join(root, asset.Path)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return fmt.Errorf("create workflow directory: %w", err)
+		}
+		if err := os.WriteFile(path, []byte(asset.Content), 0o644); err != nil {
+			return fmt.Errorf("write workflow %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
+func ensureWorkspaceMise(root, workspaceMiseTemplate string) error {
+	path := filepath.Join(root, "mise.toml")
+	if info, err := os.Stat(path); err == nil {
+		if info.IsDir() {
+			return fmt.Errorf("workspace mise config %s is a directory", path)
+		}
+		monorepo, err := hasMonorepoRoot(root)
+		if err != nil {
+			return fmt.Errorf("validate existing workspace mise config: %w", err)
+		}
+		if !monorepo {
+			return errors.New("existing mise.toml must declare top-level monorepo_root = true")
+		}
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect workspace mise config: %w", err)
+	}
+	if err := os.WriteFile(path, []byte(workspaceMiseTemplate), 0o644); err != nil {
+		return fmt.Errorf("write workspace mise config: %w", err)
+	}
+	return nil
+}
+
+func validateTemplatePath(templatePath string) error {
+	if strings.TrimSpace(templatePath) == "" {
+		return errors.New("path is required")
+	}
+	if filepath.IsAbs(templatePath) || strings.Contains(templatePath, `\`) {
+		return errors.New("path must be relative to the registry root and use forward slashes")
+	}
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(templatePath)))
+	if clean != templatePath || clean == "." || escapesRoot(clean) {
+		return errors.New("path must be a normalized directory below the registry root")
+	}
+	return nil
+}
+
+func validateWorkspaceFilePattern(pattern string) error {
+	if strings.TrimSpace(pattern) == "" {
+		return errors.New("pattern is required")
+	}
+	if filepath.IsAbs(pattern) || strings.ContainsAny(pattern, `/\\`) || pattern == "." || pattern == ".." {
+		return errors.New("pattern must match direct files in the registry root")
+	}
+	if _, err := filepath.Match(pattern, "workspace-file"); err != nil {
+		return fmt.Errorf("invalid glob %q: %w", pattern, err)
+	}
+	if pattern == ManifestFilename {
+		return fmt.Errorf("%s is registry metadata and cannot be copied", ManifestFilename)
+	}
+	return nil
+}
+
 func escapesRoot(path string) bool {
 	clean := filepath.Clean(path)
 	return clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator))
+}
+
+func validateInfrastructure(manifest Config) error {
+	if manifest.Workspace.Infra != nil {
+		infra := manifest.Workspace.Infra
+		for _, directory := range []string{infra.Directory, infra.SharedDirectory} {
+			if directory != "" {
+				if err := validateTemplatePath(directory); err != nil {
+					return fmt.Errorf("infrastructure directory: %w", err)
+				}
+			}
+		}
+		providerNames := map[string]bool{}
+		for _, name := range infra.Providers {
+			if err := ValidateProjectName(name); err != nil {
+				return fmt.Errorf("invalid infrastructure provider: %w", err)
+			}
+			if providerNames[name] {
+				return fmt.Errorf("duplicate infrastructure provider %s", name)
+			}
+			providerNames[name] = true
+		}
+
+		if _, ok := infra.Backends[infra.Backend]; infra.Backend != "" && !ok {
+			return fmt.Errorf("infrastructure default backend %q is not declared", infra.Backend)
+		}
+		for name, backend := range infra.Backends {
+			if err := validateBackend(backend); err != nil {
+				return fmt.Errorf("backend %s: %w", name, err)
+			}
+		}
+		for name, env := range infra.Environments {
+			if name != "dev" && name != "stage" && name != "prod" && name != "preview" && name != "shared" {
+				return fmt.Errorf("unsupported environment %q", name)
+			}
+			if env.Backend != "" {
+				if _, ok := infra.Backends[env.Backend]; !ok {
+					return fmt.Errorf("environment %s backend not declared", name)
+				}
+			}
+		}
+	}
+	d := manifest.Workspace.Deployment
+	if d == nil {
+		return nil
+	}
+	if manifest.Workspace.Infra == nil {
+		return fmt.Errorf("deployment requires workspace.infra to configure the client Pulumi project")
+	}
+	projects := map[string]Project{}
+	for _, p := range manifest.Workspace.Projects {
+		projects[p.Name] = p
+	}
+	seen := map[string]bool{}
+	for _, a := range d.Applications {
+		if _, ok := projects[a.Project]; !ok {
+			return fmt.Errorf("unknown deployment app %s", a.Project)
+		}
+		if seen["app:"+a.Project] {
+			return fmt.Errorf("duplicate deployment app %s", a.Project)
+		}
+		seen["app:"+a.Project] = true
+		if a.Health == "" || a.Rollback == "" {
+			return fmt.Errorf("app %s requires health and rollback tasks", a.Project)
+		}
+	}
+	grouped := map[string]bool{}
+	for name, members := range d.MigrationGroups {
+		if err := ValidateProjectName(name); err != nil {
+			return fmt.Errorf("migration group name: %w", err)
+		}
+		if len(members) == 0 {
+			return fmt.Errorf("migration group %s must list applications", name)
+		}
+		for _, project := range members {
+			if !seen["app:"+project] {
+				return fmt.Errorf("migration group %s references %s, which is not a deployment application", name, project)
+			}
+			if grouped[project] {
+				return fmt.Errorf("application %s appears more than once in migration groups", project)
+			}
+			grouped[project] = true
+		}
+	}
+
+	return nil
+}
+
+func validateBackend(b InfraBackend) error {
+	u, err := url.Parse(b.URL)
+	if err != nil {
+		return err
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("backend URL must not contain credentials, query or fragment")
+	}
+	switch u.Scheme {
+	case "gs", "s3", "azblob":
+		if u.Host == "" {
+			return fmt.Errorf("remote backend requires a container")
+		}
+	case "file":
+		if !b.AllowLocal || u.Host != "" || !filepath.IsAbs(u.Path) {
+			return fmt.Errorf("local state requires allow_local and absolute file URL")
+		}
+	default:
+		return fmt.Errorf("backend must use gs, s3, azblob, or explicit local file")
+	}
+	return nil
 }

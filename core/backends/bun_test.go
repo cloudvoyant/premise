@@ -13,6 +13,8 @@ import (
 	"github.com/cloudvoyant/premise/core"
 )
 
+// Public API -----------------------------------------------------------------
+
 func TestBunPluginSelectsRegistryPackagesIndependentlyOfVisibility(t *testing.T) {
 	root := t.TempDir()
 	for _, filename := range []string{"package.json", "bunfig.toml"} {
@@ -71,6 +73,7 @@ func TestBunPluginSelectsRegistryPackagesIndependentlyOfVisibility(t *testing.T)
 }
 
 func TestBunPublicationPassesOnlyScopedCredentialsAndVersion(t *testing.T) {
+	useUnpublishedNPMVersions(t)
 	root := t.TempDir()
 	manifest := NewManifest("bun-fixture")
 	manifest.Workspace.Kind = core.ProjectKindTemplateRegistry
@@ -148,6 +151,7 @@ func TestBunPublicationSkipsPrivatePackagesWithoutCredentials(t *testing.T) {
 }
 
 func TestBunPublicationAggregatesPreflightErrors(t *testing.T) {
+	useUnpublishedNPMVersions(t)
 	root := t.TempDir()
 	manifest := NewManifest("bun-fixture")
 	manifest.Workspace.Kind = core.ProjectKindTemplateRegistry
@@ -205,14 +209,6 @@ esac
 	if _, err := os.Stat(capture); !os.IsNotExist(err) {
 		t.Fatalf("publication started despite preflight failures: %v", err)
 	}
-}
-
-func appendBunTemplate(registry *TemplateRegistry, template Template) *TemplateRegistry {
-	if registry == nil {
-		registry = &TemplateRegistry{WorkspaceFiles: []string{}}
-	}
-	registry.Templates = append(registry.Templates, template)
-	return registry
 }
 
 func TestBunVersionExistsEscapesScopedPackageOnce(t *testing.T) {
@@ -377,4 +373,30 @@ esac
 			t.Fatalf("temporary credential file %q still exists: %v", path, err)
 		}
 	}
+}
+
+// Private helpers ------------------------------------------------------------
+
+func appendBunTemplate(registry *TemplateRegistry, template Template) *TemplateRegistry {
+	if registry == nil {
+		registry = &TemplateRegistry{WorkspaceFiles: []string{}}
+	}
+	registry.Templates = append(registry.Templates, template)
+	return registry
+}
+
+type unpublishedNPMTransport struct{ fallback http.RoundTripper }
+
+func (transport unpublishedNPMTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	if request.URL.Hostname() == "registry.npmjs.org" {
+		return &http.Response{StatusCode: http.StatusNotFound, Body: http.NoBody, Header: make(http.Header), Request: request}, nil
+	}
+	return transport.fallback.RoundTrip(request)
+}
+
+func useUnpublishedNPMVersions(t *testing.T) {
+	t.Helper()
+	previous := http.DefaultTransport
+	http.DefaultTransport = unpublishedNPMTransport{fallback: previous}
+	t.Cleanup(func() { http.DefaultTransport = previous })
 }

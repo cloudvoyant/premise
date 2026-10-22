@@ -14,6 +14,8 @@ node = "lts"
 shellcheck = "latest"
 shfmt = "latest"
 watchexec = "latest"
+fnox = "1.39.0"
+actionlint = "1.7.12"
 
 [tasks.install]
 description = "Install the premise CLI"
@@ -42,9 +44,19 @@ echo "Build successful -> bin/$PROJECT (pm)"
 description = "Run all Go tests"
 run = "go test ./..."
 
+[tasks.test.env]
+PREMISE_TEST_FNOX = "1"
+
 [tasks.e2e]
 description = "Run end-to-end tests"
 run = "go test ./e2e"
+
+[tasks."e2e:infra"]
+description = "Run live scaffold, infrastructure, and CI scenarios against GCS"
+run = "go test ./e2e -run '^(TestScaffold|TestInfra|TestCI)$' -count=1 -timeout 45m -v"
+
+[tasks."e2e:infra".env]
+PREMISE_TEST_GCS = "1"
 
 [tasks.dev]
 description = "Watch sources and rebuild bin/premise (and pm) on change"
@@ -117,6 +129,6 @@ pm template test
 description = "Validate Premise before stable publication"
 run = "mise run on-commit"
 
-[tasks."on-release"]
+[tasks."on-deploy"]
 description = "Report that Premise has no deployment target"
 run = 'echo "No Premise deployment target — nothing to do."'

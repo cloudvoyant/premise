@@ -105,7 +105,7 @@ This option would provide extensible, format-aware merging for arbitrary configu
 ## Links
 
 - [Architecture](../docs/architecture.md)
-- [User Guide](../docs/user-guide.md)
+- [User Guide](../docs/guides/README.md)
 - [Mise configuration](https://mise.jdx.dev/configuration.html)
 - [Git attributes](https://git-scm.com/docs/gitattributes)
 - [Git ignore](https://git-scm.com/docs/gitignore)

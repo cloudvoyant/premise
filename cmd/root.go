@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var workspaceScaffold core.WorkspaceScaffold
+// Public API -----------------------------------------------------------------
 
 var rootCmd = &cobra.Command{
 	Use:   "pm",
@@ -20,12 +20,29 @@ projects converged on their templates, and runs lifecycle tasks in CI.`,
 
 // Execute runs the root command.
 func Execute(miseTemplate string, assets ...core.WorkflowAsset) {
-	workspaceScaffold = core.WorkspaceScaffold{MiseTemplate: miseTemplate, WorkflowAssets: assets}
+	scaffold := core.WorkspaceScaffold{
+		MiseTemplate:   miseTemplate,
+		WorkflowAssets: assets,
+	}
+	rootCmd.AddCommand(InitCommand(scaffold), InfraCommand(scaffold))
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
 }
 
 func init() {
-	rootCmd.AddCommand(ciCmd, projectsCmd, initCmd, installCmd, updateCmd, generateCmd, runCmd, templateCmd)
+	rootCmd.AddCommand(
+		CICommand(),
+		DeployCommand(),
+		MigrateCommand(),
+		GenerateCommand(),
+		InstallCommand(),
+		ProjectsCommand(),
+		ReleaseCommand(),
+		RunCommand(),
+		SecretsCommand(),
+		TemplateCommand(),
+		UpdateCommand(),
+		VersionCommand(),
+	)
 }

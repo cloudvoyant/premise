@@ -40,7 +40,7 @@ func TestInstallRunsDevToolAndRootTaskInstallation(t *testing.T) {
 	command.SetContext(t.Context())
 	command.SetOut(&output)
 	command.SetErr(&output)
-	if err := installCmd.RunE(command, nil); err != nil {
+	if err := InstallCommand().RunE(command, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -87,7 +87,7 @@ func TestInstallRunsRootTaskInstallationWhenNoProjects(t *testing.T) {
 	command.SetContext(t.Context())
 	command.SetOut(&output)
 	command.SetErr(&output)
-	if err := installCmd.RunE(command, nil); err != nil {
+	if err := InstallCommand().RunE(command, nil); err != nil {
 		t.Fatal(err)
 	}
 

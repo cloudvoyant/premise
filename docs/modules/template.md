@@ -8,13 +8,13 @@ The template module owns template directory safety, template initialization, fil
 
 ### API
 
-| API                                                          | Use                                                              |
-| ------------------------------------------------------------ | ---------------------------------------------------------------- |
-| `TemplateDirectory(sourceRoot, templatePath)`                | Resolve and validate a template path beneath its source root.    |
-| `RenderTemplateMise(kind)`                                   | Render the default Mise contract for an app or library template. |
-| `InitializeTemplate(root, kind)`                             | Create a live template skeleton in a registry workspace.         |
-| `TestTemplateContracts(ctx, root, manifest, stdout, stderr)` | Run every declared template’s task contracts.                    |
-| `ResolveTemplateSource(ctx, workspaceRoot, selector)`        | Resolve a selector to a local or checked-out source root.        |
+| API | Use |
+| --- | --- |
+| `TemplateDirectory(sourceRoot, templatePath)` | Resolve and validate a template path beneath its source root. |
+| `RenderTemplateMise(kind)` | Render the default Mise contract for an app or library template. |
+| `InitializeTemplate(root, kind)` | Create a live template skeleton in a registry workspace. |
+| `TestTemplateContracts(ctx, root, manifest, stdout, stderr)` | Run every declared template’s task contracts. |
+| `ResolveTemplateSource(ctx, workspaceRoot, selector)` | Resolve a selector to a local or checked-out source root. |
 
 ### Usage
 

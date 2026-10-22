@@ -10,6 +10,15 @@ permissions:
   contents: write
   id-token: write
 
+concurrency:
+  group: deploy-preview-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  PM_ENV: preview
+  PREVIEW_BRANCH: ${{ github.ref_name }}
+  PM_BRANCH: ${{ github.ref_name }}
+
 jobs:
   plan:
     runs-on: ubuntu-22.04
@@ -20,6 +29,7 @@ jobs:
       runner: ${{ steps.plan.outputs.runner }}
       matrix: ${{ steps.plan.outputs.matrix }}
       native: ${{ steps.plan.outputs.native }}
+      has_infra: ${{ steps.plan.outputs.has_infra }}
       version: ${{ steps.plan.outputs.release_version }}
     steps:
       - uses: actions/checkout@v6
@@ -188,3 +198,45 @@ jobs:
           install-premise: build
           channel: rc
           version: ${{ needs.publish-release.outputs.version }}
+
+  deploy:
+    needs: [plan, single, matrix, publish-release, publish-packages]
+    if: >-
+      always() && !cancelled() && needs.plan.outputs.has_infra == 'true' &&
+      github.event_name == 'push' && needs.plan.result == 'success' &&
+      (needs.single.result == 'success' || needs.matrix.result == 'success') &&
+      needs.single.result != 'failure' && needs.matrix.result != 'failure' &&
+      needs.publish-release.result != 'failure' && needs.publish-release.result != 'cancelled' &&
+      needs.publish-packages.result != 'failure' && needs.publish-packages.result != 'cancelled'
+    runs-on: ubuntu-latest
+    environment: preview
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./
+        with:
+          setup-only: true
+          install-premise: build
+      - name: Authenticate infrastructure providers
+        run: mise exec -- pm infra auth --ci --env-file "$GITHUB_ENV"
+      - name: Inspect environment
+        id: infrastructure
+        run: |
+          echo "exists=$(pm infra exists --env "$PM_ENV" --branch "$PM_BRANCH")" >> "$GITHUB_OUTPUT"
+          echo "PM_RELEASE=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - name: Prepare infrastructure
+        run: pm infra setup --env "$PM_ENV" --branch "$PM_BRANCH"
+      - name: Migrate existing environment
+        if: steps.infrastructure.outputs.exists == 'true'
+        run: pm migrate --env "$PM_ENV" --branch "$PM_BRANCH"
+      - name: Preview infrastructure
+        run: pm infra plan --env "$PM_ENV" --branch "$PM_BRANCH"
+      - name: Apply infrastructure
+        run: pm infra apply --env "$PM_ENV" --branch "$PM_BRANCH" --yes
+      - name: Migrate new environment
+        if: steps.infrastructure.outputs.exists != 'true'
+        run: pm migrate --env "$PM_ENV" --branch "$PM_BRANCH"
+      - name: Deploy applications and check health
+        run: pm deploy --env "$PM_ENV" --branch "$PM_BRANCH"

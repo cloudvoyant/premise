@@ -8,14 +8,14 @@ The version module calculates repository versions, validates explicit bumps and 
 
 ### API
 
-| API                                                | Use                                                                               |
-| -------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `CurrentVersion(root)`                             | Return the latest reachable stable SemVer tag.                                    |
-| `NextVersion(root)`                                | Infer the next stable version from conventional commits.                          |
-| `ParseVersionBump(value)`                          | Parse `patch`, `minor`, or `major`.                                               |
-| `BumpedVersion(root, bump)`                        | Apply an explicit version component bump.                                         |
-| `ValidateRCIdentifier(identifier)`                 | Validate one SemVer prerelease identifier.                                        |
-| `ReleaseCandidateVersion(root, identifier)`        | Produce the next version with `rc.<identifier>`.                                  |
+| API | Use |
+| --- | --- |
+| `CurrentVersion(root)` | Return the latest reachable stable SemVer tag. |
+| `NextVersion(root)` | Infer the next stable version from conventional commits. |
+| `ParseVersionBump(value)` | Parse `patch`, `minor`, or `major`. |
+| `BumpedVersion(root, bump)` | Apply an explicit version component bump. |
+| `ValidateRCIdentifier(identifier)` | Validate one SemVer prerelease identifier. |
+| `ReleaseCandidateVersion(root, identifier)` | Produce the next version with `rc.<identifier>`. |
 | `ValidatePackagePublicationVersion(version, task)` | Validate stable versus RC package publication and remove an optional leading `v`. |
 
 ### Usage
