@@ -174,13 +174,7 @@ func ResolveStackName(options InfraOptions) (string, error) {
 		if strings.TrimSpace(options.Branch) == "" {
 			return "", fmt.Errorf("preview requires --branch")
 		}
-		slug := strings.Trim(previewBranchCharacters.ReplaceAllString(strings.ToLower(options.Branch), "-"), "-")
-		if slug == "" {
-			slug = "branch"
-		}
-		if len(slug) > 40 {
-			slug = slug[:40]
-		}
+		slug := previewBranchSlug(options.Branch)
 		digest := sha256.Sum256([]byte(options.Branch))
 		return fmt.Sprintf("preview-%s-%x", slug, digest[:5]), nil
 	default:
@@ -579,12 +573,34 @@ func SetupInfrastructure(ctx context.Context, root string, scaffold WorkspaceSca
 
 var previewBranchCharacters = regexp.MustCompile(`[^a-z0-9-]+`)
 
+// previewBranchSlug omits the branch type, such as feature/ or fix/.
+func previewBranchSlug(branch string) string {
+	if _, name, ok := strings.Cut(branch, "/"); ok {
+		branch = name
+	}
+	slug := strings.Trim(previewBranchCharacters.ReplaceAllString(strings.ToLower(branch), "-"), "-")
+	if len(slug) > 40 {
+		slug = strings.TrimRight(slug[:40], "-")
+	}
+	if slug == "" {
+		return "branch"
+	}
+	return slug
+}
+
 func environmentProgramConfig(declared map[string]string, options InfraOptions, stack string) map[string]string {
 	result := map[string]string{}
 	for key, value := range declared {
 		result[key] = value
 	}
 	result["premise:environment"] = options.Environment
+	name := options.Environment
+	if options.Shared {
+		name = "shared"
+	} else if options.Environment == "preview" {
+		name = previewBranchSlug(options.Branch)
+	}
+	result["premise:environmentName"] = name
 	result["premise:branch"] = options.Branch
 	result["premise:stack"] = stack
 	return result

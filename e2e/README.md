@@ -36,7 +36,7 @@ Set the credentials, dedicated project, and existing state backend described in 
 mise run e2e:infra
 ```
 
-Live tests use real Pulumi and GCS. Each run selects unique backend prefixes, environment stacks, and bucket names. Dev, stage, prod, and preview use the same dedicated GCP project. The fixture uses two named state backends to test selection. Cleanup deletes the resource buckets and preserves the existing state bucket. Preview stacks use `preview-<branch-slug>-<10-character-hash>`. E2E branch names use `feature/static-<run-id>`. Pulumi assigns bucket names and exports them for `pm infra query`.
+Live tests use real Pulumi and GCS. Each run selects unique backend prefixes, environment stacks, and bucket names. Dev, stage, prod, and preview use the same dedicated GCP project. The fixture uses two named state backends to test selection. Cleanup deletes the resource buckets and preserves the existing state bucket. Preview stacks use `preview-<branch-slug>-<10-character-hash>`. E2E branch names use `feature/static-<run-id>`. Bucket names start with `storage-dev`, `storage-stage`, `storage-prod`, or `storage-static-<run-id>`. Pulumi adds a random suffix for global uniqueness and exports the final name for `pm infra query`. The preview slug omits the `feature/` prefix.
 
 The live suite tests official Pulumi starter generation, tool setup, plans without changes, resource updates and failures, saved-state queries, and destruction. CI contexts test feature previews, migrations, native application rollback, merge cleanup, dev updates, and promotion of the same staged static page to dev/stage/prod without rebuilding it.
 

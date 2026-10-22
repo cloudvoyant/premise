@@ -1,4 +1,4 @@
-package core
+package providers_test
 
 import (
 	"os"
@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cloudvoyant/premise/core"
 	"github.com/cloudvoyant/premise/core/providers"
 )
 
@@ -35,9 +36,9 @@ func TestGCPEnvironmentRequiresCredentialsAndAcceptsExistingADC(t *testing.T) {
 
 func TestNativeGCPAuthPrecedesRootFallback(t *testing.T) {
 	root := t.TempDir()
-	manifest := NewManifest("auth")
-	manifest.Workspace.Infra = &Infrastructure{Providers: []string{"gcp", "custom"}}
-	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
+	manifest := core.NewManifest("auth")
+	manifest.Workspace.Infra = &core.Infrastructure{Providers: []string{"gcp", "custom"}}
+	if err := core.SaveManifest(filepath.Join(root, core.ManifestFilename), manifest); err != nil {
 		t.Fatal(err)
 	}
 	os.WriteFile(filepath.Join(root, "mise.toml"), []byte("[tasks.\"ci:auth\"]\nrun = 'fallback'\n"), 0600)
@@ -59,7 +60,7 @@ for arg in "$@"; do case "$arg" in --output-file=*) printf '{}' > "${arg#--outpu
 [ -f "$GOOGLE_APPLICATION_CREDENTIALS" ] || exit 10
 printf 'fallback\n' >> "$AUTH_TEST_LOG"
 `), 0700)
-	values, err := AuthenticateInfrastructure(t.Context(), root, true, nil, nil, nil)
+	values, err := core.AuthenticateInfrastructure(t.Context(), root, true, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +79,7 @@ printf 'fallback\n' >> "$AUTH_TEST_LOG"
 	// Native authentication failures must stop before the fallback.
 	os.WriteFile(filepath.Join(root, "log"), nil, 0600)
 	os.WriteFile(filepath.Join(root, "gcloud"), []byte("#!/bin/sh\nexit 1\n"), 0700)
-	if _, err := AuthenticateInfrastructure(t.Context(), root, true, nil, nil, nil); err == nil {
+	if _, err := core.AuthenticateInfrastructure(t.Context(), root, true, nil, nil, nil); err == nil {
 		t.Fatal("native auth failure ignored")
 	}
 	data, _ = os.ReadFile(log)
@@ -92,7 +93,7 @@ printf 'fallback\n' >> "$AUTH_TEST_LOG"
 
 	// Child/project/global tasks cannot accidentally become a root fallback.
 	os.WriteFile(filepath.Join(root, "mise.toml"), []byte("[tasks.other]\nrun = 'echo other'\n"), 0600)
-	if _, err := AuthenticateInfrastructure(t.Context(), root, true, nil, nil, nil); err == nil || !strings.Contains(err.Error(), "root mise.toml") {
+	if _, err := core.AuthenticateInfrastructure(t.Context(), root, true, nil, nil, nil); err == nil || !strings.Contains(err.Error(), "root mise.toml") {
 		t.Fatalf("missing root fallback accepted: %v", err)
 	}
 }

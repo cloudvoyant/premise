@@ -36,6 +36,10 @@ func TestStackNamesSeparateEnvironmentsAndAvoidPreviewCollisions(t *testing.T) {
 	a, _ := ResolveStackName(InfraOptions{Environment: "preview", Branch: "feature/a"})
 	repeated, _ := ResolveStackName(InfraOptions{Environment: "preview", Branch: "feature/a"})
 	b, _ := ResolveStackName(InfraOptions{Environment: "preview", Branch: "feature-a"})
+	otherType, _ := ResolveStackName(InfraOptions{Environment: "preview", Branch: "fix/a"})
+	if !strings.HasPrefix(a, "preview-a-") || a == otherType {
+		t.Fatal("preview names must omit the type prefix and retain distinct branch identities")
+	}
 	if a != repeated || a == b {
 		t.Fatal("preview identity is unstable or collides")
 	}

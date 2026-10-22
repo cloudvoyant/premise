@@ -119,7 +119,7 @@ flowchart LR
   Backend --- Preview
 ```
 
-Premise writes declared environment values to `infra/Pulumi.<stack>.yaml` through Pulumi. It preserves other keys and Pulumi secret metadata. State stays in the backend. Premise also sets `premise:environment`, `premise:branch`, and `premise:stack` configuration values.
+Premise writes declared environment values to `infra/Pulumi.<stack>.yaml` through Pulumi. It preserves other keys and Pulumi secret metadata. State stays in the backend. Premise also sets `premise:environment`, `premise:environmentName`, `premise:branch`, and `premise:stack` configuration values.
 
 ```sh
 pm infra auth
@@ -139,7 +139,7 @@ pm infra apply --env preview --branch feature/login --yes
 pm infra destroy --env preview --branch feature/login
 ```
 
-If you omit `--branch`, Premise reads the current feature branch. The branch produces a stable stack name with a hash. No new source code or environment declaration is required. Preview destruction removes that stack and can run again safely. Persistent stack destruction requires interactive confirmation.
+If you omit `--branch`, Premise reads the current feature branch. The branch produces a stable stack name with a hash. For `feature/login`, the stack is `preview-login-<hash>` and `premise:environmentName` is `login`. Premise removes the first branch type prefix and normalizes the remainder to a slug. Use the environment name for resource suffixes such as `storage-dev`, `storage-prod`, or `storage-login`. Keep provider auto-naming when names must be globally unique; the resulting bucket name also includes a random suffix. Stack hashes still use the full branch name, so `feature/login` and `fix/login` keep separate state. No new source code or environment declaration is required. Preview destruction removes that stack and can run again safely. Persistent stack destruction requires interactive confirmation.
 
 Use `--shared` explicitly for a shared stack. An optional `shared_directory` selects another client-owned program. The environment program can read shared outputs with Pulumi's normal stack references. Environment updates and preview cleanup do not select shared stacks.
 
@@ -160,25 +160,9 @@ Strings print as plain text. Other values print as JSON. `--json` also quotes st
 
 Each application declares its own `migrate` task in its `mise.toml`. Premise discovers this task without running it. Applications without the task produce no migration job.
 
-```toml
-# apps/api/mise.toml
-[tasks.migrate]
-run = "./scripts/migrate"
-```
+See the [migration guide](../guides/migrations.md) for a native Mise task with a required environment argument and infrastructure queries. Premise runs `mise run migrate -- ENVIRONMENT` from the application directory. Mise exposes the declared argument as `usage_environment`, and `PM_BRANCH` identifies a preview branch. The application owns its migration tool, credentials, and migration history.
 
-Premise runs `mise run migrate -- ENVIRONMENT` from the application directory. The script receives the environment as its first argument. `PM_BRANCH` identifies a preview branch. The application owns its migration tool, credentials, migration history, and resource queries:
-
-```sh
-#!/usr/bin/env bash
-set -euo pipefail
-scope=(--env "$1")
-if [[ "$1" == preview ]]; then scope+=(--branch "$PM_BRANCH"); fi
-export DATABASE_URL
-DATABASE_URL="$(pm infra query "${scope[@]}" --output databaseUrl --show-secrets)"
-exec bun run db:migrate
-```
-
-Migration tasks select their inputs through saved infra queries. Pulumi configures deployed secret bindings. Local and E2E env files come from the project secrets:pull task. Use [secret management](../secret-management.md) explicitly for local application credentials. CI supplies the variables that the application task needs.
+Migration tasks select their inputs through saved infra queries. Pulumi configures deployed secret bindings. Local and E2E env files come from the project secrets:pull task. Use [secret management](../guides/secrets-and-config.md) explicitly for local application credentials. CI supplies the variables that the application task needs.
 
 ### Order migrations, infrastructure updates, and deployment
 
@@ -252,7 +236,6 @@ Infrastructure and migration failures stop the pipeline. They do not trigger app
 | `QueryInfrastructure` | Read a selected saved output or resource property. |
 | `PlanMigrations` / `RunMigrations` | Discover optional tasks and run independent groups. |
 | `RunApplicationDeployment` | Deploy and check applications, with client rollback on failure. |
-| `RunDeployment` | Run the local equivalent of the separate hosted environment steps. |
 
 The Pulumi process boundary lives in `core/extensions/pulumix.go`. Infrastructure operations, setup, and queries live in `core/infra.go`. Application deployment and rollback task execution live in `core/deploy.go`. Provider authentication, CI output adapters, and storage operations live under `core/providers`.
 

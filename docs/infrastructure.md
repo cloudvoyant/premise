@@ -51,4 +51,4 @@ Key compatibility measures:
 
 Use the environment stack commands for infrastructure and the separate deployment steps for setup, migration, infra updates and application rollback. Project Mise tasks use fnox to generate local and E2E env files. Pulumi configures deployed application secret bindings. Deployment administration credentials use provider-supported OAuth or CI secrets.
 
-See [infrastructure deployment](modules/infrastructure.md) and [secret management](secret-management.md) for configuration, commands and recovery.
+See [infrastructure deployment](modules/infrastructure.md) and [secret management](guides/secrets-and-config.md) for configuration, commands and recovery.

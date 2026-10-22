@@ -20,37 +20,6 @@ type DeployOptions struct {
 
 // Public API -----------------------------------------------------------------
 
-// RunDeployment runs the local equivalent of the separate hosted deployment steps.
-// Infrastructure and migration failures stop execution without compensation.
-func RunDeployment(ctx context.Context, root string, options DeployOptions, stdin io.Reader, stdout, stderr io.Writer) error {
-	exists, err := InfrastructureExists(ctx, root, options.InfraOptions, stderr)
-	if err != nil {
-		return err
-	}
-	if err := PrepareInfrastructure(ctx, root, options.InfraOptions, stdin, stdout, stderr); err != nil {
-		return err
-	}
-	if exists {
-		if err := RunMigrations(ctx, root, options.InfraOptions, "", stdout, stderr); err != nil {
-			return err
-		}
-	}
-	if err := RunInfra(ctx, root, "plan", options.InfraOptions, stdin, stdout, stderr); err != nil {
-		return err
-	}
-	apply := options.InfraOptions
-	apply.Yes = true
-	if err := RunInfra(ctx, root, "apply", apply, stdin, stdout, stderr); err != nil {
-		return err
-	}
-	if !exists {
-		if err := RunMigrations(ctx, root, options.InfraOptions, "", stdout, stderr); err != nil {
-			return err
-		}
-	}
-	return RunApplicationDeployment(ctx, root, options, stdin, stdout, stderr)
-}
-
 // RunApplicationDeployment runs application deploy and health tasks.
 // On failure, client rollback tasks use the deployment platform's revision history.
 func RunApplicationDeployment(ctx context.Context, root string, options DeployOptions, stdin io.Reader, stdout, stderr io.Writer) error {

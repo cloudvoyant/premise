@@ -20,7 +20,7 @@ func main() {
 		if revision == "" {
 			revision = "a"
 		}
-		bucket, err := storage.NewBucket(ctx, "storage", &storage.BucketArgs{
+		bucket, err := storage.NewBucket(ctx, "storage-"+config.Require(ctx, "premise:environmentName"), &storage.BucketArgs{
 			Versioning:               &storage.BucketVersioningArgs{Enabled: pulumi.Bool(true)},
 			ForceDestroy:             pulumi.Bool(true),
 			Project:                  pulumi.String(config.Require(ctx, "gcp:project")),

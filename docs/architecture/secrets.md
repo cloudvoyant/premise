@@ -93,6 +93,6 @@ Infrastructure and migration failures stop the pipeline. Application deploy or h
 
 ## References
 
-- [Secret management](../secret-management.md)
+- [Secret management](../guides/secrets-and-config.md)
 - [Infrastructure module](../modules/infrastructure.md)
 - [Pulumi rollback guidance](https://www.pulumi.com/docs/support/faq/infrastructure/)

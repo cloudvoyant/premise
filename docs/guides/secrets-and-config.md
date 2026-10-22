@@ -1,4 +1,4 @@
-# Secret management
+# Managing secrets and application configuration
 
 Fnox configuration owns local secret references. A project Mise task combines those values with saved infrastructure outputs and writes the env files that local runs need.
 
@@ -91,6 +91,6 @@ Premise suppresses pull-task output because it can contain secret values. A task
 
 ## Architecture and references
 
-- [Secrets architecture](architecture/secrets.md)
+- [Secrets architecture](../architecture/secrets.md)
 - [fnox GCP Secret Manager](https://fnox.jdx.dev/providers/gcp-sm.html)
-- [Provider authentication](providers/README.md)
+- [Provider authentication](../providers/README.md)

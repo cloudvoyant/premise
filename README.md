@@ -60,7 +60,7 @@ pm update v0.2.1
 
 ## Documentation
 
-- [User Guide](docs/user-guide.md) - Complete setup and usage guide
+- [User Guide](docs/guides/README.md) - Complete setup and usage guide
 - [Architecture](docs/architecture.md) - Overall Premise architecture
 - [Generation Architecture](docs/generation.md) - Create-only generation and template merging
 - [Infrastructure](docs/infrastructure.md) - Infrastructure and CI/CD details
@@ -74,19 +74,3 @@ pm update v0.2.1
 - [Conventional Commits](https://www.conventionalcommits.org/)
 - [GitHub Actions](https://docs.github.com/en/actions)
 - [GCP Artifact Registry](https://cloud.google.com/artifact-registry/docs)
-
-## Pulumi environments and application secrets
-
-Clients own their Pulumi programs under `infra/` and choose the language and tool version:
-
-```sh
-pm init --infra --infra-language go --pulumi-version 3.268.0
-mise run infra:install
-pm infra init --env preview --branch feature/example
-pm infra plan --env preview --branch feature/example
-```
-
-Configure an existing remote backend before initialization. One program serves separate environment and branch-preview stacks.
-Applications expose optional migration tasks. The environment CI flow orders migrations, infrastructure updates, application deployment, health checks, and client rollback. Clients apply database infrastructure changes separately before schema migrations.
-Local and E2E env files use fnox through project Mise tasks. Client Pulumi programs configure deployed application secrets. Deployment credentials use OAuth or protected CI secrets.
-See [infrastructure deployment](docs/modules/infrastructure.md) and [secret management](docs/secret-management.md).

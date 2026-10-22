@@ -38,7 +38,7 @@ The fallback can create credential files at paths already defined in CI. A child
 
 ## Credentials and application values
 
-Local env files come from fnox and project Mise tasks. Client Pulumi code configures deployed application secrets. Premise does not copy application values into CI secrets. See [Secret management](../secret-management.md).
+Local env files come from fnox and project Mise tasks. Client Pulumi code configures deployed application secrets. Premise does not copy application values into CI secrets. See [Secret management](../guides/secrets-and-config.md).
 
 Deployment credentials come from OAuth, workload identity, or protected CI credentials. Pulumi owns backend access, state locking, and update history. Premise has no separate recovery store. Hosted CI concurrency serializes each environment's deployment steps.
 

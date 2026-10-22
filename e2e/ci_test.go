@@ -58,7 +58,7 @@ func TestCI(t *testing.T) {
 
 			// Assert.
 			t.Run("it stops before creating release artifacts", func(t *testing.T) {
-				if !strings.Contains(failure, "static.sh test") {
+				if !strings.Contains(failure, "requested test failure") {
 					t.Fatalf("wrong check failure: %s", failure)
 				}
 				assertAbsent(t, filepath.Join(failedArtifacts, "index.html"))

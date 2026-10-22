@@ -71,6 +71,15 @@ func TestInfra(t *testing.T) {
 				client.infra(t, "apply", environment, "--yes")
 
 				// Assert.
+				t.Run("it names the bucket for its environment", func(t *testing.T) {
+					name := environment
+					if environment == "preview" {
+						_, name, _ = strings.Cut(client.branch, "/")
+					}
+					if !strings.HasPrefix(bucket, "storage-"+name+"-") {
+						t.Fatalf("bucket %q does not use environment suffix %q", bucket, name)
+					}
+				})
 				t.Run("it updates the existing bucket", func(t *testing.T) {
 					if got := client.bucket(t, environment); got != bucket {
 						t.Fatalf("update replaced bucket %s with %s", bucket, got)
@@ -125,7 +134,7 @@ func TestInfra(t *testing.T) {
 			}
 		})
 		t.Run("it returns saved resource properties", func(t *testing.T) {
-			output := client.infra(t, "query", "stage", "--resource", "storage", "--property", "name")
+			output := client.infra(t, "query", "stage", "--resource", "storage-stage", "--property", "name")
 			if strings.TrimSpace(output) != bucket {
 				t.Fatalf("wrong bucket property: %s", output)
 			}

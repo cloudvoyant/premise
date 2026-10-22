@@ -12,13 +12,12 @@ client/
 │   ├── main.go
 │   ├── go.mod
 │   └── go.sum
-├── apps/web/
-│   ├── mise.toml
-│   ├── fnox.toml         Fake per-environment values
-│   └── releases/
-│       ├── A/index.html
-│       └── B/index.html
-└── tasks/static.sh
+└── apps/web/
+    ├── mise.toml
+    ├── fnox.toml         Fake per-environment values
+    └── releases/
+        ├── A/index.html
+        └── B/index.html
 ```
 
 The Go harness runs `pm ci flow on-commit` and `pm ci flow on-deploy` across dev, stage, prod, and a feature-branch preview. A new environment applies infrastructure before its first migration. Existing environments migrate before applying infrastructure.

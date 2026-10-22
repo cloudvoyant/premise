@@ -323,7 +323,7 @@ func RunCIFlowWithOptions(ctx context.Context, root string, flow CIFlow, environ
 			return RunInfra(ctx, root, "destroy", infrastructure, nil, stdout, stderr)
 		}
 		release := ReadReleaseEnvironment(ReleaseEnvironment{})
-		return RunDeployment(ctx, root, DeployOptions{InfraOptions: infrastructure, Release: release.Release}, nil, stdout, stderr)
+		return runEnvironmentCIFlow(ctx, root, DeployOptions{InfraOptions: infrastructure, Release: release.Release}, nil, stdout, stderr)
 	}
 
 	projects, err := SelectCIProjects(root, manifest, flow)
@@ -370,6 +370,37 @@ func RunCIFlowWithOptions(ctx context.Context, root string, flow CIFlow, environ
 }
 
 // Private helpers ------------------------------------------------------------
+
+// runEnvironmentCIFlow runs the local equivalent of the separate hosted CI steps.
+// Infrastructure and migration failures stop execution without compensation.
+func runEnvironmentCIFlow(ctx context.Context, root string, options DeployOptions, stdin io.Reader, stdout, stderr io.Writer) error {
+	exists, err := InfrastructureExists(ctx, root, options.InfraOptions, stderr)
+	if err != nil {
+		return err
+	}
+	if err := PrepareInfrastructure(ctx, root, options.InfraOptions, stdin, stdout, stderr); err != nil {
+		return err
+	}
+	if exists {
+		if err := RunMigrations(ctx, root, options.InfraOptions, "", stdout, stderr); err != nil {
+			return err
+		}
+	}
+	if err := RunInfra(ctx, root, "plan", options.InfraOptions, stdin, stdout, stderr); err != nil {
+		return err
+	}
+	apply := options.InfraOptions
+	apply.Yes = true
+	if err := RunInfra(ctx, root, "apply", apply, stdin, stdout, stderr); err != nil {
+		return err
+	}
+	if !exists {
+		if err := RunMigrations(ctx, root, options.InfraOptions, "", stdout, stderr); err != nil {
+			return err
+		}
+	}
+	return RunApplicationDeployment(ctx, root, options, stdin, stdout, stderr)
+}
 
 func ciProject(name, path, kind, source string, declaration PlatformDeclaration, host string) CIPlatformProject {
 	checks := append([]string{}, declaration.CheckPlatforms...)

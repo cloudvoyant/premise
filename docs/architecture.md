@@ -57,7 +57,7 @@ flowchart LR
     Program[Client Pulumi program] --> Remote[Deployed resource secret bindings]
 ```
 
-Local env files combine JSON secret documents with queried infrastructure values. Deployment credentials use OAuth, workload identity, or protected CI credentials. Provider configuration belongs in Mise or the environment, keeping shared workflows cloud agnostic. See [secret management](secret-management.md) and [provider authentication](providers/README.md).
+Local env files combine JSON secret documents with queried infrastructure values. Deployment credentials use OAuth, workload identity, or protected CI credentials. Provider configuration belongs in Mise or the environment, keeping shared workflows cloud agnostic. See [secret management](guides/secrets-and-config.md) and [provider authentication](providers/README.md).
 
 ## Overall Module Dependency Tree
 
@@ -339,7 +339,7 @@ The [Module Documentation](modules/README.md) index links one design document pe
 
 ## References
 
-- [User Guide](user-guide.md)
+- [User Guide](guides/README.md)
 - [Module Documentation](modules/README.md)
 - [Configuration Module](modules/configuration.md)
 - [Development Environment Module](modules/development-environment.md)

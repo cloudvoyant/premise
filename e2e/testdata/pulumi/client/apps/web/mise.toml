@@ -1,26 +1,125 @@
-[tasks.build]
-run = '../../tasks/static.sh build'
+[tasks."build"]
+shell = "bash -c"
+run = '''
+set -euo pipefail
+if [[ -n "${PREMISE_TEST_EVENTS:-}" ]]; then
+    printf '%s:%s:%s\n' 'build' '' "${PM_RELEASE:-A}" >> "$PREMISE_TEST_EVENTS"
+fi
+test -s "releases/${PM_RELEASE:-A}/index.html"
+'''
 
-[tasks.test]
-run = '../../tasks/static.sh test'
+[tasks."test"]
+shell = "bash -c"
+run = '''
+set -euo pipefail
+if [[ -n "${PREMISE_TEST_EVENTS:-}" ]]; then
+    printf '%s:%s:%s\n' 'test' '' "${PM_RELEASE:-A}" >> "$PREMISE_TEST_EVENTS"
+fi
+if [[ "${PREMISE_TEST_FAIL_TASK:-}" == 'test' ]]; then
+    echo 'requested test failure' >&2
+    exit 1
+fi
+test -s "releases/${PM_RELEASE:-A}/index.html"
+'''
 
 [tasks."format:check"]
-run = '../../tasks/static.sh format:check'
+shell = "bash -c"
+run = '''
+set -euo pipefail
+if [[ -n "${PREMISE_TEST_EVENTS:-}" ]]; then
+    printf '%s:%s:%s\n' 'format:check' '' "${PM_RELEASE:-A}" >> "$PREMISE_TEST_EVENTS"
+fi
+test -s "releases/${PM_RELEASE:-A}/index.html"
+'''
 
-[tasks.lint]
-run = '../../tasks/static.sh lint'
+[tasks."lint"]
+shell = "bash -c"
+run = '''
+set -euo pipefail
+if [[ -n "${PREMISE_TEST_EVENTS:-}" ]]; then
+    printf '%s:%s:%s\n' 'lint' '' "${PM_RELEASE:-A}" >> "$PREMISE_TEST_EVENTS"
+fi
+test -s "releases/${PM_RELEASE:-A}/index.html"
+'''
 
-[tasks.migrate]
-run = '../../tasks/static.sh migrate'
+[tasks."release:build"]
+shell = "bash -c"
+run = '''
+set -euo pipefail
+if [[ -n "${PREMISE_TEST_EVENTS:-}" ]]; then
+    printf '%s:%s:%s\n' 'release:build' '' "${PM_RELEASE:-A}" >> "$PREMISE_TEST_EVENTS"
+fi
+if [[ "${PREMISE_TEST_FAIL_TASK:-}" == 'release:build' ]]; then
+    echo 'requested release:build failure' >&2
+    exit 1
+fi
+cp "releases/${PM_RELEASE:-A}/index.html" "$PREMISE_ARTIFACT_DIR/index.html"
+printf '%s:%s\n' "$PREMISE_RELEASE_CHANNEL" "$RELEASE_VERSION" > "$PREMISE_ARTIFACT_DIR/version.txt"
+'''
 
-[tasks.deploy]
-run = '../../tasks/static.sh deploy'
+[tasks."migrate"]
+shell = "bash -c"
+usage = 'arg "<environment>"'
+run = '''
+set -euo pipefail
+environment="$usage_environment"
+if [[ -n "${PREMISE_TEST_EVENTS:-}" ]]; then
+    printf '%s:%s:%s\n' 'migrate' "$environment" "${PM_RELEASE:-A}" >> "$PREMISE_TEST_EVENTS"
+fi
+args=(--env "$environment")
+if [[ "$environment" == preview ]]; then args+=(--branch "$PM_BRANCH"); fi
+bucket="$(pm infra query "${args[@]}" --output bucketName)"
+printf '%s:%s\n' "$environment" "$PM_RELEASE" | gcloud storage cp - "gs://$bucket/schema-version.txt"
+'''
 
-[tasks.health]
-run = '../../tasks/static.sh health'
+[tasks."deploy"]
+shell = "bash -c"
+usage = 'arg "<environment>"'
+run = '''
+set -euo pipefail
+environment="$usage_environment"
+if [[ -n "${PREMISE_TEST_EVENTS:-}" ]]; then
+    printf '%s:%s:%s\n' 'deploy' "$environment" "${PM_RELEASE:-A}" >> "$PREMISE_TEST_EVENTS"
+fi
+args=(--env "$environment")
+if [[ "$environment" == preview ]]; then args+=(--branch "$PM_BRANCH"); fi
+bucket="$(pm infra query "${args[@]}" --output bucketName)"
+gcloud storage cp "releases/$PM_RELEASE/index.html" "gs://$bucket/index.html"
+'''
 
-[tasks.rollback]
-run = '../../tasks/static.sh rollback'
+[tasks."health"]
+shell = "bash -c"
+usage = 'arg "<environment>"'
+run = '''
+set -euo pipefail
+environment="$usage_environment"
+if [[ -n "${PREMISE_TEST_EVENTS:-}" ]]; then
+    printf '%s:%s:%s\n' 'health' "$environment" "${PM_RELEASE:-A}" >> "$PREMISE_TEST_EVENTS"
+fi
+args=(--env "$environment")
+if [[ "$environment" == preview ]]; then args+=(--branch "$PM_BRANCH"); fi
+bucket="$(pm infra query "${args[@]}" --output bucketName)"
+gcloud storage cat "gs://$bucket/index.html" | grep -Fx "<h1>Release $PM_RELEASE</h1>"
+[[ "${PREMISE_TEST_FAIL_HEALTH:-}" != "$environment" ]]
+'''
+
+[tasks."rollback"]
+shell = "bash -c"
+usage = 'arg "<environment>"'
+run = '''
+set -euo pipefail
+environment="$usage_environment"
+if [[ -n "${PREMISE_TEST_EVENTS:-}" ]]; then
+    printf '%s:%s:%s\n' 'rollback' "$environment" "${PM_RELEASE:-A}" >> "$PREMISE_TEST_EVENTS"
+fi
+args=(--env "$environment")
+if [[ "$environment" == preview ]]; then args+=(--branch "$PM_BRANCH"); fi
+bucket="$(pm infra query "${args[@]}" --output bucketName)"
+# Creation time determines version order; generation IDs are only unique.
+previous="$(gcloud storage ls --all-versions --long "gs://$bucket/index.html" | awk '$3 ~ /^gs:/ {print $2, $3}' | sort -r | sed -n '2s/^[^ ]* //p')"
+[[ -n "$previous" ]]
+gcloud storage cp "$previous" "gs://$bucket/index.html"
+'''
 
 [tasks."secrets:pull"]
 shell = "bash -c"
@@ -39,6 +138,3 @@ jq -r --arg bucket "$bucket" '
 ' "$APP_CONFIG" > "$temporary"
 mv "$temporary" .env.local
 '''
-
-[tasks."release:build"]
-run = "../../tasks/static.sh release:build"
