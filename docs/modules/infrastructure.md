@@ -281,7 +281,7 @@ The original flow still fails after successful application rollback. Premise doe
 
 Terraform and Pulumi do not automatically undo a failed infrastructure update. Fix the failure and apply again, or revert the code, review the new preview, and apply against the current state. Restoring an older state file does not restore real cloud resources.
 
-`pm deploy` invokes each application's client-owned rollback task if deploy or health fails. The task uses the platform's previous revision or immutable artifact history. Premise does not keep an artifact ledger or recovery state machine. A successful rollback does not turn the failed deployment green.
+`pm deploy` invokes each application's client-owned rollback task if deploy or health fails. The task uses the platform's previous revision or immutable artifact history. Premise does not keep an artifact ledger or recovery state machine. A successful rollback does not turn the failed deployment green. If rollback changes a Pulumi-managed setting, update the desired configuration before the next apply.
 
 Infrastructure and migration failures stop the pipeline. They do not trigger application rollback or database down migrations. Pulumi owns state locking. The hosted workflows serialize each environment with GitHub concurrency groups.
 
