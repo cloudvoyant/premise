@@ -106,7 +106,4 @@ pm version rc --identifier <id>     # MAJOR.MINOR.PATCH-rc.<id>
 
 ## Infrastructure command tests
 
-Run `mise run e2e:infra` separately on demand with a dedicated GCP project and an existing GCS state backend.
-The [static GCS fixture](../e2e/testdata/pulumi/README.md) uses `pm ci` flows across environments.
-Infra apply creates a bucket. Deployment uploads a static page. A fake migration writes a marker.
-The same fixture tests automatic rollback and cleanup. Infrastructure validation does not run in CI.
+Run `mise run e2e:infra` separately on demand with a dedicated GCP project and an existing GCS state backend. The [static GCS fixture](../e2e/testdata/pulumi/README.md) uses `pm ci` flows across environments. Infra apply creates a bucket. Deployment uploads a static page. A fake migration writes a marker. The same fixture tests automatic rollback and cleanup. Infrastructure validation does not run in CI.

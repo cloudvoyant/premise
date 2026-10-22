@@ -28,11 +28,7 @@ The action restores the standard Go, Cargo, and Bun caches and project `target` 
 
 ### CI/CD Secrets
 
-Deployment tools belong in Mise. The CI runner supplies standard provider
-credentials through OAuth/workload identity or protected CI secrets. Premise does
-not assume a default cloud or require a service-account key. See
-[Provider setup](providers/README.md) for authentication, tool installation,
-provider-specific variables, and the current state-protection limit.
+Deployment tools belong in Mise. The CI runner supplies standard provider credentials through OAuth/workload identity or protected CI secrets. Premise does not assume a default cloud or require a service-account key. See [Provider setup](providers/README.md) for authentication, tool installation, provider-specific variables, and the current state-protection limit.
 
 ### Cross-Platform Support
 

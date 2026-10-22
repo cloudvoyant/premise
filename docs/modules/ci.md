@@ -96,18 +96,15 @@ flowchart TD
 
 ### CI provider outputs
 
-`pm ci plan --ci-output` formats the plan through the workspace's configured CI provider.
-The GitHub adapter writes step-output values, including the task matrix and migration matrix.
-`--json` returns the runner-independent plan. `--github-output` remains a compatibility alias for existing released workflows.
-CI-specific formatting lives under `core/providers`, not in command handlers or workflow Python scripts.
+`pm ci plan --ci-output` formats the plan through the workspace's configured CI provider. The GitHub adapter writes step-output values, including the task matrix and migration matrix. `--json` returns the runner-independent plan. `--github-output` remains a compatibility alias for existing released workflows. CI-specific formatting lives under `core/providers`, not in command handlers or workflow Python scripts.
 
 ### API
 
-| CLI command                                    | Action command | Behavior                                |
-| ---------------------------------------------- | -------------- | --------------------------------------- |
-| `pm ci plan --flow FLOW`                       | `plan`         | Return the runner schedule.             |
-| `pm ci flow FLOW`                              | `flow`         | Run host-compatible tasks.              |
-| `pm ci flow FLOW --project NAME --platform OS` | `flow-matrix`  | Run one declared project/platform pair. |
+| CLI command | Action command | Behavior |
+| --- | --- | --- |
+| `pm ci plan --flow FLOW` | `plan` | Return the runner schedule. |
+| `pm ci flow FLOW` | `flow` | Run host-compatible tasks. |
+| `pm ci flow FLOW --project NAME --platform OS` | `flow-matrix` | Run one declared project/platform pair. |
 
 See [Project](project.md) for declarations and project listing, [Release](release.md) for publication, and [Infrastructure](infrastructure.md) for deployment commands.
 

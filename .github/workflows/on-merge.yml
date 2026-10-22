@@ -214,9 +214,6 @@ jobs:
        (github.event_name == 'delete' && github.event.ref_type == 'branch' && github.event.ref != 'main'))
     runs-on: ubuntu-latest
     environment: preview
-    env:
-      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-      GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -227,7 +224,7 @@ jobs:
           setup-only: true
           install-premise: build
       - name: Authenticate infrastructure providers
-        run: pm infra auth --ci --env-file "$GITHUB_ENV"
+        run: mise exec -- pm infra auth --ci --env-file "$GITHUB_ENV"
       - name: Destroy the merged or deleted branch preview
         uses: ./
         with:
@@ -253,8 +250,6 @@ jobs:
     env:
       PM_ENV: dev
       PM_BRANCH: ""
-      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-      GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -265,7 +260,7 @@ jobs:
           setup-only: true
           install-premise: build
       - name: Authenticate infrastructure providers
-        run: pm infra auth --ci --env-file "$GITHUB_ENV"
+        run: mise exec -- pm infra auth --ci --env-file "$GITHUB_ENV"
       - name: Inspect environment
         id: infrastructure
         run: |

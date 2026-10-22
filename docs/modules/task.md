@@ -8,15 +8,15 @@ The task module provides the Mise-backed execution boundary for workspace tasks,
 
 ### API
 
-| API                                                            | Use                                                               |
-| -------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `RunRootTask(ctx, root, task, ...)`                            | Run one named task from the workspace root.                       |
-| `RunProjectTask(ctx, root, project, task, ...)`                | Resolve a registered project and run one task from its directory. |
-| `ContractTasks(kind)`                                          | Return required lifecycle task names for an app or library.       |
-| `MiseTaskRunner.Run(ctx, directory, additions, arguments...)`  | Run a sanitized Mise command for a package-manager backend.       |
-| `MiseTaskRunner.TaskExists(ctx, directory, task)`              | Check whether a Mise task selector resolves.                      |
-| `ExtractMiseConfig(label, data)`                               | Parse a typed Mise configuration.                                 |
-| `MergeMiseConfigs(shared, selected, kind, identity, resolver)` | Merge registry-root and selected-template Mise configuration.     |
+| API | Use |
+| --- | --- |
+| `RunRootTask(ctx, root, task, ...)` | Run one named task from the workspace root. |
+| `RunProjectTask(ctx, root, project, task, ...)` | Resolve a registered project and run one task from its directory. |
+| `ContractTasks(kind)` | Return required lifecycle task names for an app or library. |
+| `MiseTaskRunner.Run(ctx, directory, additions, arguments...)` | Run a sanitized Mise command for a package-manager backend. |
+| `MiseTaskRunner.TaskExists(ctx, directory, task)` | Check whether a Mise task selector resolves. |
+| `ExtractMiseConfig(label, data)` | Parse a typed Mise configuration. |
+| `MergeMiseConfigs(shared, selected, kind, identity, resolver)` | Merge registry-root and selected-template Mise configuration. |
 
 ### Usage
 

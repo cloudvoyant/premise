@@ -18,8 +18,6 @@ env:
   PM_ENV: preview
   PREVIEW_BRANCH: ${{ github.ref_name }}
   PM_BRANCH: ${{ github.ref_name }}
-  GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-  GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
 
 jobs:
   plan:
@@ -222,7 +220,7 @@ jobs:
           setup-only: true
           install-premise: build
       - name: Authenticate infrastructure providers
-        run: pm infra auth --ci --env-file "$GITHUB_ENV"
+        run: mise exec -- pm infra auth --ci --env-file "$GITHUB_ENV"
       - name: Inspect environment
         id: infrastructure
         run: |

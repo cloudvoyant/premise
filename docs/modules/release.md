@@ -53,21 +53,20 @@ sequenceDiagram
 
 For tandem PR validation, push a commit containing `[publish-rc]`. Wait for publication, then test the exact published RC in the dependent repository.
 
-#Package publication and its credential preflight use repository or organization CI secrets. They do not select a GitHub deployment environment.
-A library release on merge must not create a `production` deployment. Deployment environments belong to application infrastructure jobs.
+#Package publication and its credential preflight use repository or organization CI secrets. They do not select a GitHub deployment environment. A library release on merge must not create a `production` deployment. Deployment environments belong to application infrastructure jobs.
 
 ## API
 
-| API                                                  | Use                                                                    |
-| ---------------------------------------------------- | ---------------------------------------------------------------------- |
-| `PlanStableRelease(ctx, root)`                       | Decide whether to skip, create a tag, or reuse the stable tag at HEAD. |
-| `PrepareStableRelease(ctx, root, stdout)`            | Plan and create/push a missing stable tag.                             |
-| `PublishGitHubRelease(ctx, root, stdout, stderr)`    | Publish downloadable artifacts for a prepared tag.                     |
-| `PublishLanguagePackages(ctx, root, stdout, stderr)` | Publish eligible registry packages for a prepared tag.                 |
-| `PublishStableRelease(ctx, root, stdout, stderr)`    | Prepare, publish GitHub artifacts, then publish packages.              |
-| `BuildReleaseArtifacts(ctx, root, stdout, stderr)`   | Build the complete artifact matrix without tags or publication.        |
-| `GoReleaserConfig(root)`                             | Return the merged GoReleaser configuration as bytes.                   |
-| `ReleasePlan`                                        | Return the selected version plus skip/reuse decisions.                 |
+| API | Use |
+| --- | --- |
+| `PlanStableRelease(ctx, root)` | Decide whether to skip, create a tag, or reuse the stable tag at HEAD. |
+| `PrepareStableRelease(ctx, root, stdout)` | Plan and create/push a missing stable tag. |
+| `PublishGitHubRelease(ctx, root, stdout, stderr)` | Publish downloadable artifacts for a prepared tag. |
+| `PublishLanguagePackages(ctx, root, stdout, stderr)` | Publish eligible registry packages for a prepared tag. |
+| `PublishStableRelease(ctx, root, stdout, stderr)` | Prepare, publish GitHub artifacts, then publish packages. |
+| `BuildReleaseArtifacts(ctx, root, stdout, stderr)` | Build the complete artifact matrix without tags or publication. |
+| `GoReleaserConfig(root)` | Return the merged GoReleaser configuration as bytes. |
+| `ReleasePlan` | Return the selected version plus skip/reuse decisions. |
 
 ## Implementation Details
 

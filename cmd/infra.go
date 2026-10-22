@@ -67,7 +67,7 @@ func InfraSetupCommand(scaffold core.WorkspaceScaffold) *cobra.Command {
 	command.Flags().String("branch", "", "Branch identity required for preview environments")
 	command.Flags().Bool("shared", false, "Select only shared infrastructure")
 	command.Flags().String("backend", "", "Named saved backend; defaults to environment/workspace selection")
-	command.Flags().StringVar(&setup.Language, "language", "", "Official Pulumi language starter; existing programs supply their runtime")
+	command.Flags().StringVar(&setup.Language, "pulumi-lang", "", "Official Pulumi language starter; existing programs supply their runtime")
 	command.Flags().StringVar(&setup.PulumiVersion, "pulumi-version", "", "Pulumi version to pin; defaults to the existing pin or tested version")
 	return command
 }

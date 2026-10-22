@@ -51,6 +51,9 @@ must not know those variable names.
 
 # Docs
 
+Use soft wraps for documentation prose: keep each paragraph on one source line.
+Prettier enforces this for `docs/**/*.md` through `proseWrap: never`.
+
 Put Usage before API sections. Use short sentences, working examples, and diagrams
 for flows. Keep each module focused on its own commands and responsibilities.
 

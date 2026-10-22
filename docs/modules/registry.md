@@ -8,19 +8,19 @@ The registry module discovers template registries, parses template selectors, re
 
 ### API
 
-| API                                                   | Use                                                                              |
-| ----------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `ParseTemplateSelector(selector)`                     | Parse `<source>:<template>` into a source and template name.                     |
-| `ClassifyGenerateSelector(argument)`                  | Distinguish interactive, official-name, and explicit-source generation requests. |
-| `LoadRegistry(sourceRoot)`                            | Load template declarations from one repository root.                             |
-| `DefaultRegistry(ctx)`                                | Merge official registries into a deterministic source-aware list.                |
-| `ResolveOfficialTemplateName(ctx, name)`              | Resolve a bare name when exactly one official registry declares it.              |
-| `Registry.Names()`                                    | List template names in stable order.                                             |
-| `RegistryEntry.Selector()`                            | Return the fully qualified source/template selector.                             |
-| `ResolveTemplateSource(ctx, workspaceRoot, selector)` | Resolve and load the selected registry source.                                   |
-| `DetectProjectKind(root)`                             | Read the configured lifecycle kind for CI routing.                               |
-| `InitializeTemplate(root, kind)`                      | Create and declare a new local template.                                         |
-| `TestTemplateContracts(ctx, root, manifest, ...)`     | Validate every declared local template contract.                                 |
+| API | Use |
+| --- | --- |
+| `ParseTemplateSelector(selector)` | Parse `<source>:<template>` into a source and template name. |
+| `ClassifyGenerateSelector(argument)` | Distinguish interactive, official-name, and explicit-source generation requests. |
+| `LoadRegistry(sourceRoot)` | Load template declarations from one repository root. |
+| `DefaultRegistry(ctx)` | Merge official registries into a deterministic source-aware list. |
+| `ResolveOfficialTemplateName(ctx, name)` | Resolve a bare name when exactly one official registry declares it. |
+| `Registry.Names()` | List template names in stable order. |
+| `RegistryEntry.Selector()` | Return the fully qualified source/template selector. |
+| `ResolveTemplateSource(ctx, workspaceRoot, selector)` | Resolve and load the selected registry source. |
+| `DetectProjectKind(root)` | Read the configured lifecycle kind for CI routing. |
+| `InitializeTemplate(root, kind)` | Create and declare a new local template. |
+| `TestTemplateContracts(ctx, root, manifest, ...)` | Validate every declared local template contract. |
 
 ### Usage
 

@@ -850,7 +850,7 @@ func stageInfrastructureProgram(ctx context.Context, root, stage, directory stri
 		}
 	} else {
 		if setup.Language == "" {
-			return fmt.Errorf("choose a Pulumi language with --infra-language during init or --language during infra setup")
+			return fmt.Errorf("choose a Pulumi language with --pulumi-lang during init or infra setup")
 		}
 		language, err = pulumiLanguageLabel(setup.Language)
 		if err != nil {
@@ -1051,6 +1051,6 @@ func pulumiLanguageLabel(language string) (string, error) {
 	case "go", "typescript", "javascript", "python", "yaml", "csharp", "fsharp", "java":
 		return language, nil
 	default:
-		return "", fmt.Errorf("--infra-language must name an empty Pulumi language starter: go, typescript, javascript, python, yaml, csharp, fsharp, or java")
+		return "", fmt.Errorf("--pulumi-lang must name an empty Pulumi language starter: go, typescript, javascript, python, yaml, csharp, fsharp, or java")
 	}
 }

@@ -30,12 +30,12 @@ The script owns the Azure-specific identity setup. It must fail if authenticatio
 
 ## Variables
 
-| Name                                                    | Source                    | Purpose                                                     |
-| ------------------------------------------------------- | ------------------------- | ----------------------------------------------------------- |
-| `ARM_TENANT_ID`, `ARM_CLIENT_ID`, `ARM_SUBSCRIPTION_ID` | CI variables              | Azure Native deployment identity and subscription.          |
-| `ARM_USE_OIDC`                                          | CI variable set to `true` | Select federated identity.                                  |
-| `ARM_OIDC_TOKEN` or `ARM_OIDC_TOKEN_FILE_PATH`          | Runner                    | Identity token or its file path.                            |
-| `PULUMI_BACKEND_URL`                                    | CI variable               | Existing state store, for example `azblob://company-state`. |
+| Name | Source | Purpose |
+| --- | --- | --- |
+| `ARM_TENANT_ID`, `ARM_CLIENT_ID`, `ARM_SUBSCRIPTION_ID` | CI variables | Azure Native deployment identity and subscription. |
+| `ARM_USE_OIDC` | CI variable set to `true` | Select federated identity. |
+| `ARM_OIDC_TOKEN` or `ARM_OIDC_TOKEN_FILE_PATH` | Runner | Identity token or its file path. |
+| `PULUMI_BACKEND_URL` | CI variable | Existing state store, for example `azblob://company-state`. |
 
 ## Permissions
 

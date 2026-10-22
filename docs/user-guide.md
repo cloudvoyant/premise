@@ -70,28 +70,23 @@ A Pulumi program declares your resources. A stack holds one environment’s stat
 Create a client-owned program during workspace initialization:
 
 ```sh
-pm init --infra --infra-language go
+pm init --infra --pulumi-lang go
 # Or choose TypeScript and an explicit Pulumi pin.
-pm init --infra --infra-language typescript --pulumi-version 3.268.0
+pm init --infra --pulumi-lang typescript --pulumi-version 3.268.0
 mise run infra:install
 ```
 
-If `infra/Pulumi.yaml` already exists, use `pm init --infra` to adopt it.
-If you already initialized Premise without infrastructure, add it later:
+If `infra/Pulumi.yaml` already exists, use `pm init --infra` to adopt it. If you already initialized Premise without infrastructure, add it later:
 
 ```sh
-pm infra setup --language go
+pm infra setup --pulumi-lang go
 # Adopt an existing program instead:
 pm infra setup
 ```
 
-Setup adds the missing `on-deploy.yml`, preserves existing files and tool pins, and leaves backend configuration to you.
-Without infrastructure, initialization omits that manual deployment workflow.
-The file selects the language runtime. Root `mise.toml` selects Pulumi and runtime versions.
-Use ordinary language imports to share resource declarations across environment stacks.
+Setup adds the missing `on-deploy.yml`, preserves existing files and tool pins, and leaves backend configuration to you. Without infrastructure, initialization omits that manual deployment workflow. The file selects the language runtime. Root `mise.toml` selects Pulumi and runtime versions. Use ordinary language imports to share resource declarations across environment stacks.
 
-Declare `workspace.infra.directory`, backend choices, and environment values in `premise.yaml`.
-Supply an existing remote backend through a named selection or `PULUMI_BACKEND_URL`:
+Declare `workspace.infra.directory`, backend choices, and environment values in `premise.yaml`. Supply an existing remote backend through a named selection or `PULUMI_BACKEND_URL`:
 
 ```sh
 export PULUMI_BACKEND_URL=gs://YOUR_STATE_BUCKET/product
@@ -102,8 +97,7 @@ pm infra apply --env dev --yes
 pm infra query --env dev --resource uploads --property arn
 ```
 
-The commands select the whole environment stack and accept no application project argument.
-See the [infrastructure module](modules/infrastructure.md) for Go and TypeScript layouts and full configuration.
+The commands select the whole environment stack and accept no application project argument. See the [infrastructure module](modules/infrastructure.md) for Go and TypeScript layouts and full configuration.
 
 ## Create a branch preview
 
@@ -124,8 +118,7 @@ Destroy this preview when you finish:
 pm infra destroy --env preview
 ```
 
-When premise.yaml declares infrastructure and provider credentials are configured, `on-commit.yml` deploys feature-branch previews. `on-merge.yml` deploys dev on main and cleans up previews after a same-repository PR merge or branch deletion. `on-deploy.yml` runs only when started manually. Persistent environments require interactive confirmation for destruction.
-Publishing a library on merge does not create a GitHub deployment or select a `production` environment. Publication tokens belong in repository or organization secrets.
+When premise.yaml declares infrastructure and provider credentials are configured, `on-commit.yml` deploys feature-branch previews. `on-merge.yml` deploys dev on main and cleans up previews after a same-repository PR merge or branch deletion. `on-deploy.yml` runs only when started manually. Persistent environments require interactive confirmation for destruction. Publishing a library on merge does not create a GitHub deployment or select a `production` environment. Publication tokens belong in repository or organization secrets.
 
 ## Deploy with migrations
 
@@ -136,14 +129,9 @@ export PM_RELEASE=COMMIT_SHA
 pm ci flow on-deploy --environment stage
 ```
 
-For an existing stack, the order is migrate, infra plan, infra apply, then application deploy and health checks.
-For a new stack, migration runs after the first apply. Applications without a migration task skip that step.
-Clients must apply database infrastructure changes separately before schema migrations and keep migrations backward compatible.
+For an existing stack, the order is migrate, infra plan, infra apply, then application deploy and health checks. For a new stack, migration runs after the first apply. Applications without a migration task skip that step. Clients must apply database infrastructure changes separately before schema migrations and keep migrations backward compatible.
 
-You can also run `pm migrate`, `pm infra plan`, `pm infra apply`, and `pm deploy` individually with `--env ENV`.
-`pm deploy` only deploys and checks application artifacts; it has no subcommands.
-Infra and migration failures stop the flow. Application deploy or health failures call the client rollback task, which uses platform revision history.
-See the [infrastructure guide](modules/infrastructure.md) for configuration and rollback tasks.
+You can also run `pm migrate`, `pm infra plan`, `pm infra apply`, and `pm deploy` individually with `--env ENV`. `pm deploy` only deploys and checks application artifacts; it has no subcommands. Infra and migration failures stop the flow. Application deploy or health failures call the client rollback task, which uses platform revision history. See the [infrastructure guide](modules/infrastructure.md) for configuration and rollback tasks.
 
 ## Pull application secrets
 

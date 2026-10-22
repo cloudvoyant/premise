@@ -8,14 +8,14 @@ The questionnaire module collects interactive answers for template selection and
 
 ### API
 
-| API                                       | Use                                                       |
-| ----------------------------------------- | --------------------------------------------------------- |
-| `Questionnaire`                           | Abstract answer collection for generation.                |
-| `InteractiveQuestionnaire`                | Terminal implementation backed by `huh`.                  |
-| `InteractiveQuestionnaire.Ask(questions)` | Collect and validate answers to template questions.       |
-| `AskTemplateKind()`                       | Select `app` or `lib` while initializing a template.      |
-| `AskDefaultTemplate(ctx)`                 | Select a qualified template from all official registries. |
-| `AskRegistryTemplate(ctx, source)`        | Select a template from one registry source.               |
+| API | Use |
+| --- | --- |
+| `Questionnaire` | Abstract answer collection for generation. |
+| `InteractiveQuestionnaire` | Terminal implementation backed by `huh`. |
+| `InteractiveQuestionnaire.Ask(questions)` | Collect and validate answers to template questions. |
+| `AskTemplateKind()` | Select `app` or `lib` while initializing a template. |
+| `AskDefaultTemplate(ctx)` | Select a qualified template from all official registries. |
+| `AskRegistryTemplate(ctx, source)` | Select a template from one registry source. |
 
 ### Usage
 

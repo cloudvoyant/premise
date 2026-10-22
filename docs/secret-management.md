@@ -71,7 +71,7 @@ pm secrets pull --project web --env preview --branch feature/example
 
 Premise sets `PM_ENV` and `PM_BRANCH`, selects the matching fnox profile, and runs the task. Omit `--project` to run all declared project tasks with that name. Projects without the task are skipped.
 
-The application or Mise loads the generated file for local runs. There is no public `pm secrets exec` or `pm secrets sync` command.
+The application or Mise loads the generated file for local runs.
 
 ## Deployment and CI
 

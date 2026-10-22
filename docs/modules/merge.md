@@ -8,15 +8,15 @@ The merge module models and resolves collisions between registry-root workspace 
 
 ### API
 
-| API                                | Use                                                                        |
-| ---------------------------------- | -------------------------------------------------------------------------- |
-| `MergeStrategy`                    | Identify copy, equality, typed Mise, ordered-line, or whole-file behavior. |
-| `PathValue`                        | Represent a file, directory, mode, content, or absent path.                |
-| `MergeEntry`                       | Record shared, selected, and resolved values for one path.                 |
-| `MergeConflict`                    | Describe a decision required from a caller or user.                        |
-| `MergeDecision`                    | Select shared, selected, renamed, or abort behavior.                       |
-| `MergeConflictResolver`            | Inject deterministic or interactive conflict handling.                     |
-| `MergeDecisions.Resolve(conflict)` | Resolve tests and automation from a decision map.                          |
+| API | Use |
+| --- | --- |
+| `MergeStrategy` | Identify copy, equality, typed Mise, ordered-line, or whole-file behavior. |
+| `PathValue` | Represent a file, directory, mode, content, or absent path. |
+| `MergeEntry` | Record shared, selected, and resolved values for one path. |
+| `MergeConflict` | Describe a decision required from a caller or user. |
+| `MergeDecision` | Select shared, selected, renamed, or abort behavior. |
+| `MergeConflictResolver` | Inject deterministic or interactive conflict handling. |
+| `MergeDecisions.Resolve(conflict)` | Resolve tests and automation from a decision map. |
 
 ### Usage
 
