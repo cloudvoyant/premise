@@ -47,3 +47,5 @@ The package manager list in `premise.yaml` is the source of release policy. A ma
 The module keeps package-manager contracts separate from built-in backends. This lets library users register their own backends and keeps core independent of the built-in implementations.
 
 Before publication, the release process checks manager selection, artifact configuration, tasks, and credentials. If a check fails, no tag or package is published. Fix the cause and run the release again.
+
+Providers can also implement native workspace preparation, artifact tool selection, and repository-tag publication capabilities. These capabilities apply through the selected provider interface, without language-name branches in core. Go uses one root module and the normal repository tag; Bun and Cargo retain their registry publication tasks.

@@ -1,0 +1,8 @@
+[tools]
+go = "1.25"
+[tasks.test]
+run = "go test ./..."
+[tasks.publish]
+run = "go test ./..."
+[tasks."publish:rc"]
+run = "go test ./..."

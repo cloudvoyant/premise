@@ -8,6 +8,7 @@ import (
 	"os"
 
 	core "github.com/cloudvoyant/premise/core"
+	"github.com/cloudvoyant/premise/core/backends"
 	"github.com/spf13/cobra"
 )
 
@@ -30,6 +31,9 @@ from the Bun registry or :premise-hono-api to resolve that official template.
 Use .:app to select a template from the current workspace.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := backends.RegisterPackageManagers(); err != nil {
+				return err
+			}
 			cwd, err := os.Getwd()
 			if err != nil {
 				return fmt.Errorf("get current directory: %w", err)

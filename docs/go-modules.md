@@ -1,8 +1,21 @@
 # Go projects and library releases
 
-Each generated Go project has its own module, a set of packages with one dependency list. Premise adds the module to the root `go.work`, which connects local modules during development. The workspace can also contain Bun and Cargo projects.
+## Usage
 
-Generate an application or library from the Go registry:
+Go applications and libraries use the same `apps/<name>` and `libs/<name>` project layout as other Premise templates. Each project keeps its own Mise tools and tasks. All Go projects share the workspace root `go.mod`, `go.sum`, dependencies, and repository release tag.
+
+```text
+premise.yaml
+mise.toml
+go.mod
+go.sum
+apps/cli/main.go
+apps/cli/mise.toml
+libs/math/math.go
+libs/math/mise.toml
+```
+
+Generate a project and supply the workspace module path when asked:
 
 ```sh
 pm generate cloudvoyant/premise-go:premise-cobra-cli
@@ -12,34 +25,36 @@ pm generate cloudvoyant/premise-go:premise-go-lib
 pm generate cloudvoyant/premise-go:premise-pulumi-component-lib
 ```
 
-The questionnaire asks for the project name and canonical module path, the import path that identifies the module. For a library at `libs/math`, use a path such as `github.com/acme/myrepo/libs/math`. Public paths must identify the repository directory that contains the module. Libraries also ask whether publication is `public` or `private-local`.
+For a new repository, a module path such as `github.com/acme/myrepo` supports v0 and v1 releases. Every subsequent Go project uses that same workspace path. Generation combines the template's dependencies and checksums with the root manifests. It removes the template dependency manifests from the generated project. It does not create a `go.work` or nested module.
 
-Each project stores its release policy in `.premise-go.toml`:
+For v4, the root module path is `github.com/acme/myrepo/v4`. A client imports `github.com/acme/myrepo/v4/libs/math` and selects the shared repository tag:
+
+```sh
+go get github.com/acme/myrepo/v4/libs/math@v4.0.0
+```
+
+The client records one dependency on `github.com/acme/myrepo/v4`. All managed Go packages use that version, alongside the Bun and Cargo packages released at the same repository version. Go does not need directory-prefixed tags or a separate sibling dependency preparation command.
+
+## API and build policy
+
+Each Go project can declare `.premise-go.toml`:
 
 ```toml
 publication = "public"
 ```
 
-Applications use `publication = "private-local"` and `main = "."` by default. The `main` value selects the package that Premise builds as an executable. An optional `binary` value sets the executable name. A library without `main` produces no executable. Missing policy opts out of module publication and preserves existing root CLI builds.
+The policy selects the project-owned publication tasks and advertised API packages. `private-local` skips those tasks. Both kinds of packages remain part of the shared module distribution. This flag does not hide source or prevent external imports. Use Go's `internal/` convention when imports need a compiler-enforced boundary. A root `internal/` directory can hold helpers shared by applications and libraries inside the repository.
 
-A `private-local` library participates in local workspace builds and receives no publication tag. This policy controls release behavior, not access to source in a public repository. Public libraries cannot depend on unpublished local libraries. Public libraries also cannot contain filesystem `replace` directives.
+Applications use `main = "."`. An optional `binary` field selects the executable name. Libraries without a main package produce no executable. A workspace with several Go applications produces separate archives. A workspace containing only Go libraries produces a source-only GitHub release.
 
-The repository keeps one shared version for all public libraries. For version `v1.2.3`, Premise creates `v1.2.3` and tags such as `libs/math/v1.2.3` at the same commit. Premise pushes the complete tag set atomically and rejects existing tags that point to another commit. An external client selects one library and its dependencies:
+## Provider behavior
 
-```sh
-go get github.com/acme/myrepo/libs/math@v1.2.3
-```
+Go implements the normal package manager interface for native metadata, publication preflight, Mise publication tasks, and artifact configuration. Generic provider capabilities handle native generation files, release tools, and packages distributed through the repository tag. Core release and generation code do not select Go by name. Registry credentials remain isolated from the GitHub publication stage.
 
-If public libraries depend on each other, prepare their requirements before committing the release candidate:
+Before publication, the Go provider tests public API projects from the committed Git snapshot with `GOWORK=off`. Ignored and untracked files cannot make a broken release pass validation. The provider rejects filesystem replacements in a published root manifest. Stable and RC publication use the existing repository release flow and one root tag.
 
-```sh
-pm release modules prepare --version v1.2.3
-```
+A shared Go module also shares its minimum Go version. A repository major-version bump requires the matching module path and Go imports, even when another language triggered that bump. Premise validates that path before publication. It does not rewrite imports automatically. Module downloads include eligible files throughout the root module, including non-Go source and assets.
 
-Review and commit the resulting `go.mod` and `go.sum` changes before releasing. The command updates existing public sibling requirements to the shared version. It keeps external dependency checksums and excludes speculative checksums for unpublished sibling versions. Release checks run outside `go.work` against temporary copies and a local module proxy, a server layout for module downloads. The release fails if those checks require changes to `go.mod` or if the checkout contains uncommitted files.
+The native Pulumi template is a normal Go library with mock tests. The optional cross-language Pulumi template contains a provider executable and generated Go and Node SDKs. Its schema and SDK regeneration remain project-owned tasks. Neither template requires a cloud deployment for its tests.
 
-For a release candidate, use the shared version such as `v1.2.3-rc.1` during preparation. At version 2 or later, update module paths and imports with the matching suffix, such as `/v2`. Premise fails with migration guidance when those paths do not match the shared version. Premise does not rewrite imports automatically.
-
-The native Pulumi template creates Go components that other Go Pulumi projects consume as a normal module. Its tests use mocks and require no cloud deployment. The separate `premise-pulumi-component-package` template explores a Go provider with generated Go and Node SDKs. That optional template includes provider artifacts and leaves Node package distribution configurable.
-
-The [Go module reference](https://go.dev/ref/mod) describes module paths, workspace behavior, and directory-prefixed tags.
+The [Go module reference](https://go.dev/ref/mod) describes module versions, import paths, and distribution. Separate Go modules with directory-prefixed tags are outside this implementation and can be added through the provider contract later.

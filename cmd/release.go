@@ -50,7 +50,7 @@ func ReleaseCommand() *cobra.Command {
 	}
 	command.Flags().BoolVar(&dryRun, "dry-run", false, "plan the release without changing anything")
 	command.Flags().BoolVar(&buildOnly, "build", false, "build release artifacts without publishing")
-	command.AddCommand(ReleasePublishCommand(), ReleasePackagesCommand(), ReleaseModulesCommand())
+	command.AddCommand(ReleasePublishCommand(), ReleasePackagesCommand())
 	return command
 }
 
@@ -102,34 +102,6 @@ func ReleasePackagesCommand() *cobra.Command {
 	}
 	command.Flags().StringVar(&channel, "channel", "stable", "release channel (stable or rc)")
 	command.Flags().StringVar(&expectedVersion, "expected-version", "", "expected release version")
-	return command
-}
-
-func ReleaseModulesCommand() *cobra.Command {
-	command := &cobra.Command{
-		Use:   "modules",
-		Short: "Manage coordinated Go module releases",
-	}
-	command.AddCommand(ReleaseModulesPrepareCommand())
-	return command
-}
-
-func ReleaseModulesPrepareCommand() *cobra.Command {
-	var version string
-	command := &cobra.Command{
-		Use:   "prepare",
-		Short: "Prepare Go sibling dependencies before committing a release",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			root, _, err := core.FindManifest(currentDirectory())
-			if err != nil {
-				return err
-			}
-			return core.PrepareGoModuleDependencies(cmd.Context(), root, version)
-		},
-	}
-	command.Flags().StringVar(&version, "version", "", "shared release version (vMAJOR.MINOR.PATCH or RC)")
-	command.MarkFlagRequired("version")
 	return command
 }
 

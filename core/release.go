@@ -149,10 +149,10 @@ func PublishRelease(ctx context.Context, root string, options ReleasePublishOpti
 	if _, err := goReleaserConfig(root, manifest, plugins); err != nil {
 		return ReleasePlan{}, fmt.Errorf("generate GoReleaser configuration: %w", err)
 	}
-	if err := preflightGoRelease(ctx, root, plan.Version); err != nil {
+	if err := preflightRepositoryPublication(ctx, root, plan.Version, plugins); err != nil {
 		return ReleasePlan{}, err
 	}
-	if !plan.ReuseTag || hasGoModuleTags(root, plan.Version) {
+	if !plan.ReuseTag {
 		if err := pushReleaseTag(ctx, root, plan.Version, releaseAuthentication()); err != nil {
 			return ReleasePlan{}, fmt.Errorf("create release tag: %w", err)
 		}
@@ -216,14 +216,6 @@ func PublishGitHubRelease(ctx context.Context, root string, stdout, stderr io.Wr
 	_, plugins, err := loadReleaseBackends(root)
 	if err != nil {
 		return ReleasePlan{}, fmt.Errorf("resolve package managers: %w", err)
-	}
-	if err := preflightGoRelease(ctx, root, plan.Version); err != nil {
-		return ReleasePlan{}, err
-	}
-	if hasGoModuleTags(root, plan.Version) {
-		if err := pushReleaseTag(ctx, root, plan.Version, releaseAuthentication()); err != nil {
-			return ReleasePlan{}, err
-		}
 	}
 	if err := executeGoReleaser(ctx, root, plugins, false, stdout, stderr); err != nil {
 		return ReleasePlan{}, fmt.Errorf("publish GitHub release: %w", err)
@@ -423,36 +415,12 @@ func publishReleaseCandidate(ctx context.Context, root string, kind ProjectKind,
 	if err != nil {
 		return err
 	}
-	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
-	if err != nil {
-		return err
-	}
-	goEnabled := false
-	for _, plugin := range plugins {
-		goEnabled = goEnabled || plugin.ID() == "go"
-	}
-	publicGo := false
-	if goEnabled {
-		modules, err := GoModules(root, manifest)
-		if err != nil {
-			return err
-		}
-		for _, m := range modules {
-			publicGo = publicGo || m.Publication == "public"
-		}
-	}
-	if publicGo {
+	if hasRepositoryPackages(plugins) {
 		version, err := ReleaseCandidateVersion(root, os.Getenv("GITHUB_RUN_NUMBER"))
 		if err != nil {
 			return err
 		}
-		if err := preflightGoRelease(ctx, root, version); err != nil {
-			return err
-		}
-		if err := pushReleaseTag(ctx, root, version, releaseAuthentication()); err != nil {
-			return err
-		}
-		if err := executeGoReleaser(ctx, root, plugins, false, stdout, stderr); err != nil {
+		if _, err := PublishRelease(ctx, root, ReleasePublishOptions{Channel: "rc", ExpectedVersion: version}, stdout, stderr); err != nil {
 			return err
 		}
 	}
@@ -479,9 +447,6 @@ func publishReleaseCandidate(ctx context.Context, root string, kind ProjectKind,
 		return nil
 	}
 
-	if publicGo {
-		return nil
-	}
 	if kind == "" {
 		kind, err = DetectProjectKind(root)
 		if err != nil {
@@ -521,16 +486,21 @@ func prepareStableRelease(ctx context.Context, root string, stdout io.Writer, fu
 		fmt.Fprintln(stdout, "No release-worthy change.")
 		return plan, nil
 	}
-	if err := preflightGoRelease(ctx, root, plan.Version); err != nil {
-		return ReleasePlan{}, err
-	}
-	if plan.ReuseTag && !hasGoModuleTags(root, plan.Version) {
+	if plan.ReuseTag {
 		fmt.Fprintf(stdout, "Reusing existing stable tag at HEAD: %s\n", plan.Version)
 		return plan, nil
 	}
 	if fullPublish {
 		if err := preflightStablePublication(ctx, root, plan.Version); err != nil {
 			return ReleasePlan{}, fmt.Errorf("preflight stable publication: %w", err)
+		}
+	} else {
+		_, plugins, err := loadReleaseBackends(root)
+		if err != nil {
+			return ReleasePlan{}, err
+		}
+		if err := preflightRepositoryPublication(ctx, root, plan.Version, plugins); err != nil {
+			return ReleasePlan{}, err
 		}
 	}
 	if err := pushReleaseTag(ctx, root, plan.Version, releaseAuthentication()); err != nil {
@@ -539,6 +509,30 @@ func prepareStableRelease(ctx context.Context, root string, stdout io.Writer, fu
 	plan.ReuseTag = true
 	fmt.Fprintf(stdout, "Created stable tag: %s\n", plan.Version)
 	return plan, nil
+}
+
+func hasRepositoryPackages(plugins []PackageManagerBackend) bool {
+	for _, plugin := range plugins {
+		if provider, ok := plugin.(PackageManagerRepositoryPublication); ok && provider.PublishesRepositoryPackages() {
+			return true
+		}
+	}
+	return false
+}
+
+func preflightRepositoryPublication(ctx context.Context, root, version string, plugins []PackageManagerBackend) error {
+	task := "publish"
+	if !stableVersionPattern.MatchString(version) {
+		task = "publish:rc"
+	}
+	for _, plugin := range plugins {
+		if provider, ok := plugin.(PackageManagerRepositoryPublication); ok && provider.PublishesRepositoryPackages() {
+			if err := plugin.PreflightPublication(ctx, root, version, task); err != nil {
+				return fmt.Errorf("preflight %s repository packages: %w", plugin.ID(), err)
+			}
+		}
+	}
+	return nil
 }
 
 func preflightStablePublication(ctx context.Context, root, version string) error {
@@ -821,15 +815,12 @@ func runGoReleaserWithFiles(ctx context.Context, root string, plugins []PackageM
 	mise := miseRunner{Stderr: stderr}
 	tools := []string{"goreleaser@" + goreleaserVersion}
 	for _, plugin := range plugins {
-		if plugin.ID() != "go" {
-			continue
-		}
-		tool, err := goReleaseTool(root, manifest)
-		if err != nil {
-			return err
-		}
-		if tool != "" {
-			tools = append(tools, tool)
+		if provider, ok := plugin.(PackageManagerReleaseTools); ok {
+			required, err := provider.ReleaseTools(root, manifest)
+			if err != nil {
+				return fmt.Errorf("resolve %s release tools: %w", plugin.ID(), err)
+			}
+			tools = append(tools, required...)
 		}
 	}
 	toolEnvironment, err := mise.toolEnvironment(ctx, workingDirectory, tools...)
@@ -896,135 +887,29 @@ func createAndPushReleaseTag(ctx context.Context, root, version string, auth tra
 	}
 	head, err := repository.Head()
 	if err != nil {
-		return err
+		return fmt.Errorf("read release HEAD: %w", err)
 	}
-	moduleTags, err := coordinatedGoTags(root, version)
-	if err != nil {
-		return err
+	if _, err := repository.CreateTag(version, head.Hash(), nil); err != nil {
+		return fmt.Errorf("create release tag %s: %w", version, err)
 	}
-	tags := append([]string{version}, moduleTags...)
+	defer func() {
+		if resultErr == nil {
+			return
+		}
+		if err := repository.DeleteTag(version); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("remove unpushed local release tag %s: %w", version, err))
+		}
+	}()
+
 	remote, err := repository.Remote("origin")
 	if err != nil {
 		return fmt.Errorf("open origin remote: %w", err)
 	}
-	// Check every local and remote tag before creating any of them. Matching
-	// immutable tags are safe to retry; conflicts are never overwritten.
-	refs, err := remote.ListContext(ctx, &git.ListOptions{Auth: auth, PeelingOption: git.AppendPeeled})
-	if err != nil && !errors.Is(err, transport.ErrEmptyRemoteRepository) {
-		return err
-	}
-	remoteRefs := map[string]plumbing.Hash{}
-	for _, ref := range refs {
-		remoteRefs[ref.Name().String()] = ref.Hash()
-	}
-	for _, tag := range tags {
-		name := plumbing.NewTagReferenceName(tag)
-		if remoteHash, exists := remoteRefs[name.String()]; exists {
-			if peeled, ok := remoteRefs[name.String()+"^{}"]; ok {
-				remoteHash = peeled
-			}
-			if remoteHash != head.Hash() {
-				return fmt.Errorf("release tag %s exists away from HEAD on origin", tag)
-			}
-		}
-		ref, err := repository.Tag(tag)
-		if err == nil {
-			hash := ref.Hash()
-			if obj, err := repository.TagObject(hash); err == nil {
-				hash = obj.Target
-			}
-			if hash != head.Hash() {
-				return fmt.Errorf("release tag %s exists away from HEAD", tag)
-			}
-		} else if !errors.Is(err, plumbing.ErrReferenceNotFound) && !errors.Is(err, git.ErrTagNotFound) {
-			return err
-		}
-	}
-	var created []string
-	defer func() {
-		if resultErr != nil {
-			for _, tag := range created {
-				resultErr = errors.Join(resultErr, repository.DeleteTag(tag))
-			}
-		}
-	}()
-	var refspecs []gitconfig.RefSpec
-	for _, tag := range tags {
-		if _, err := repository.Tag(tag); errors.Is(err, plumbing.ErrReferenceNotFound) || errors.Is(err, git.ErrTagNotFound) {
-			if _, err := repository.CreateTag(tag, head.Hash(), nil); err != nil {
-				return err
-			}
-			created = append(created, tag)
-		}
-		name := plumbing.NewTagReferenceName(tag).String()
-		if _, exists := remoteRefs[name]; !exists {
-			refspecs = append(refspecs, gitconfig.RefSpec(name+":"+name))
-		}
-	}
-	if len(refspecs) == 0 {
-		return nil
-	}
-	// Never fall back to a partial push when atomic updates are unsupported.
-	err = remote.PushContext(ctx, &git.PushOptions{Auth: auth, RefSpecs: refspecs, Atomic: len(refspecs) > 1})
-	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
-		return fmt.Errorf("push coordinated release tags: %w", err)
+	refspec := gitconfig.RefSpec("refs/tags/" + version + ":refs/tags/" + version)
+	if err := remote.PushContext(ctx, &git.PushOptions{Auth: auth, RefSpecs: []gitconfig.RefSpec{refspec}}); err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
+		return fmt.Errorf("push release tag %s: %w", version, err)
 	}
 	return nil
-}
-
-func coordinatedGoTags(root, version string) ([]string, error) {
-	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	enabled := false
-	for _, manager := range manifest.Workspace.PackageManagers {
-		if manager == "go" {
-			enabled = true
-		}
-	}
-	if !enabled {
-		return nil, nil
-	}
-	return GoModuleTags(root, manifest, version)
-}
-
-func hasGoModuleTags(root, version string) bool {
-	tags, err := coordinatedGoTags(root, version)
-	return err == nil && len(tags) > 0
-}
-
-func preflightGoRelease(ctx context.Context, root, version string) error {
-	tags, err := coordinatedGoTags(root, version)
-	if err != nil {
-		return err
-	}
-	if len(tags) == 0 {
-		return nil
-	}
-	manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
-	if err != nil {
-		return err
-	}
-	repository, err := git.PlainOpenWithOptions(root, &git.PlainOpenOptions{DetectDotGit: true})
-	if err != nil {
-		return err
-	}
-	worktree, err := repository.Worktree()
-	if err != nil {
-		return err
-	}
-	status, err := worktree.Status()
-	if err != nil {
-		return err
-	}
-	if !status.IsClean() {
-		return errors.New("Go module release requires a clean committed checkout; prepare module dependencies and commit them before tagging")
-	}
-	return ValidateGoModuleRelease(ctx, root, manifest, version)
 }
 
 func fetchReleaseTags(ctx context.Context, repository *git.Repository, auth transport.AuthMethod) error {

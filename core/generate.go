@@ -27,6 +27,7 @@ type GenerateOptions struct {
 
 // GenerateParameters contains roots and choices resolved for one generated project.
 type GenerateParameters struct {
+	PackageManagers        []string
 	RegistryRoot           string
 	RegistryWorkspaceFiles []string
 	TemplateRoot           string
@@ -56,6 +57,7 @@ type GeneratePlan struct {
 	selectedStage string
 	templateKind  string
 	rootBackups   []MergeEntry
+	providers     []PackageManagerGeneration
 }
 
 // Public API -----------------------------------------------------------------
@@ -125,6 +127,7 @@ func Generate(ctx context.Context, cwd, selector string, options GenerateOptions
 	fmt.Fprintln(output, "Staging generated candidate...")
 	started = time.Now()
 	plan, err := BuildGeneratePlan(GenerateParameters{
+		PackageManagers:        templateManifest.Workspace.PackageManagers,
 		RegistryRoot:           sourceRoot,
 		RegistryWorkspaceFiles: templateManifest.TemplateRegistry.WorkspaceFiles,
 		TemplateRoot:           source,
@@ -206,8 +209,23 @@ func BuildGeneratePlan(request GenerateParameters) (*GeneratePlan, error) {
 	if err := buildGenerationEntries(plan, sources, request); err != nil {
 		return nil, err
 	}
-	if err := mergeGoWork(plan); err != nil {
-		return nil, fmt.Errorf("merge Go workspace: %w", err)
+	providers, err := packageManagersForConfig(Config{Workspace: Workspace{PackageManagers: request.PackageManagers}})
+	if err != nil {
+		return nil, err
+	}
+	for _, provider := range providers {
+		generation, ok := provider.(PackageManagerGeneration)
+		if !ok {
+			continue
+		}
+		entries, err := generation.PrepareGeneration(plan.packageGenerationContext())
+		if err != nil {
+			return nil, fmt.Errorf("prepare %s workspace: %w", provider.ID(), err)
+		}
+		if len(entries) > 0 {
+			plan.Entries = append(plan.Entries, entries...)
+			plan.providers = append(plan.providers, generation)
+		}
 	}
 	keepStages = true
 	return plan, nil
@@ -272,6 +290,10 @@ type generationSources struct {
 type generationStages struct {
 	stage         string
 	selectedStage string
+}
+
+func (plan *GeneratePlan) packageGenerationContext() PackageGenerationContext {
+	return PackageGenerationContext{WorkspaceRoot: plan.workspaceRoot, ProjectPath: plan.projectPath, Stage: plan.selectedStage}
 }
 
 func validateGenerationTarget(request GenerateParameters) (string, string, error) {
@@ -533,8 +555,10 @@ func prepareWorkspaceCandidate(plan *GeneratePlan, candidate string, mergedRoot 
 	if err := materializeRootEntries(plan.Entries, candidate, !mergedRoot); err != nil {
 		return err
 	}
-	if err := copyGoWorkModules(plan.workspaceRoot, candidate); err != nil {
-		return err
+	for _, provider := range plan.providers {
+		if err := provider.PrepareGenerationCandidate(plan.packageGenerationContext(), candidate); err != nil {
+			return err
+		}
 	}
 	project := filepath.Join(candidate, plan.projectPath)
 	if !inside(candidate, project) {

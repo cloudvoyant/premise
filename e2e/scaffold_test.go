@@ -7,11 +7,15 @@ import (
 	"testing"
 
 	core "github.com/cloudvoyant/premise/core"
+	"github.com/cloudvoyant/premise/core/backends"
 )
 
 // Public API -----------------------------------------------------------------
 
 func TestScaffold(t *testing.T) {
+	if err := backends.RegisterPackageManagers(); err != nil {
+		t.Fatal(err)
+	}
 	binary := premiseBinary(t)
 	t.Setenv("PULUMI_HOME", t.TempDir())
 

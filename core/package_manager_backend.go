@@ -38,7 +38,7 @@ type PackageManagerBackend interface {
 	// or an empty string when this manager has no downloadable artifacts.
 	CreateGoReleaserConfig(root string, manifest Config) (string, error)
 
-	// SupportsPackages reports whether the manager publishes registry packages.
+	// SupportsPackages reports whether the manager handles language packages.
 	SupportsPackages() bool
 
 	// PublishPackages publishes all eligible packages in the workspace.
@@ -47,6 +47,32 @@ type PackageManagerBackend interface {
 	// ReleaseWorkspace prepares and returns the directory used by GoReleaser.
 	// The boolean result requests serial artifact builds.
 	ReleaseWorkspace(context.Context, string, io.Writer, io.Writer) (string, bool, error)
+}
+
+// PackageGenerationContext identifies the selected template and its destination.
+// Providers may move native dependency manifests from Stage into root entries.
+type PackageGenerationContext struct {
+	WorkspaceRoot string
+	ProjectPath   string
+	Stage         string
+}
+
+// PackageManagerGeneration prepares native workspace files when a template is
+// generated. Providers without native workspace preparation need no hook.
+type PackageManagerGeneration interface {
+	PrepareGeneration(PackageGenerationContext) ([]MergeEntry, error)
+	PrepareGenerationCandidate(PackageGenerationContext, string) error
+}
+
+// PackageManagerReleaseTools supplies tools needed to build native artifacts.
+type PackageManagerReleaseTools interface {
+	ReleaseTools(string, Config) ([]string, error)
+}
+
+// PackageManagerRepositoryPublication identifies packages distributed by the
+// shared repository tag. Registry publishers keep their existing upload stage.
+type PackageManagerRepositoryPublication interface {
+	PublishesRepositoryPackages() bool
 }
 
 // RegisterPackageManagerBackend registers an implementation by ID. Workspaces
