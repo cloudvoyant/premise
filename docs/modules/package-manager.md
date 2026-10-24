@@ -46,18 +46,101 @@ The CLI registers built-ins in its composition root. Library clients register th
 
 ## Implementation Details
 
-Premise monorepos contain packages that release together and services that depend on each other. Every package manager uses the same repository version and Git tag. Providers adapt native package files and commands to this shared release flow. They do not choose separate project versions.
+### Interface and ownership
 
-The `workspace.package_managers` list selects the providers. A provider runs only when it appears in that list. Core calls their shared methods to check packages, build files, and run publication tasks. Native manifests still define package details when the package manager supports them.
+Premise selects providers from `workspace.package_managers`. Each provider implements `PackageManagerBackend`. Go, Cargo, and Bun use the same repository version and Git tag.
 
-Some providers need extra steps. The generation interface prepares root dependency files before a project is created. The release tools interface selects tools needed to build executables. The repository publication interface marks packages that become available through the Git tag itself. Core checks those packages before creating the tag. Registry uploads run in the later package publication job with their own credentials. Both jobs use the same release version.
+```mermaid
+flowchart LR
+    Config["premise.yaml: package_managers"] --> Core["Core generation and release flow"]
+    Core --> Interface["PackageManagerBackend"]
+    Interface --> Go["Go backend"]
+    Interface --> Cargo["Cargo backend"]
+    Interface --> Bun["Bun backend"]
+```
 
-### Go backend
+Core decides when checks, publication, and deployment run. Providers read native package files and run the commands for their package manager. A provider cannot choose a separate version for each project.
 
-Go packages share one root module. During generation, the backend combines template requirements and checksums with the root `go.mod` and `go.sum`. It removes the staged project manifests and copies existing package sources into the temporary validation workspace.
+`GetPackageMetadata` reads package details. `ValidatePackage` checks those details without publication. `WillPublishOk` checks whether one package can run its publication task. `PreflightPublication` checks the selected packages as a group. The provider uses these checks inside its publication methods.
 
-Go has no per-package publication or executable settings in `go.mod`. The backend reads these settings from each project's `package` block in `premise.yaml`. Template declarations can supply that block, and generation applies questionnaire substitutions before recording it with the project. Public projects run publication tasks. Private-local projects skip those tasks but remain in the root module download.
+### Generation hooks
 
-Before publication, the backend tests public projects from a committed Git archive with `GOWORK=off`. Ignored files cannot make an incomplete release pass. The backend rejects filesystem replacements and a module path that does not match the release major version. Git utilities export committed files. Go utilities parse native module files and inspect source package declarations. These utilities live in `core/extensions`. Workspace and release policy stays in `core/backends/go.go`.
+Some package managers need shared dependency files at the workspace root. Go uses these hooks to prepare one root `go.mod` and `go.sum` before creating the project:
 
-The backend creates an archive for each declared Go application. A root main package keeps the existing CLI archive names. A workspace with only libraries creates a source release without executables. See [Using Premise with Go](../guides/go.md) for commands and import examples.
+```mermaid
+sequenceDiagram
+    participant Core as Generate
+    participant Provider as Selected provider
+    Core->>Provider: PrepareGeneration(context)
+    Provider-->>Core: Planned root-file changes
+    Core->>Provider: PrepareGenerationCandidate(context, directory)
+    Provider-->>Core: Existing package files for validation
+    Core->>Core: Run template tasks in the temporary directory
+    Core->>Core: Apply files and record the project
+```
+
+`PackageManagerGeneration` defines both hooks. Providers that do not need them use the normal file merge. Planning does not change the user's root files. Core applies the prepared changes only after the temporary project passes its tasks.
+
+### Release hooks and CI
+
+CI runs root and project checks before publication. Project tasks stage native files when a platform needs them. The release job then publishes one repository tag and one combined GitHub release. The package job follows with the same version. Deployment starts only after publication succeeds.
+
+```mermaid
+flowchart TD
+    Checks["CI: root and project checks"] --> Files["Stage native files when required"]
+    Files --> Release["PublishRelease: shared tag and GitHub release"]
+    Release --> Packages["PublishLanguagePackages: same version"]
+    Packages --> Deploy["Continue the existing deployment flow"]
+    Config["CreateGoReleaserConfig: builds and archives"] -.-> Release
+    Workspace["ReleaseWorkspace: build directory"] -.-> Release
+    Tools["ReleaseTools: required build tools"] -.-> Release
+    BeforeTag["PreflightPublication: check Git-distributed packages before tagging"] -.-> Release
+    Publish["SupportsPackages and PublishPackages"] -.-> Packages
+```
+
+`CreateGoReleaserConfig` describes downloadable files. `ReleaseWorkspace` selects their build directory. Providers can implement `PackageManagerReleaseTools` to name extra build tools. Core combines these results into the GitHub release.
+
+Go packages become available when the tag exists. The Go backend implements `PackageManagerRepositoryPublication` so core calls its preflight check before creating that tag. Cargo and Bun upload packages to registries in the package job. Their registry credentials stay in that job. This changes where publication happens, not the version or tag.
+
+See the [CI module](ci.md) for sequencing and the [release module](release.md) for tag and credential handling.
+
+### Go generation
+
+Go projects contain packages under one root module. The generation hook combines template dependencies with the root manifests. It also includes existing package sources when checking the temporary project.
+
+```mermaid
+flowchart TD
+    Template["Template go.mod and go.sum"] --> Merge["PrepareGeneration: combine root dependencies"]
+    Existing["Existing workspace dependencies"] --> Merge
+    Merge --> Root["Planned root go.mod and go.sum"]
+    Root --> Candidate["PrepareGenerationCandidate: include existing packages"]
+    Candidate --> Checks["Run project tasks"]
+    Checks --> Apply["Apply root manifests and project packages"]
+```
+
+The generated project has no nested `go.mod`. The workspace has no `go.work`. The root module path uses the repository path supplied by the user, without the application or library directory.
+
+Go-specific merging stays in `core/backends/go.go`. Native Go file parsing stays in `core/extensions/gox.go`. Core generation calls the provider hooks and does not select Go by name.
+
+### Go publication
+
+`go.mod` has no setting for the publication tasks of an individual project. Go reads `package.public` from `premise.yaml`. Omission means `true`. A template can ask for this value with `populate: package.public`, and generation records the answer as a boolean. `false` skips that project's publication tasks. It does not exclude source from the root module.
+
+```mermaid
+flowchart TD
+    Plan["Shared release version"] --> Module["Check module major version and replacements"]
+    Module --> Public{"Any public Go projects?"}
+    Public -->|Yes| Clean["Backend requires a clean checkout"]
+    Clean --> Archive["Git utility exports committed source"]
+    Archive --> Test["Test public projects with GOWORK=off"]
+    Test --> Tag["Common release flow creates the root tag"]
+    Public -->|No| Tag
+    Tag --> Source["Go distributes the root module at that tag"]
+    Tag --> Tasks["Package job runs the selected project tasks"]
+```
+
+The clean-checkout requirement belongs to the Go backend. The Git extension returns status data and exports the requested revision. Tests run against that export so ignored source cannot hide a broken release. The backend also rejects local filesystem replacements and a module path that does not match the release version. If no public projects exist, it skips the source tests and clean-checkout check.
+
+Go applications can set `package.main` relative to their project directory and `package.binary` for the executable name. Without `main`, the backend looks for a main package in the project root. It creates an archive for each application. Libraries produce no executable. An existing root CLI keeps its archive names.
+
+See [Using Premise with Go](../guides/go.md) for the user workflow.

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -124,7 +125,7 @@ func Generate(ctx context.Context, cwd, selector string, options GenerateOptions
 	if templateManifest.TemplateRegistry == nil {
 		return fmt.Errorf("template source %q does not configure template_registry", sourceRoot)
 	}
-	packageDeclaration, err := resolveGeneratedPackage(template.Package, replacements)
+	packageDeclaration, err := resolveGeneratedPackage(template.Package, replacements, answers)
 	if err != nil {
 		return err
 	}
@@ -297,17 +298,27 @@ type generationStages struct {
 	selectedStage string
 }
 
-func resolveGeneratedPackage(declaration *PackageDeclaration, replacements map[string]string) (*PackageDeclaration, error) {
-	if declaration == nil {
+func resolveGeneratedPackage(declaration *PackageDeclaration, replacements, answers map[string]string) (*PackageDeclaration, error) {
+	publicAnswer, hasPublicAnswer := answers["package.public"]
+	if declaration == nil && !hasPublicAnswer {
 		return nil, nil
 	}
-	resolved := *declaration
+	resolved := PackageDeclaration{}
+	if declaration != nil {
+		resolved = *declaration
+	}
+	if hasPublicAnswer {
+		public, err := strconv.ParseBool(publicAnswer)
+		if err != nil {
+			return nil, fmt.Errorf("package.public must be true or false")
+		}
+		resolved.Public = &public
+	}
 	if replacer := literalReplacer(replacements); replacer != nil {
-		resolved.Publication = replacer.Replace(resolved.Publication)
 		resolved.Main = replacer.Replace(resolved.Main)
 		resolved.Binary = replacer.Replace(resolved.Binary)
 	}
-	if err := validatePackageDeclaration(&resolved, nil); err != nil {
+	if err := validatePackageDeclaration(&resolved); err != nil {
 		return nil, fmt.Errorf("generated package: %w", err)
 	}
 	return &resolved, nil

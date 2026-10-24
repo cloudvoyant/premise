@@ -31,7 +31,6 @@ func CurrentFeatureBranch(ctx context.Context, root string) (string, error) {
 }
 
 // ExportRevision extracts a Git archive into the destination directory.
-// Publication validation uses this committed source instead of checkout files.
 func ExportRevision(ctx context.Context, root, revision, destination string) error {
 	command := exec.CommandContext(ctx, "git", "archive", "--format=tar", revision)
 	command.Dir = root
@@ -72,16 +71,13 @@ func ExportRevision(ctx context.Context, root, revision, destination string) err
 	}
 }
 
-// RequireCleanRepository checks that publication uses committed source files.
-func RequireCleanRepository(ctx context.Context, root string) error {
+// WorkingTreeStatus returns Git's porcelain status, including untracked files.
+func WorkingTreeStatus(ctx context.Context, root string) (string, error) {
 	command := exec.CommandContext(ctx, "git", "status", "--porcelain")
 	command.Dir = root
 	output, err := command.Output()
 	if err != nil {
-		return fmt.Errorf("inspect package checkout: %w", err)
+		return "", fmt.Errorf("read Git working tree status: %w", err)
 	}
-	if len(output) > 0 {
-		return fmt.Errorf("repository packages require a clean committed checkout before publication")
-	}
-	return nil
+	return string(output), nil
 }

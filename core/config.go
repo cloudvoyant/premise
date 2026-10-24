@@ -76,9 +76,9 @@ type PlatformDeclaration struct {
 // PackageDeclaration holds project settings absent from a native package manifest.
 // All projects still use the repository release version.
 type PackageDeclaration struct {
-	Publication string `yaml:"publication,omitempty"`
-	Main        string `yaml:"main,omitempty"`
-	Binary      string `yaml:"binary,omitempty"`
+	Public *bool  `yaml:"public,omitempty"`
+	Main   string `yaml:"main,omitempty"`
+	Binary string `yaml:"binary,omitempty"`
 }
 
 type Project struct {
@@ -149,6 +149,11 @@ type DeploymentApplication struct {
 var validPlatforms = map[string]struct{}{"linux": {}, "macos": {}, "windows": {}}
 
 // Public API -----------------------------------------------------------------
+
+// IsPublic treats an omitted setting as public.
+func (declaration *PackageDeclaration) IsPublic() bool {
+	return declaration == nil || declaration.Public == nil || *declaration.Public
+}
 
 func NewManifest(name string) Config {
 	return Config{
@@ -412,7 +417,7 @@ func (manifest Config) Validate() error {
 		if err := ValidateTemplateName(template.Name); err != nil {
 			return fmt.Errorf("template_registry.templates[%d].name: %w", index, err)
 		}
-		if err := validatePackageDeclaration(template.Package, template.Substitutions); err != nil {
+		if err := validatePackageDeclaration(template.Package); err != nil {
 			return fmt.Errorf("template %s package: %w", template.Name, err)
 		}
 		if _, exists := templateNames[template.Name]; exists {
@@ -483,7 +488,7 @@ func (manifest Config) Validate() error {
 		if project.Path == "" || filepath.IsAbs(project.Path) || escapesRoot(project.Path) {
 			return fmt.Errorf("workspace.projects[%d].path must be a relative path inside the workspace", index)
 		}
-		if err := validatePackageDeclaration(project.Package, nil); err != nil {
+		if err := validatePackageDeclaration(project.Package); err != nil {
 			return fmt.Errorf("project %s package: %w", project.Name, err)
 		}
 		if _, exists := projectNames[project.Name]; exists {
@@ -637,14 +642,9 @@ func ResolveSubstitutions(template Template, answers map[string]string) (map[str
 
 // Private helpers ------------------------------------------------------------
 
-func validatePackageDeclaration(declaration *PackageDeclaration, substitutions map[string]string) error {
+func validatePackageDeclaration(declaration *PackageDeclaration) error {
 	if declaration == nil {
 		return nil
-	}
-	if declaration.Publication != "" && declaration.Publication != "public" && declaration.Publication != "private-local" {
-		if _, placeholder := substitutions[declaration.Publication]; !placeholder {
-			return fmt.Errorf("publication must be public or private-local")
-		}
 	}
 	if declaration.Main != "" && !filepath.IsLocal(declaration.Main) {
 		return fmt.Errorf("main must be inside its project")

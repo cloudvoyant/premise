@@ -59,6 +59,7 @@ func TestGenerateProviderIntegration(t *testing.T) {
 			}
 		})
 	})
+
 	t.Run("when generating a project without a Go provider", func(t *testing.T) {
 		t.Run("it leaves an unrelated Go workspace alone", func(t *testing.T) {
 			root, source := t.TempDir(), t.TempDir()
@@ -95,14 +96,14 @@ func TestGenerateProviderIntegration(t *testing.T) {
 
 func TestGeneratePackageSettings(t *testing.T) {
 	t.Run("when a template declares package settings", func(t *testing.T) {
-		for _, publication := range []string{"public", "private-local"} {
-			t.Run("given a "+publication+" library", func(t *testing.T) {
+		for _, public := range []string{"true", "false"} {
+			t.Run("given public is "+public, func(t *testing.T) {
 				t.Run("it records substituted settings in premise.yaml", func(t *testing.T) {
 					installMiseTestShim(t, false)
 					template := templateFixture("premise-configurable-lib", "lib")
-					template.Questions = append(template.Questions, Question{Prompt: "API:", Type: "select", Populate: "publication", Choices: []string{"public", "private-local"}})
-					template.Substitutions = map[string]string{"package-visibility": "publication", "premise-configurable-lib": "name"}
-					template.Package = &PackageDeclaration{Publication: "package-visibility", Main: "cmd/tool", Binary: "tool-premise-configurable-lib"}
+					template.Questions = append(template.Questions, Question{Prompt: "API:", Type: "select", Populate: "package.public", Choices: []string{"true", "false"}})
+					template.Substitutions = map[string]string{"premise-configurable-lib": "name"}
+					template.Package = &PackageDeclaration{Main: "cmd/tool", Binary: "tool-premise-configurable-lib"}
 					registry := writeRegistryFixture(t, template)
 					restore := overrideResolveRepository(map[string]string{"cloudvoyant/package-fixture": registry})
 					t.Cleanup(restore)
@@ -111,7 +112,7 @@ func TestGeneratePackageSettings(t *testing.T) {
 						t.Fatal(err)
 					}
 
-					err := Generate(t.Context(), root, "cloudvoyant/package-fixture:premise-configurable-lib", fixedGenerateOptions(fixedQuestionnaire{"name": "math", "publication": publication}), io.Discard)
+					err := Generate(t.Context(), root, "cloudvoyant/package-fixture:premise-configurable-lib", fixedGenerateOptions(fixedQuestionnaire{"name": "math", "package.public": public}), io.Discard)
 
 					if err != nil {
 						t.Fatal(err)
@@ -121,13 +122,19 @@ func TestGeneratePackageSettings(t *testing.T) {
 						t.Fatal(err)
 					}
 					declaration := manifest.Workspace.Projects[0].Package
-					if declaration == nil || declaration.Publication != publication || declaration.Binary != "tool-math" || declaration.Main != "cmd/tool" {
-						t.Fatalf("package settings were not resolved: %+v", declaration)
+					if declaration == nil || declaration.Public == nil {
+						t.Fatal("the public answer was not recorded")
+					}
+					if declaration.IsPublic() != (public == "true") {
+						t.Fatalf("public = %v, want %s", *declaration.Public, public)
+					}
+					if declaration.Binary != "tool-math" || declaration.Main != "cmd/tool" {
+						t.Fatalf("executable settings were not resolved: %+v", declaration)
 					}
 					if manifest.PublicationTargets()[0].Package != declaration {
 						t.Fatal("publication targets lost the project settings")
 					}
-					if template.Package.Publication != "package-visibility" {
+					if template.Package.Public != nil {
 						t.Fatal("generation changed the source template declaration")
 					}
 				})

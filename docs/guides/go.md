@@ -2,7 +2,9 @@
 
 ## Generate a project
 
-Go projects use the same `apps/<name>` and `libs/<name>` directories as other Premise projects. Each project has its own Mise tools and tasks. All Go projects share the root `go.mod`, dependencies, and repository release version.
+Go applications use `apps/<name>` and libraries use `libs/<name>`. All Go projects share the repository's root module, dependencies, and release version.
+
+Choose a template:
 
 ```sh
 pm generate cloudvoyant/premise-go:premise-cobra-cli
@@ -12,9 +14,15 @@ pm generate cloudvoyant/premise-go:premise-go-lib
 pm generate cloudvoyant/premise-go:premise-pulumi-component-lib
 ```
 
-Enter the workspace Go module path when asked. Use that same path for each project. For example, use `github.com/acme/myrepo` for v0 and v1 releases.
+When asked for the workspace Go module path, enter the repository path, such as `github.com/acme/myrepo`. Use the same path for every application and library. Do not append `apps/cli` or `libs/math` to this answer.
 
-Generation adds the template dependencies to the root manifests. The generated project contains Go packages. It does not need its own `go.mod` or a `go.work` file.
+Premise creates the root `go.mod` when you generate the first Go project. It adds `go.sum` when dependencies need checksums. Later projects update these same files. The root module declaration uses the repository path:
+
+```go
+module github.com/acme/myrepo
+```
+
+Your workspace then contains:
 
 ```text
 premise.yaml
@@ -27,9 +35,9 @@ libs/math/math.go
 libs/math/mise.toml
 ```
 
-## Configure a project
+## Choose publication tasks
 
-Premise records package settings in the workspace `premise.yaml`:
+The library template asks whether to run publication tasks. Premise records your answer in `premise.yaml`:
 
 ```yaml
 workspace:
@@ -38,31 +46,58 @@ workspace:
       path: libs/math
       template: cloudvoyant/premise-go:premise-go-lib
       package:
-        publication: public
+        public: true
 ```
 
-The library template asks whether its API is public or private-local. A public project runs its publication tasks. A private-local project skips those tasks. Both remain in the shared Go module distribution. Use Go `internal/` directories to restrict imports from outside the repository.
-
-Applications can set `package.main` to the directory of their main package, relative to the project. Premise also recognizes a main package in the project root. Set `package.binary` to change the executable name. Libraries do not produce executables unless they declare a main package.
-
-The optional cross-language Pulumi template adds a provider executable and generated SDKs. The native Go Pulumi component template remains a regular Go library. Both have mock tests that run without cloud credentials.
+Set `public: false` to skip that project's publication tasks. If you omit the field, it defaults to `true`. Both settings keep the source in the shared module download. To restrict external imports, use Go's [internal directories](https://pkg.go.dev/cmd/go#hdr-Internal_Directories).
 
 ## Use a released library
 
-Every managed Go, Cargo, and Bun package uses the repository release version. A client can fetch one Go package at that version:
+Every managed package uses the repository release version. A client can fetch an individual Go library at that version:
 
 ```sh
 go get github.com/acme/myrepo/libs/math@v1.2.3
 ```
 
-The client records a dependency on the root Go module. Other Go packages in that module share its version and dependencies.
+The client depends on the root Go module. Its packages share a version and dependency set, as described in the [Go module reference](https://go.dev/ref/mod#modules-packages-versions).
 
-At v2 and later, Go requires the major version in the module path and imports. For a v4 release, use `github.com/acme/myrepo/v4` in the root `go.mod`:
+## Prepare a new major version
+
+Go requires a major-version suffix from v2 onward. For example, a v2 module uses `github.com/acme/myrepo/v2`. See [Go's major-version rules](https://go.dev/ref/mod#major-version-suffixes).
+
+Before the next repository major release:
+
+1. From the workspace root, update the module path:
+
+   ```sh
+   go mod edit -module=github.com/acme/myrepo/v2
+   ```
+
+2. Update imports of your own packages throughout the workspace. For example:
+
+   ```go
+   // Before
+   import "github.com/acme/myrepo/libs/math"
+
+   // After
+   import "github.com/acme/myrepo/v2/libs/math"
+   ```
+
+3. If a project generates Go code, update its generation configuration and run its `generate` task.
+4. Run `go mod tidy` from the root, then run the project tests.
+5. Commit the module, import, and generated-file changes before the release. Continue with the [normal release flow](ci.md).
+
+For each later major version, replace the suffix with that version, such as `/v3`. These steps also apply when a change in another language causes the repository major release. Premise checks the Go module path but does not update imports for you.
+
+After the v2 release, clients update their imports and fetch the new version:
 
 ```sh
-go get github.com/acme/myrepo/v4/libs/math@v4.0.0
+go get github.com/acme/myrepo/v2/libs/math@v2.0.0
 ```
 
-Prepare module paths and imports before a repository major release. This applies even when a change in another language causes the version increase. Premise checks the module path before publication. It does not rewrite imports.
+## References
 
-See the [release guide](ci.md) for the shared release flow and the [Go module reference](https://go.dev/ref/mod) for import rules.
+- [Go modules, packages, and versions](https://go.dev/ref/mod#modules-packages-versions): module and package paths.
+- [Go major-version suffixes](https://go.dev/ref/mod#major-version-suffixes): path requirements from v2 onward.
+- [Developing a major version update](https://go.dev/doc/modules/major-version): module and import changes for maintainers and clients.
+- [Go internal directories](https://pkg.go.dev/cmd/go#hdr-Internal_Directories): compiler-enforced import restrictions.

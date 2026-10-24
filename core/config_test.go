@@ -223,7 +223,6 @@ func TestProjectPackageSettings(t *testing.T) {
 			declaration PackageDeclaration
 			want        string
 		}{
-			{"an unknown publication mode", PackageDeclaration{Publication: "sometimes"}, "publication must be"},
 			{"a main package outside its project", PackageDeclaration{Main: "../other"}, "main must be"},
 			{"a binary name containing a path", PackageDeclaration{Binary: "path/tool"}, "binary:"},
 		} {
@@ -242,5 +241,34 @@ func TestProjectPackageSettings(t *testing.T) {
 				})
 			})
 		}
+	})
+}
+
+func TestPackagePublicFlag(t *testing.T) {
+	t.Run("when public is not a boolean", func(t *testing.T) {
+		t.Run("it rejects the manifest", func(t *testing.T) {
+			root := t.TempDir()
+			public := true
+			manifest := NewManifest("workspace")
+			manifest.Workspace.Projects = []Project{{Name: "math", Path: "libs/math", Template: "test:math", Package: &PackageDeclaration{Public: &public}}}
+			path := filepath.Join(root, ManifestFilename)
+			if err := SaveManifest(path, manifest); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			invalid := strings.Replace(string(data), "public: true", "public: maybe", 1)
+			if err := os.WriteFile(path, []byte(invalid), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err = LoadManifest(path)
+
+			if err == nil || !strings.Contains(err.Error(), "bool") {
+				t.Fatalf("invalid public flag accepted: %v", err)
+			}
+		})
 	})
 }
