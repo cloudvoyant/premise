@@ -5,7 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
+
+	"github.com/gobwas/glob"
 )
 
 // Public API -----------------------------------------------------------------
@@ -38,7 +43,7 @@ type PackageManagerBackend interface {
 	// or an empty string when this manager has no downloadable artifacts.
 	CreateGoReleaserConfig(root string, manifest Config) (string, error)
 
-	// SupportsPackages reports whether the manager publishes registry packages.
+	// SupportsPackages reports whether the manager handles language packages.
 	SupportsPackages() bool
 
 	// PublishPackages publishes all eligible packages in the workspace.
@@ -47,6 +52,39 @@ type PackageManagerBackend interface {
 	// ReleaseWorkspace prepares and returns the directory used by GoReleaser.
 	// The boolean result requests serial artifact builds.
 	ReleaseWorkspace(context.Context, string, io.Writer, io.Writer) (string, bool, error)
+}
+
+// PackageGenerationContext identifies the selected template and its destination.
+// ClientFiles contains original client values; SharedFiles contains declared registry
+// contributions. Providers return native contents; core owns file snapshots and modes.
+type PackageGenerationContext struct {
+	WorkspaceRoot   string
+	WorkspaceName   string
+	ProjectPaths    []string
+	ProjectPath     string
+	Stage           string
+	ClientFiles     map[string]PathValue
+	SharedFiles     map[string]PathValue
+	ResolveConflict MergeConflictResolver
+}
+
+// PackageManagerGeneration prepares native workspace files when a template is
+// generated. Providers without native workspace preparation need no hook.
+type PackageManagerGeneration interface {
+	// GenerationRootFiles declares exclusive native roots, including lock outputs.
+	GenerationRootFiles() []string
+	PrepareGeneration(PackageGenerationContext) ([]MergeEntry, error)
+}
+
+// PackageManagerReleaseTools supplies tools needed to build native artifacts.
+type PackageManagerReleaseTools interface {
+	ReleaseTools(string, Config) ([]string, error)
+}
+
+// PackageManagerRepositoryPublication identifies packages distributed by the
+// shared repository tag. Registry publishers keep their existing upload stage.
+type PackageManagerRepositoryPublication interface {
+	PublishesRepositoryPackages() bool
 }
 
 // RegisterPackageManagerBackend registers an implementation by ID. Workspaces
@@ -67,6 +105,49 @@ func RegisterPackageManagerBackend(backend PackageManagerBackend) error {
 		}
 	}
 	packageManagerRegistry.plugins = append(packageManagerRegistry.plugins, backend)
+	return nil
+}
+
+// RootEntry supplies native contents with the original client mode when present.
+func (request PackageGenerationContext) RootEntry(path string, data []byte) MergeEntry {
+	mode := request.ClientFiles[path].Mode
+	if mode == 0 {
+		mode = 0644
+	}
+	return MergeEntry{Path: path, Output: PathValue{Present: true, Kind: "file", Mode: mode, Data: data}, Strategy: MergeStrategyCopy}
+}
+
+// ResetLocks discards template and root lockfiles so candidate installation
+// resolves them from the merged manifests. Live files change only on apply.
+func (request PackageGenerationContext) ResetLocks(entries []MergeEntry, paths ...string) ([]MergeEntry, error) {
+	for _, path := range paths {
+		if err := os.Remove(filepath.Join(request.Stage, path)); err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+		entries = append(entries, MergeEntry{Path: path, Strategy: MergeStrategyCopy})
+	}
+	return entries, nil
+}
+
+// MatchesProject checks a native member pattern against the selected project.
+func (request PackageGenerationContext) MatchesProject(pattern string) (bool, error) {
+	matcher, err := glob.Compile(strings.TrimPrefix(pattern, "./"), '/')
+	if err != nil {
+		return false, fmt.Errorf("invalid workspace pattern %q: %w", pattern, err)
+	}
+	return matcher.Match(filepath.ToSlash(request.ProjectPath)), nil
+}
+
+// ValidateLocalPath rejects references that could resolve outside the disposable workspace.
+func (request PackageGenerationContext) ValidateLocalPath(base, path string) error {
+	if filepath.IsAbs(path) {
+		return fmt.Errorf("absolute local dependency path %q is unsupported; use a workspace-relative path so candidate validation cannot read the live workspace", path)
+	}
+	absolute := filepath.Join(request.WorkspaceRoot, base, filepath.FromSlash(path))
+	relative, err := filepath.Rel(request.WorkspaceRoot, absolute)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("local dependency path %q escapes workspace; generation supports local sources within the workspace root", path)
+	}
 	return nil
 }
 

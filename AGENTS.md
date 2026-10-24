@@ -13,6 +13,7 @@
 
 # Organization
 
+- Keep each module and package-manager backend in its existing implementation file, with one matching `_test.go` file. Do not split generation, workspace handling, or other features into companion files unless the user explicitly requests that split.
 - Keep infra setup and querying in `core/infra.go`, app deploy and rollback in `core/deploy.go`, and CI sequencing in `core/ci.go`.
 - Put provider interfaces and implementations in `core/providers`. Keep provider behavior independent of the CI runner; put runner identity exchange and output formatting in CI adapters.
 - Put new external-tool wrappers in `core/extensions`. Move existing wrappers in a separate follow-up.

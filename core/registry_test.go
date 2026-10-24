@@ -14,56 +14,7 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-func templateFixture(name, kind string) Template {
-	return Template{
-		Name:    name,
-		Kind:    kind,
-		Path:    filepath.ToSlash(filepath.Join("templates", name)),
-		Version: "0.1.0",
-		Questions: []Question{{
-			Prompt:   kindLabel(kind) + " name:",
-			Type:     "string",
-			Populate: "name",
-		}},
-	}
-}
-
-// writeRegistryFixture writes a minimal on-disk registry whose manifest declares
-// the given templates. Each declared template gets a stub mise.toml so the
-// registry round-trips through the same loading path as a real source.
-func writeRegistryFixture(t *testing.T, templates ...Template) string {
-	t.Helper()
-	root := t.TempDir()
-	manifest := NewManifest("fixture")
-	manifest.TemplateRegistry = &TemplateRegistry{WorkspaceFiles: []string{}, Templates: templates}
-	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
-		t.Fatalf("save fixture manifest: %v", err)
-	}
-	for _, template := range templates {
-		dir := filepath.Join(root, filepath.FromSlash(template.Path))
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatalf("create fixture template directory: %v", err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, "mise.toml"), []byte("[tasks.build]\nrun = 'echo ok'\n"), 0o644); err != nil {
-			t.Fatalf("write fixture template mise.toml: %v", err)
-		}
-	}
-	return root
-}
-
-// overrideResolveRepository redirects source resolution to fixture directories.
-// It returns a restore function to reinstate the previous loader.
-func overrideResolveRepository(fixtures map[string]string) func() {
-	original := resolveRepositoryFunc
-	resolveRepositoryFunc = func(_ context.Context, source string) (string, error) {
-		root, ok := fixtures[source]
-		if !ok {
-			return "", fmt.Errorf("fixture source %q is not registered", source)
-		}
-		return root, nil
-	}
-	return func() { resolveRepositoryFunc = original }
-}
+// Tests ----------------------------------------------------------------------
 
 func TestRegistryEntrySelector(t *testing.T) {
 	entry := RegistryEntry{Source: "cloudvoyant/premise-cargo", Template: templateFixture("premise-rust-lib", "lib")}
@@ -77,6 +28,16 @@ func TestOfficialSourcesIncludesBunRegistry(t *testing.T) {
 	if !slices.Contains(OfficialSources, bunSource) {
 		t.Fatalf("OfficialSources does not include %q", bunSource)
 	}
+}
+
+func TestGoRegistry(t *testing.T) {
+	t.Run("when listing official sources", func(t *testing.T) {
+		t.Run("it includes the Go template registry", func(t *testing.T) {
+			if !slices.Contains(OfficialSources, "cloudvoyant/premise-go") {
+				t.Fatal("official sources omit the Go registry")
+			}
+		})
+	})
 }
 
 func TestDefaultRegistryMergesOfficialSources(t *testing.T) {
@@ -125,6 +86,7 @@ func TestDefaultRegistryDisambiguatesDuplicateNames(t *testing.T) {
 		"cloudvoyant/premise":       first,
 		"cloudvoyant/premise-cargo": second,
 		"cloudvoyant/premise-bun":   bunRegistry,
+		"cloudvoyant/premise-go":    writeRegistryFixture(t),
 	})()
 
 	entries, err := DefaultRegistry(context.Background(), io.Discard)
@@ -174,6 +136,7 @@ func TestDefaultRegistryAggregatesLoadErrors(t *testing.T) {
 		"cloudvoyant/premise":     first,
 		"cloudvoyant/premise-bun": bunRegistry,
 		// premise-cargo intentionally missing so loading fails.
+		"cloudvoyant/premise-go": writeRegistryFixture(t),
 	})()
 
 	_, err := DefaultRegistry(context.Background(), io.Discard)
@@ -200,6 +163,7 @@ func TestResolveOfficialTemplateName(t *testing.T) {
 		"cloudvoyant/premise":       goRegistry,
 		"cloudvoyant/premise-cargo": cargoRegistry,
 		"cloudvoyant/premise-bun":   bunRegistry,
+		"cloudvoyant/premise-go":    writeRegistryFixture(t),
 	})()
 
 	tests := []struct {
@@ -239,6 +203,7 @@ func TestResolveOfficialTemplateNameAmbiguous(t *testing.T) {
 		"cloudvoyant/premise":       first,
 		"cloudvoyant/premise-cargo": second,
 		"cloudvoyant/premise-bun":   bunRegistry,
+		"cloudvoyant/premise-go":    writeRegistryFixture(t),
 	})()
 
 	_, err := ResolveOfficialTemplateName(context.Background(), "premise-app", io.Discard)
@@ -253,7 +218,7 @@ func TestResolveOfficialTemplateNameAmbiguous(t *testing.T) {
 }
 
 func TestRegistryPickerShowsLanguageAgnosticDefaultLast(t *testing.T) {
-	want := []string{"cloudvoyant/premise-cargo", "cloudvoyant/premise-bun", NativeTemplateSource}
+	want := []string{"cloudvoyant/premise-cargo", "cloudvoyant/premise-bun", "cloudvoyant/premise-go", NativeTemplateSource}
 	if got := registryPickerSources(); !slices.Equal(got, want) {
 		t.Fatalf("registry picker sources = %v, want %v", got, want)
 	}
@@ -417,6 +382,7 @@ func TestRegistryResolutionRecordsQualifiedProvenance(t *testing.T) {
 		"cloudvoyant/premise":       goRegistry,
 		"cloudvoyant/premise-cargo": cargoRegistry,
 		"cloudvoyant/premise-bun":   bunRegistry,
+		"cloudvoyant/premise-go":    writeRegistryFixture(t),
 	})()
 
 	tests := []struct {
@@ -524,4 +490,57 @@ func TestDetectProjectKind(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Private helpers ------------------------------------------------------------
+
+func templateFixture(name, kind string) Template {
+	return Template{
+		Name:    name,
+		Kind:    kind,
+		Path:    filepath.ToSlash(filepath.Join("templates", name)),
+		Version: "0.1.0",
+		Questions: []Question{{
+			Prompt:   kindLabel(kind) + " name:",
+			Type:     "string",
+			Populate: "name",
+		}},
+	}
+}
+
+// writeRegistryFixture writes a minimal on-disk registry whose manifest declares
+// the given templates. Each declared template gets a stub mise.toml so the
+// registry round-trips through the same loading path as a real source.
+func writeRegistryFixture(t *testing.T, templates ...Template) string {
+	t.Helper()
+	root := t.TempDir()
+	manifest := NewManifest("fixture")
+	manifest.TemplateRegistry = &TemplateRegistry{WorkspaceFiles: []string{}, Templates: templates}
+	if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
+		t.Fatalf("save fixture manifest: %v", err)
+	}
+	for _, template := range templates {
+		dir := filepath.Join(root, filepath.FromSlash(template.Path))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("create fixture template directory: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "mise.toml"), []byte("[tasks.build]\nrun = 'echo ok'\n"), 0o644); err != nil {
+			t.Fatalf("write fixture template mise.toml: %v", err)
+		}
+	}
+	return root
+}
+
+// overrideResolveRepository redirects source resolution to fixture directories.
+// It returns a restore function to reinstate the previous loader.
+func overrideResolveRepository(fixtures map[string]string) func() {
+	original := resolveRepositoryFunc
+	resolveRepositoryFunc = func(_ context.Context, source string) (string, error) {
+		root, ok := fixtures[source]
+		if !ok {
+			return "", fmt.Errorf("fixture source %q is not registered", source)
+		}
+		return root, nil
+	}
+	return func() { resolveRepositoryFunc = original }
 }

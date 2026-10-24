@@ -149,6 +149,9 @@ func PublishRelease(ctx context.Context, root string, options ReleasePublishOpti
 	if _, err := goReleaserConfig(root, manifest, plugins); err != nil {
 		return ReleasePlan{}, fmt.Errorf("generate GoReleaser configuration: %w", err)
 	}
+	if err := preflightRepositoryPublication(ctx, root, plan.Version, plugins); err != nil {
+		return ReleasePlan{}, err
+	}
 	if !plan.ReuseTag {
 		if err := pushReleaseTag(ctx, root, plan.Version, releaseAuthentication()); err != nil {
 			return ReleasePlan{}, fmt.Errorf("create release tag: %w", err)
@@ -412,6 +415,15 @@ func publishReleaseCandidate(ctx context.Context, root string, kind ProjectKind,
 	if err != nil {
 		return err
 	}
+	if hasRepositoryPackages(plugins) {
+		version, err := ReleaseCandidateVersion(root, os.Getenv("GITHUB_RUN_NUMBER"))
+		if err != nil {
+			return err
+		}
+		if _, err := PublishRelease(ctx, root, ReleasePublishOptions{Channel: "rc", ExpectedVersion: version}, stdout, stderr); err != nil {
+			return err
+		}
+	}
 	packagePublishers := make([]PackageManagerBackend, 0, len(plugins))
 	for _, plugin := range plugins {
 		if plugin.SupportsPackages() {
@@ -482,6 +494,14 @@ func prepareStableRelease(ctx context.Context, root string, stdout io.Writer, fu
 		if err := preflightStablePublication(ctx, root, plan.Version); err != nil {
 			return ReleasePlan{}, fmt.Errorf("preflight stable publication: %w", err)
 		}
+	} else {
+		_, plugins, err := loadReleaseBackends(root)
+		if err != nil {
+			return ReleasePlan{}, err
+		}
+		if err := preflightRepositoryPublication(ctx, root, plan.Version, plugins); err != nil {
+			return ReleasePlan{}, err
+		}
 	}
 	if err := pushReleaseTag(ctx, root, plan.Version, releaseAuthentication()); err != nil {
 		return ReleasePlan{}, fmt.Errorf("prepare stable release: %w", err)
@@ -489,6 +509,30 @@ func prepareStableRelease(ctx context.Context, root string, stdout io.Writer, fu
 	plan.ReuseTag = true
 	fmt.Fprintf(stdout, "Created stable tag: %s\n", plan.Version)
 	return plan, nil
+}
+
+func hasRepositoryPackages(plugins []PackageManagerBackend) bool {
+	for _, plugin := range plugins {
+		if provider, ok := plugin.(PackageManagerRepositoryPublication); ok && provider.PublishesRepositoryPackages() {
+			return true
+		}
+	}
+	return false
+}
+
+func preflightRepositoryPublication(ctx context.Context, root, version string, plugins []PackageManagerBackend) error {
+	task := "publish"
+	if !stableVersionPattern.MatchString(version) {
+		task = "publish:rc"
+	}
+	for _, plugin := range plugins {
+		if provider, ok := plugin.(PackageManagerRepositoryPublication); ok && provider.PublishesRepositoryPackages() {
+			if err := plugin.PreflightPublication(ctx, root, version, task); err != nil {
+				return fmt.Errorf("preflight %s repository packages: %w", plugin.ID(), err)
+			}
+		}
+	}
+	return nil
 }
 
 func preflightStablePublication(ctx context.Context, root, version string) error {
@@ -769,7 +813,17 @@ func runGoReleaserWithFiles(ctx context.Context, root string, plugins []PackageM
 		arguments = append(arguments, "--parallelism", "1")
 	}
 	mise := miseRunner{Stderr: stderr}
-	toolEnvironment, err := mise.toolEnvironment(ctx, workingDirectory, "goreleaser@"+goreleaserVersion)
+	tools := []string{"goreleaser@" + goreleaserVersion}
+	for _, plugin := range plugins {
+		if provider, ok := plugin.(PackageManagerReleaseTools); ok {
+			required, err := provider.ReleaseTools(root, manifest)
+			if err != nil {
+				return fmt.Errorf("resolve %s release tools: %w", plugin.ID(), err)
+			}
+			tools = append(tools, required...)
+		}
+	}
+	toolEnvironment, err := mise.toolEnvironment(ctx, workingDirectory, tools...)
 	if err != nil {
 		return fmt.Errorf("resolve GoReleaser environment: %w", err)
 	}

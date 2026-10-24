@@ -7,7 +7,10 @@ import (
 	"strings"
 
 	"charm.land/huh/v2"
+	"github.com/Masterminds/semver/v3"
 )
+
+// Public API -----------------------------------------------------------------
 
 // MergeStrategy describes how a colliding path is resolved.
 type MergeStrategy string
@@ -81,6 +84,41 @@ type MergeEntry struct {
 	Output   PathValue
 	Strategy MergeStrategy
 }
+
+// MergeDependencyVersion keeps the newer compatible version. Different majors
+// fail; selectors that cannot be compared use the normal conflict resolver.
+func MergeDependencyVersion(conflict MergeConflict, resolver MergeConflictResolver) (string, error) {
+	if conflict.Shared == conflict.Selected {
+		return conflict.Selected, nil
+	}
+	left, leftErr := semver.NewVersion(conflict.Shared)
+	right, rightErr := semver.NewVersion(conflict.Selected)
+	if leftErr == nil && rightErr == nil {
+		if left.Major() != right.Major() {
+			return "", fmt.Errorf("%s has incompatible major versions %s and %s", conflict.Key, conflict.Shared, conflict.Selected)
+		}
+		if left.GreaterThan(right) {
+			return conflict.Shared, nil
+		}
+		return conflict.Selected, nil
+	}
+	decision, err := resolveConflict(resolver, conflict)
+	if err != nil {
+		return "", err
+	}
+	switch decision.Choice {
+	case MergeChoiceKeepShared:
+		return conflict.Shared, nil
+	case MergeChoiceUseSelected:
+		return conflict.Selected, nil
+	case MergeChoiceAbort:
+		return "", fmt.Errorf("merge aborted for %s", conflict.Key)
+	default:
+		return "", fmt.Errorf("invalid merge choice %q for %s", decision.Choice, conflict.Key)
+	}
+}
+
+// Private helpers ------------------------------------------------------------
 
 func mergeTierOneMise(entry *MergeEntry, shared, selected PathValue, kind, identity string, resolver MergeConflictResolver) (MiseMergeResult, error) {
 	result, err := composeMise(shared.Data, selected.Data, kind, identity, resolver)

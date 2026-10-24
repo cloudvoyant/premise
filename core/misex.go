@@ -21,7 +21,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Masterminds/semver/v3"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -443,20 +442,18 @@ func mergeMiseTools(shared, selected map[string]MiseTool, resolver MergeConflict
 		case anyEqual(left.Raw, right.Raw):
 			output[name] = cloneMiseValue(right.Raw)
 		case left.StringSelector && right.StringSelector:
-			leftVersion, leftErr := semver.NewVersion(left.Selector)
-			rightVersion, rightErr := semver.NewVersion(right.Selector)
-			if leftErr == nil && rightErr == nil {
-				if leftVersion.Major() != rightVersion.Major() {
-					return nil, fmt.Errorf("mise tool %s has incompatible major versions %s and %s", name, left.Selector, right.Selector)
-				}
-				if leftVersion.GreaterThan(rightVersion) {
-					output[name] = left.Selector
-				} else {
-					output[name] = right.Selector
-				}
-				continue
+			conflict := MergeConflict{
+				Path:     "mise.toml",
+				Key:      "tools." + name,
+				Kind:     "tool selector",
+				Shared:   left.Selector,
+				Selected: right.Selector,
 			}
-			fallthrough
+			value, err := MergeDependencyVersion(conflict, resolver)
+			if err != nil {
+				return nil, err
+			}
+			output[name] = value
 		default:
 			value, err := resolveMiseScalar("tools."+name, left.Raw, right.Raw, false, resolver)
 			if err != nil {

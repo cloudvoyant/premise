@@ -1,7 +1,9 @@
 package backends
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,7 +14,11 @@ import (
 	"time"
 
 	"github.com/cloudvoyant/premise/core"
+	"github.com/pelletier/go-toml/v2"
+	"github.com/pelletier/go-toml/v2/unstable"
 )
+
+// Public API -----------------------------------------------------------------
 
 // Cargo implements crates.io publication and Rust artifact preparation.
 type Cargo struct{}
@@ -140,6 +146,140 @@ func (Cargo) ReleaseWorkspace(ctx context.Context, root string, stdout, stderr i
 // CreateGoReleaserConfig returns Rust build and archive definitions.
 func (Cargo) CreateGoReleaserConfig(root string, manifest core.Config) (string, error) {
 	return cargoReleaseBuilds(root, manifest)
+}
+
+func (Cargo) GenerationRootFiles() []string { return []string{"Cargo.toml", "Cargo.lock"} }
+
+func (Cargo) PrepareGeneration(request core.PackageGenerationContext) ([]core.MergeEntry, error) {
+	selected, found, err := readCargoGenerationCrate(request, request.ProjectPath, request.Stage)
+	if err != nil || !found {
+		return nil, err
+	}
+	if request.SharedFiles["Cargo.toml"].Present {
+		return nil, fmt.Errorf("registry workspace_files must not include Cargo.toml: Cargo prepares client membership; keep crate dependencies in the selected template")
+	}
+	members, covered, err := cargoGenerationMembership(request)
+	if err != nil {
+		return nil, err
+	}
+	if covered {
+		return request.ResetLocks(nil, "Cargo.lock")
+	}
+	members = append(members, filepath.ToSlash(request.ProjectPath))
+	original := request.ClientFiles["Cargo.toml"]
+	output, err := cargoGenerationMembers(original.Data, members)
+	if err != nil {
+		return nil, err
+	}
+	if !original.Present {
+		resolver := "2"
+		pkg, _ := selected["package"].(map[string]any)
+		if pkg["edition"] == "2024" {
+			resolver = "3"
+		}
+		output = append(output, []byte("resolver = \""+resolver+"\"\n")...)
+	}
+	var verified map[string]any
+	if err := toml.Unmarshal(output, &verified); err != nil {
+		return nil, fmt.Errorf("cannot extend Cargo workspace without changing its layout: %w", err)
+	}
+	return request.ResetLocks([]core.MergeEntry{request.RootEntry("Cargo.toml", output)}, "Cargo.lock")
+}
+
+// Private helpers ------------------------------------------------------------
+
+func readCargoGenerationCrate(request core.PackageGenerationContext, base, directory string) (map[string]any, bool, error) {
+	data, err := os.ReadFile(filepath.Join(directory, "Cargo.toml"))
+	if os.IsNotExist(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	var crate map[string]any
+	if err := toml.Unmarshal(data, &crate); err != nil {
+		return nil, false, fmt.Errorf("crate Cargo.toml: %w", err)
+	}
+	if _, found := crate["package"]; !found {
+		return nil, false, nil
+	}
+	if _, found := crate["workspace"]; found {
+		return nil, false, fmt.Errorf("crate Cargo.toml defines a nested workspace; templates must provide a crate that joins the client workspace")
+	}
+	if err := validateCargoGenerationManifest(request, base, crate); err != nil {
+		return nil, false, err
+	}
+	return crate, true, nil
+}
+
+func cargoGenerationMembership(request core.PackageGenerationContext) ([]string, bool, error) {
+	var client struct {
+		Workspace *struct {
+			Members []string `toml:"members"`
+			Exclude []string `toml:"exclude"`
+		} `toml:"workspace"`
+	}
+	if err := toml.Unmarshal(request.ClientFiles["Cargo.toml"].Data, &client); err != nil {
+		return nil, false, fmt.Errorf("client Cargo.toml: %w", err)
+	}
+	var clientValues map[string]any
+	if err := toml.Unmarshal(request.ClientFiles["Cargo.toml"].Data, &clientValues); err != nil {
+		return nil, false, err
+	}
+	if err := validateCargoGenerationManifest(request, "", clientValues); err != nil {
+		return nil, false, err
+	}
+	members := []string{}
+	if client.Workspace != nil {
+		for _, pattern := range client.Workspace.Exclude {
+			if err := request.ValidateLocalPath("", pattern); err != nil {
+				return nil, false, err
+			}
+			excluded, err := request.MatchesProject(pattern)
+			if err != nil {
+				return nil, false, err
+			}
+			if excluded {
+				return nil, false, fmt.Errorf("Cargo.toml workspace.exclude excludes generated crate %s with %q", request.ProjectPath, pattern)
+			}
+		}
+		members = client.Workspace.Members
+		alreadyCovered := false
+		for _, pattern := range members {
+			if err := request.ValidateLocalPath("", pattern); err != nil {
+				return nil, false, err
+			}
+			covered, err := request.MatchesProject(pattern)
+			if err != nil {
+				return nil, false, err
+			}
+			alreadyCovered = alreadyCovered || covered
+		}
+		if alreadyCovered {
+			return members, true, nil
+		}
+	}
+	if client.Workspace == nil {
+		return existingCargoGenerationMembers(request)
+	}
+	return members, false, nil
+}
+
+func existingCargoGenerationMembers(request core.PackageGenerationContext) ([]string, bool, error) {
+	members := []string{}
+	for _, path := range request.ProjectPaths {
+		if err := request.ValidateLocalPath("", path); err != nil {
+			return nil, false, err
+		}
+		_, found, err := readCargoGenerationCrate(request, path, filepath.Join(request.WorkspaceRoot, path))
+		if err != nil {
+			return nil, false, fmt.Errorf("existing crate %s: %w", path, err)
+		}
+		if found {
+			members = append(members, filepath.ToSlash(path))
+		}
+	}
+	return members, false, nil
 }
 
 type cargoTemplatePackage struct {
@@ -443,4 +583,169 @@ func cargoResourceExists(ctx context.Context, client *http.Client, resourceURL, 
 	default:
 		return false, fmt.Errorf("check crates.io %s: HTTP %d", description, response.StatusCode)
 	}
+}
+
+// Replace only workspace.members, leaving every other source byte untouched.
+func cargoGenerationMembers(data []byte, members []string) ([]byte, error) {
+	encoded, err := json.Marshal(members)
+	if err != nil {
+		return nil, err
+	}
+	var parser unstable.Parser
+	parser.Reset(data)
+	section := ""
+	tableEnd := -1
+	for parser.NextExpression() {
+		expression := parser.Expression()
+		switch expression.Kind {
+		case unstable.Table, unstable.ArrayTable:
+			section = cargoGenerationKey(expression)
+			if section == "workspace" && expression.Kind == unstable.Table {
+				first := expression.Child()
+				start := int(first.Raw.Offset + first.Raw.Length)
+				newline := bytes.IndexByte(data[start:], '\n')
+				tableEnd = len(data)
+				if newline >= 0 {
+					tableEnd = start + newline + 1
+				}
+			}
+		case unstable.KeyValue:
+			key := cargoGenerationKey(expression)
+			if section != "" {
+				key = section + "." + key
+			}
+			if key != "workspace.members" {
+				continue
+			}
+			value := expression.Value()
+			if value.Kind != unstable.Array {
+				return nil, fmt.Errorf("Cargo workspace.members must be an array")
+			}
+			keys := expression.Key()
+			keyEnd := 0
+			for keys.Next() {
+				node := keys.Node()
+				keyEnd = int(node.Raw.Offset + node.Raw.Length)
+			}
+			open := bytes.IndexByte(data[keyEnd:], '[')
+			if open < 0 {
+				return nil, fmt.Errorf("cannot locate Cargo workspace.members array")
+			}
+			open += keyEnd
+			end := open + 1
+			children := value.Children()
+			for children.Next() {
+				child := children.Node()
+				position := int(child.Raw.Offset + child.Raw.Length)
+				if position > end {
+					end = position
+				}
+			}
+			for end < len(data) {
+				if data[end] == '#' {
+					for end < len(data) && data[end] != '\n' {
+						end++
+					}
+				} else if data[end] == ']' {
+					output := append([]byte(nil), data[:open]...)
+					output = append(output, encoded...)
+					return append(output, data[end+1:]...), nil
+				} else {
+					end++
+				}
+			}
+			return nil, fmt.Errorf("cannot locate end of Cargo workspace.members")
+		}
+	}
+	if err := parser.Error(); err != nil {
+		return nil, err
+	}
+	line := append([]byte("members = "), encoded...)
+	line = append(line, '\n')
+	if tableEnd >= 0 {
+		output := append([]byte(nil), data[:tableEnd]...)
+		if len(output) > 0 && output[len(output)-1] != '\n' {
+			output = append(output, '\n')
+		}
+		output = append(output, line...)
+		return append(output, data[tableEnd:]...), nil
+	}
+	output := append([]byte(nil), data...)
+	if len(output) > 0 && output[len(output)-1] != '\n' {
+		output = append(output, '\n')
+	}
+	output = append(output, []byte("\n[workspace]\n")...)
+	return append(output, line...), nil
+}
+
+func cargoGenerationKey(node *unstable.Node) string {
+	keys := node.Key()
+	var parts []string
+	for keys.Next() {
+		parts = append(parts, string(keys.Node().Data))
+	}
+	return strings.Join(parts, ".")
+}
+
+func validateCargoGenerationManifest(request core.PackageGenerationContext, base string, manifest map[string]any) error {
+	pkg, _ := manifest["package"].(map[string]any)
+	if workspace, ok := pkg["workspace"].(string); ok {
+		if err := request.ValidateLocalPath(base, workspace); err != nil {
+			return err
+		}
+		if filepath.Clean(filepath.Join(base, workspace)) != "." {
+			return fmt.Errorf("Cargo package.workspace must point to the client workspace root")
+		}
+	}
+	if build, ok := pkg["build"].(string); ok {
+		if err := request.ValidateLocalPath(base, build); err != nil {
+			return err
+		}
+	}
+	// Only native dependency/source tables contain filesystem references; metadata is opaque.
+	for _, key := range []string{"dependencies", "dev-dependencies", "build-dependencies", "patch", "replace", "lib", "bin", "test", "bench", "example"} {
+		if err := validateCargoGenerationPaths(request, base, manifest[key]); err != nil {
+			return err
+		}
+	}
+	if workspace, ok := manifest["workspace"].(map[string]any); ok {
+		if err := validateCargoGenerationPaths(request, "", workspace["dependencies"]); err != nil {
+			return err
+		}
+	}
+	if targets, ok := manifest["target"].(map[string]any); ok {
+		for _, target := range targets {
+			if object, ok := target.(map[string]any); ok {
+				for _, key := range []string{"dependencies", "dev-dependencies", "build-dependencies"} {
+					if err := validateCargoGenerationPaths(request, base, object[key]); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateCargoGenerationPaths(request core.PackageGenerationContext, base string, value any) error {
+	switch object := value.(type) {
+	case map[string]any:
+		if path, ok := object["path"].(string); ok {
+			if err := request.ValidateLocalPath(base, path); err != nil {
+				return err
+			}
+		}
+		for _, child := range object {
+			if err := validateCargoGenerationPaths(request, base, child); err != nil {
+				return err
+			}
+		}
+	case []any:
+		for _, child := range object {
+			if err := validateCargoGenerationPaths(request, base, child); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
