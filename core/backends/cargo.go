@@ -151,106 +151,22 @@ func (Cargo) CreateGoReleaserConfig(root string, manifest core.Config) (string, 
 func (Cargo) GenerationRootFiles() []string { return []string{"Cargo.toml", "Cargo.lock"} }
 
 func (Cargo) PrepareGeneration(request core.PackageGenerationContext) ([]core.MergeEntry, error) {
-	selectedData, err := os.ReadFile(filepath.Join(request.Stage, "Cargo.toml"))
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var selected map[string]any
-	if err := toml.Unmarshal(selectedData, &selected); err != nil {
-		return nil, fmt.Errorf("selected Cargo.toml: %w", err)
-	}
-	if _, found := selected["package"]; !found {
-		return nil, nil
-	}
-	if _, found := selected["workspace"]; found {
-		return nil, fmt.Errorf("selected Cargo.toml defines a nested workspace; templates must provide a crate that joins the client workspace")
-	}
-	if err := validateCargoGenerationManifest(request, request.ProjectPath, selected); err != nil {
+	selected, found, err := readCargoGenerationCrate(request, request.ProjectPath, request.Stage)
+	if err != nil || !found {
 		return nil, err
 	}
 	if request.SharedFiles["Cargo.toml"].Present {
 		return nil, fmt.Errorf("registry workspace_files must not include Cargo.toml: Cargo prepares client membership; keep crate dependencies in the selected template")
 	}
-	original := request.ClientFiles["Cargo.toml"]
-	var client struct {
-		Workspace *struct {
-			Members []string `toml:"members"`
-			Exclude []string `toml:"exclude"`
-		} `toml:"workspace"`
-	}
-	if err := toml.Unmarshal(original.Data, &client); err != nil {
-		return nil, fmt.Errorf("client Cargo.toml: %w", err)
-	}
-	var clientValues map[string]any
-	if err := toml.Unmarshal(original.Data, &clientValues); err != nil {
+	members, covered, err := cargoGenerationMembership(request)
+	if err != nil {
 		return nil, err
 	}
-	if err := validateCargoGenerationManifest(request, "", clientValues); err != nil {
-		return nil, err
-	}
-	members := []string{}
-	if client.Workspace != nil {
-		for _, pattern := range client.Workspace.Exclude {
-			if err := request.ValidateLocalPath("", pattern); err != nil {
-				return nil, err
-			}
-			excluded, err := request.MatchesProject(pattern)
-			if err != nil {
-				return nil, err
-			}
-			if excluded {
-				return nil, fmt.Errorf("Cargo.toml workspace.exclude excludes generated crate %s with %q", request.ProjectPath, pattern)
-			}
-		}
-		members = client.Workspace.Members
-		alreadyCovered := false
-		for _, pattern := range members {
-			if err := request.ValidateLocalPath("", pattern); err != nil {
-				return nil, err
-			}
-			covered, err := request.MatchesProject(pattern)
-			if err != nil {
-				return nil, err
-			}
-			alreadyCovered = alreadyCovered || covered
-		}
-		if alreadyCovered {
-			return nil, nil
-		}
-	}
-	if client.Workspace == nil {
-		// Older clients generated standalone crates. Creating a root must keep them usable.
-		for _, path := range request.ProjectPaths {
-			if err := request.ValidateLocalPath("", path); err != nil {
-				return nil, err
-			}
-			data, err := os.ReadFile(filepath.Join(request.WorkspaceRoot, path, "Cargo.toml"))
-			if os.IsNotExist(err) {
-				continue
-			}
-			if err != nil {
-				return nil, err
-			}
-			var existing map[string]any
-			if err := toml.Unmarshal(data, &existing); err != nil {
-				return nil, fmt.Errorf("existing crate %s: %w", path, err)
-			}
-			if _, native := existing["package"]; !native {
-				continue
-			}
-			if _, nested := existing["workspace"]; nested {
-				return nil, fmt.Errorf("existing crate %s defines a nested workspace; remove it before joining the client root", path)
-			}
-			if err := validateCargoGenerationManifest(request, path, existing); err != nil {
-				return nil, err
-			}
-			members = append(members, filepath.ToSlash(path))
-		}
+	if covered {
+		return request.ResetLocks(nil, "Cargo.lock")
 	}
 	members = append(members, filepath.ToSlash(request.ProjectPath))
+	original := request.ClientFiles["Cargo.toml"]
 	output, err := cargoGenerationMembers(original.Data, members)
 	if err != nil {
 		return nil, err
@@ -267,10 +183,104 @@ func (Cargo) PrepareGeneration(request core.PackageGenerationContext) ([]core.Me
 	if err := toml.Unmarshal(output, &verified); err != nil {
 		return nil, fmt.Errorf("cannot extend Cargo workspace without changing its layout: %w", err)
 	}
-	return []core.MergeEntry{request.RootEntry("Cargo.toml", output)}, nil
+	return request.ResetLocks([]core.MergeEntry{request.RootEntry("Cargo.toml", output)}, "Cargo.lock")
 }
 
 // Private helpers ------------------------------------------------------------
+
+func readCargoGenerationCrate(request core.PackageGenerationContext, base, directory string) (map[string]any, bool, error) {
+	data, err := os.ReadFile(filepath.Join(directory, "Cargo.toml"))
+	if os.IsNotExist(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	var crate map[string]any
+	if err := toml.Unmarshal(data, &crate); err != nil {
+		return nil, false, fmt.Errorf("crate Cargo.toml: %w", err)
+	}
+	if _, found := crate["package"]; !found {
+		return nil, false, nil
+	}
+	if _, found := crate["workspace"]; found {
+		return nil, false, fmt.Errorf("crate Cargo.toml defines a nested workspace; templates must provide a crate that joins the client workspace")
+	}
+	if err := validateCargoGenerationManifest(request, base, crate); err != nil {
+		return nil, false, err
+	}
+	return crate, true, nil
+}
+
+func cargoGenerationMembership(request core.PackageGenerationContext) ([]string, bool, error) {
+	var client struct {
+		Workspace *struct {
+			Members []string `toml:"members"`
+			Exclude []string `toml:"exclude"`
+		} `toml:"workspace"`
+	}
+	if err := toml.Unmarshal(request.ClientFiles["Cargo.toml"].Data, &client); err != nil {
+		return nil, false, fmt.Errorf("client Cargo.toml: %w", err)
+	}
+	var clientValues map[string]any
+	if err := toml.Unmarshal(request.ClientFiles["Cargo.toml"].Data, &clientValues); err != nil {
+		return nil, false, err
+	}
+	if err := validateCargoGenerationManifest(request, "", clientValues); err != nil {
+		return nil, false, err
+	}
+	members := []string{}
+	if client.Workspace != nil {
+		for _, pattern := range client.Workspace.Exclude {
+			if err := request.ValidateLocalPath("", pattern); err != nil {
+				return nil, false, err
+			}
+			excluded, err := request.MatchesProject(pattern)
+			if err != nil {
+				return nil, false, err
+			}
+			if excluded {
+				return nil, false, fmt.Errorf("Cargo.toml workspace.exclude excludes generated crate %s with %q", request.ProjectPath, pattern)
+			}
+		}
+		members = client.Workspace.Members
+		alreadyCovered := false
+		for _, pattern := range members {
+			if err := request.ValidateLocalPath("", pattern); err != nil {
+				return nil, false, err
+			}
+			covered, err := request.MatchesProject(pattern)
+			if err != nil {
+				return nil, false, err
+			}
+			alreadyCovered = alreadyCovered || covered
+		}
+		if alreadyCovered {
+			return members, true, nil
+		}
+	}
+	if client.Workspace == nil {
+		return existingCargoGenerationMembers(request)
+	}
+	return members, false, nil
+}
+
+func existingCargoGenerationMembers(request core.PackageGenerationContext) ([]string, bool, error) {
+	members := []string{}
+	for _, path := range request.ProjectPaths {
+		if err := request.ValidateLocalPath("", path); err != nil {
+			return nil, false, err
+		}
+		_, found, err := readCargoGenerationCrate(request, path, filepath.Join(request.WorkspaceRoot, path))
+		if err != nil {
+			return nil, false, fmt.Errorf("existing crate %s: %w", path, err)
+		}
+		if found {
+			members = append(members, filepath.ToSlash(path))
+		}
+	}
+	return members, false, nil
+}
 
 type cargoTemplatePackage struct {
 	Template        core.Template

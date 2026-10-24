@@ -359,7 +359,7 @@ func testGenerateFromCargoAndBunRegistries(t *testing.T) {
 	// Real native membership and resolution replace success-shim invocation counts.
 	runCommand(t, workspace, "cargo", "metadata", "--no-deps", "--format-version=1", "--offline")
 	runCommand(t, workspace, "cargo", "fetch", "--offline")
-	runCommand(t, workspace, "bun", "install", "--ignore-scripts", "--frozen-lockfile")
+	runCommand(t, gateway, "bun", "install", "--ignore-scripts", "--frozen-lockfile")
 	assertFileContains(t, filepath.Join(workspace, "Cargo.toml"), "apps/orders-cli")
 	assertNoGenerationTemporaryDirectories(t, filepath.Join(workspace, "apps"))
 }
@@ -414,7 +414,12 @@ func assertProjectMise(t *testing.T, path, tool, version, appKind string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := config.Tools[tool].Selector; got != version {
+	declared := config.Tools[tool]
+	got := declared.Selector
+	if options, ok := declared.Raw.(map[string]any); ok {
+		got, _ = options["version"].(string)
+	}
+	if got != version {
 		t.Fatalf("%s tool %s = %q, want %q", path, tool, got, version)
 	}
 	if _, ok := config.Tasks["shared"]; ok {
@@ -685,7 +690,8 @@ func nativeRegistry(t *testing.T, manager, root string) string {
 		copyFixture(t, filepath.Join(repositoryRoot(t), "e2e/testdata/package-generation", manager, kind), filepath.Join(root, "templates", name))
 	}
 	if manager == "bun" {
-		manifest.TemplateRegistry.WorkspaceFiles = []string{"package.json"}
+		manifest.TemplateRegistry.WorkspaceFiles = []string{"package.json", "mise.toml"}
+		writeFixtureFile(t, filepath.Join(root, "mise.toml"), readFile(t, filepath.Join(repositoryRoot(t), "e2e/testdata/package-generation/bun/root.mise.toml")), 0644)
 		writeFixtureFile(t, filepath.Join(root, "package.json"), `{"name":"registry-development","private":true,"workspaces":["templates/*","apps/*","libs/*"]}`, 0644)
 	}
 	if err := core.SaveManifest(filepath.Join(root, core.ManifestFilename), manifest); err != nil {

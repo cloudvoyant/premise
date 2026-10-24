@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -114,6 +115,18 @@ func (request PackageGenerationContext) RootEntry(path string, data []byte) Merg
 		mode = 0644
 	}
 	return MergeEntry{Path: path, Output: PathValue{Present: true, Kind: "file", Mode: mode, Data: data}, Strategy: MergeStrategyCopy}
+}
+
+// ResetLocks discards template and root lockfiles so candidate installation
+// resolves them from the merged manifests. Live files change only on apply.
+func (request PackageGenerationContext) ResetLocks(entries []MergeEntry, paths ...string) ([]MergeEntry, error) {
+	for _, path := range paths {
+		if err := os.Remove(filepath.Join(request.Stage, path)); err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+		entries = append(entries, MergeEntry{Path: path, Strategy: MergeStrategyCopy})
+	}
+	return entries, nil
 }
 
 // MatchesProject checks a native member pattern against the selected project.

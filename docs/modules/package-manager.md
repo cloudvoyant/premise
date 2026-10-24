@@ -84,7 +84,7 @@ flowchart TD
     Capture --> Apply["Publish files with rollback"]
 ```
 
-`PackageGenerationContext` supplies the client workspace name, project path, staged template, original `ClientFiles`, declared registry `SharedFiles`, existing client `ProjectPaths`, and a conflict resolver. Providers return native contents. Core attaches original values and modes, enforces unique ownership, stages existing source, and publishes validated outputs. There is no provider candidate-copy hook. Shared context helpers create root entries, match the selected project, and validate local paths. These helpers live with the existing package-manager contract.
+`PackageGenerationContext` supplies the client workspace name, project path, staged template, original `ClientFiles`, declared registry `SharedFiles`, existing client `ProjectPaths`, and a conflict resolver. Providers return native contents. Core attaches original values and modes, enforces unique ownership, stages existing source, and publishes validated outputs. There is no provider candidate-copy hook. Shared context helpers create root entries, reset lockfiles, match the selected project, and validate local paths. These helpers live with the existing package-manager contract. Bun and Cargo discard stale root and template lockfiles inside the candidate; native installation regenerates them. The client keeps its original files until validation succeeds.
 
 | Backend | Owned roots | Preparation |
 | --- | --- | --- |
@@ -139,6 +139,8 @@ The generated project has no nested `go.mod`. Go generation rejects an existing 
 
 Go-specific merging stays in `core/backends/go.go`. Native Go file parsing stays in `core/extensions/gox.go`. Core generation calls the common capability and does not select Go by name.
 
+Version selection uses the same `MergeDependencyVersion` policy as Mise tools: equal versions stay unchanged, newer versions within one major are selected, and different majors fail. Version ranges and other selectors use the normal conflict resolver. Backends keep native manifest parsing and writing. Cargo leaves per-crate dependencies to Cargo. Go maintains `go.sum` through its native install tasks; Premise does not merge checksum lines.
+
 ### Go publication
 
 `go.mod` has no setting for the publication tasks of an individual project. Go reads `package.public` from `premise.yaml`. Omission means `true`. A template can ask for this value with `populate: package.public`, and generation records the answer as a boolean. `false` skips that project's publication tasks. It does not exclude source from the root module.
@@ -146,17 +148,12 @@ Go-specific merging stays in `core/backends/go.go`. Native Go file parsing stays
 ```mermaid
 flowchart TD
     Plan["Shared release version"] --> Module["Check module major version and replacements"]
-    Module --> Public{"Any public Go projects?"}
-    Public -->|Yes| Clean["Backend requires a clean checkout"]
-    Clean --> Archive["Git utility exports committed source"]
-    Archive --> Test["Test public projects with GOWORK=off"]
-    Test --> Tag["Common release flow creates the root tag"]
-    Public -->|No| Tag
+    Module --> Tag["Common release flow creates the root tag"]
     Tag --> Source["Go distributes the root module at that tag"]
     Tag --> Tasks["Package job runs the selected project tasks"]
 ```
 
-The clean-checkout requirement belongs to the Go backend. The Git extension returns status data and exports the requested revision. Tests run against that export so ignored source cannot hide a broken release. The backend also rejects local filesystem replacements and a module path that does not match the release version. If no public projects exist, it skips the source tests and clean-checkout check.
+The Go backend checks publication tasks, rejects local filesystem replacements, and checks that the module path matches the release version. Source validation uses the normal project checks and publication tasks.
 
 Go applications can set `package.main` relative to their project directory and `package.binary` for the executable name. Without `main`, the backend looks for a main package in the project root. It creates an archive for each application. Libraries produce no executable. An existing root CLI keeps its archive names.
 

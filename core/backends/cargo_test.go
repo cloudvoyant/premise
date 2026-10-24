@@ -609,6 +609,7 @@ func TestCargoReleaseArtifactsExcludeDirectTauriApps(t *testing.T) {
 func TestCargoGeneration(t *testing.T) {
 	registerBuiltins(t)
 	t.Run("when extending an existing Cargo workspace", func(t *testing.T) {
+		// Arrange
 		root, stage := t.TempDir(), t.TempDir()
 		original, err := os.ReadFile("../testdata/package-generation/Cargo.toml")
 		if err != nil {
@@ -617,12 +618,14 @@ func TestCargoGeneration(t *testing.T) {
 		writePackageFixtureFile(t, root, "Cargo.toml", string(original))
 		writePackageFixtureFile(t, stage, "Cargo.toml", "[package]\nname = 'tool'\nversion = '0.1.0'\nedition = '2024'\n")
 
+		// Act
 		plan, err := core.BuildGeneratePlan(core.GenerateParameters{PackageManagers: []string{"cargo"}, ClientRepoRoot: root, TemplateRoot: stage, ProjectPath: "apps/tool", TemplateKind: "app"})
 		if err != nil {
 			t.Fatal(err)
 		}
 		discardGenerationPlan(t, plan, root, "apps/tool")
 
+		// Assert
 		t.Run("it preserves client configuration outside membership", func(t *testing.T) {
 			output := generationOutput(t, plan, "Cargo.toml")
 			var result struct {
@@ -658,16 +661,19 @@ func TestCargoGeneration(t *testing.T) {
 			{"when the workspace only declares package defaults", "[workspace.package]\nlicense = 'MIT'\n"},
 		} {
 			t.Run(scenario.name, func(t *testing.T) {
+				// Arrange
 				root, stage := t.TempDir(), t.TempDir()
 				writePackageFixtureFile(t, root, "Cargo.toml", scenario.manifest)
 				writePackageFixtureFile(t, stage, "Cargo.toml", "[package]\nname='tool'\nversion='0.1.0'\nedition='2024'\n")
 
+				// Act
 				plan, err := core.BuildGeneratePlan(core.GenerateParameters{PackageManagers: []string{"cargo"}, ClientRepoRoot: root, TemplateRoot: stage, ProjectPath: "apps/tool", TemplateKind: "app"})
 				if err != nil {
 					t.Fatal(err)
 				}
 				discardGenerationPlan(t, plan, root, "apps/tool")
 
+				// Assert
 				t.Run("it adds the generated crate to the workspace", func(t *testing.T) {
 					var result struct {
 						Workspace struct {
@@ -686,12 +692,15 @@ func TestCargoGeneration(t *testing.T) {
 	})
 
 	t.Run("when the native root excludes the selected project", func(t *testing.T) {
+		// Arrange
 		root, stage := t.TempDir(), t.TempDir()
 		writePackageFixtureFile(t, root, "Cargo.toml", "[workspace]\nmembers=[]\nexclude=['apps/*']\n")
 		writePackageFixtureFile(t, stage, "Cargo.toml", "[package]\nname='tool'\nversion='0.1.0'\n")
 
+		// Act
 		plan, err := core.BuildGeneratePlan(core.GenerateParameters{PackageManagers: []string{"cargo"}, ClientRepoRoot: root, TemplateRoot: stage, ProjectPath: "apps/tool", TemplateKind: "app"})
 
+		// Assert
 		t.Run("it rejects membership before publication", func(t *testing.T) {
 			if plan != nil {
 				discardGenerationPlan(t, plan, root, "apps/tool")

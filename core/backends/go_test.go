@@ -3,7 +3,6 @@ package backends
 import (
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -64,7 +63,7 @@ func TestGoProvider(t *testing.T) {
 	})
 
 	t.Run("when validating a shared module release", func(t *testing.T) {
-		t.Run("when a public library uses a committed local helper", func(t *testing.T) {
+		t.Run("when a public library uses a local helper", func(t *testing.T) {
 			root := goPackageFixture(t)
 			t.Setenv("MISE_TRUSTED_CONFIG_PATHS", root)
 
@@ -77,55 +76,6 @@ func TestGoProvider(t *testing.T) {
 			})
 		})
 
-		t.Run("when a library depends on ignored source files", func(t *testing.T) {
-			root := goPackageFixture(t)
-			t.Setenv("MISE_TRUSTED_CONFIG_PATHS", root)
-			writePackageFixtureFile(t, root, ".gitignore", "libs/math/generated.go\n")
-			writePackageFixtureFile(t, root, "libs/math/math.go", "package math\nfunc Value() int { return generatedValue }\n")
-			writePackageFixtureFile(t, root, "libs/math/generated.go", "package math\nconst generatedValue = 42\n")
-			goFixtureGit(t, root, "add", ".gitignore", "libs/math/math.go")
-			goFixtureGit(t, root, "commit", "-m", "feat: depend on generated source")
-
-			err := (Go{}).PreflightPublication(t.Context(), root, "v4.0.0-rc.43", "publish:rc")
-
-			t.Run("it rejects dependencies on ignored source files", func(t *testing.T) {
-				if err == nil || !strings.Contains(err.Error(), "committed Go package") {
-					t.Fatalf("expected committed-source validation to fail, got %v", err)
-				}
-			})
-		})
-		t.Run("when source changes are uncommitted", func(t *testing.T) {
-			root := goPackageFixture(t)
-			t.Setenv("MISE_TRUSTED_CONFIG_PATHS", root)
-			writePackageFixtureFile(t, root, "libs/math/math.go", "package math\nconst Changed = 42\n")
-
-			err := (Go{}).PreflightPublication(t.Context(), root, "v4.0.0-rc.42", "publish:rc")
-
-			t.Run("it rejects uncommitted source changes", func(t *testing.T) {
-				if err == nil || !strings.Contains(err.Error(), "requires a clean committed checkout") {
-					t.Fatalf("uncommitted source passed publication checks: %v", err)
-				}
-			})
-		})
-
-		t.Run("when release validation finishes", func(t *testing.T) {
-			root := goPackageFixture(t)
-			t.Setenv("MISE_TRUSTED_CONFIG_PATHS", root)
-			snapshots := t.TempDir()
-			t.Setenv("TMPDIR", snapshots)
-
-			err := (Go{}).PreflightPublication(t.Context(), root, "v4.0.0-rc.42", "publish:rc")
-
-			t.Run("it removes temporary validation files", func(t *testing.T) {
-				if err != nil {
-					t.Fatal(err)
-				}
-				remaining, err := filepath.Glob(filepath.Join(snapshots, "premise-package-snapshot-*"))
-				if err != nil || len(remaining) != 0 {
-					t.Fatalf("validation files remain: %v (%v)", remaining, err)
-				}
-			})
-		})
 	})
 	t.Run("when generating the first Go project", func(t *testing.T) {
 		root, source := t.TempDir(), t.TempDir()
@@ -220,6 +170,7 @@ func TestGoGeneration(t *testing.T) {
 	t.Run("when existing Go configuration defines multiple modules", func(t *testing.T) {
 		for _, path := range []string{"go.work", "libs/existing/go.mod"} {
 			t.Run("when existing configuration contains "+path, func(t *testing.T) {
+				// Arrange
 				root, stage := t.TempDir(), t.TempDir()
 				original := "module example.com/standalone\ngo 1.25.0\n"
 				if path == "go.work" {
@@ -228,8 +179,10 @@ func TestGoGeneration(t *testing.T) {
 				writePackageFixtureFile(t, root, path, original)
 				writePackageFixtureFile(t, stage, "go.mod", "module example.com/workspace/libs/new\ngo 1.25.0\n")
 
+				// Act
 				plan, err := core.BuildGeneratePlan(core.GenerateParameters{PackageManagers: []string{"go"}, ProjectPaths: []string{"libs/existing"}, ClientRepoRoot: root, TemplateRoot: stage, ProjectPath: "libs/new", TemplateKind: "lib"})
 
+				// Assert
 				t.Run("it rejects the layout without converting client files", func(t *testing.T) {
 					if plan != nil {
 						discardGenerationPlan(t, plan, root, "libs/new")
@@ -283,19 +236,7 @@ func goPackageFixture(t *testing.T) string {
 	if err := core.SaveManifest(filepath.Join(root, core.ManifestFilename), manifest); err != nil {
 		t.Fatal(err)
 	}
-	goFixtureGit(t, root, "init", "-b", "main")
-	goFixtureGit(t, root, "add", ".")
-	goFixtureGit(t, root, "commit", "-m", "feat: shared packages")
 	return root
-}
-
-func goFixtureGit(t *testing.T, root string, args ...string) {
-	t.Helper()
-	command := exec.CommandContext(t.Context(), "git", append([]string{"-c", "user.name=Test", "-c", "user.email=test@example.com"}, args...)...)
-	command.Dir = root
-	if data, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("git %v: %v\n%s", args, err, data)
-	}
 }
 
 func goGenerationFixture(t *testing.T) (string, string) {

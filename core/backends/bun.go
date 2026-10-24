@@ -145,32 +145,53 @@ func (Bun) CreateGoReleaserConfig(_ string, _ core.Config) (string, error) { ret
 func (Bun) GenerationRootFiles() []string { return []string{"package.json", "bun.lock", "bun.lockb"} }
 
 func (Bun) PrepareGeneration(request core.PackageGenerationContext) ([]core.MergeEntry, error) {
+	client, selected, err := bunGenerationRoot(request)
+	if err != nil || client == nil {
+		return nil, err
+	}
+	if err := bunGenerationMembership(request, client, selected); err != nil {
+		return nil, err
+	}
+	if err := validateBunGenerationPaths(request, "", client); err != nil {
+		return nil, err
+	}
+	output, err := json.MarshalIndent(client, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	entries := []core.MergeEntry{request.RootEntry("package.json", append(output, '\n'))}
+	return request.ResetLocks(entries, "bun.lock", "bun.lockb")
+}
+
+// Private helpers ------------------------------------------------------------
+
+func bunGenerationRoot(request core.PackageGenerationContext) (map[string]any, bool, error) {
 	selectedData, err := os.ReadFile(filepath.Join(request.Stage, "package.json"))
 	selected := err == nil
 	if err != nil && !os.IsNotExist(err) {
-		return nil, err
+		return nil, false, err
 	}
 	shared := request.SharedFiles["package.json"]
 	if !selected && !shared.Present {
-		return nil, nil
+		return nil, false, nil
 	}
 	if selected {
 		project, err := readGenerationJSON(selectedData)
 		if err != nil {
-			return nil, fmt.Errorf("selected package.json: %w", err)
+			return nil, false, fmt.Errorf("selected package.json: %w", err)
 		}
 		if err := validateBunGenerationPaths(request, request.ProjectPath, project); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	}
 	original := request.ClientFiles["package.json"]
 	client, err := readGenerationJSON(original.Data)
 	if err != nil {
-		return nil, fmt.Errorf("client package.json: %w", err)
+		return nil, false, fmt.Errorf("client package.json: %w", err)
 	}
 	incoming, err := readGenerationJSON(shared.Data)
 	if err != nil {
-		return nil, fmt.Errorf("shared package.json: %w", err)
+		return nil, false, fmt.Errorf("shared package.json: %w", err)
 	}
 	// Registry identity and registry-development membership are not client contributions.
 	for _, key := range []string{"name", "version", "private", "workspaces"} {
@@ -184,11 +205,15 @@ func (Bun) PrepareGeneration(request core.PackageGenerationContext) ([]core.Merg
 		client = map[string]any{"name": name, "private": true, "workspaces": []any{"apps/*", "libs/*"}}
 	}
 	if err := mergeGenerationJSON(client, incoming, "package.json", request.ResolveConflict); err != nil {
-		return nil, err
+		return nil, false, err
 	}
+	return client, selected, nil
+}
+
+func bunGenerationMembership(request core.PackageGenerationContext, client map[string]any, selected bool) error {
 	patterns, err := bunGenerationPatterns(client)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	explicit := slices.Contains(patterns, request.ProjectPath) || slices.Contains(patterns, "./"+request.ProjectPath)
 	covered := false
@@ -196,11 +221,11 @@ func (Bun) PrepareGeneration(request core.PackageGenerationContext) ([]core.Merg
 		negative := strings.HasPrefix(pattern, "!")
 		raw := strings.TrimPrefix(pattern, "!")
 		if err := request.ValidateLocalPath("", raw); err != nil {
-			return nil, err
+			return err
 		}
 		matches, err := request.MatchesProject(raw)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		// Bun's dir/** exclusion also removes dir itself.
 		if negative && strings.HasSuffix(raw, "/**") && strings.TrimSuffix(raw, "/**") == request.ProjectPath {
@@ -208,7 +233,7 @@ func (Bun) PrepareGeneration(request core.PackageGenerationContext) ([]core.Merg
 		}
 		if matches {
 			if negative && !explicit {
-				return nil, fmt.Errorf("package.json.workspaces excludes generated project %s with %q", request.ProjectPath, pattern)
+				return fmt.Errorf("package.json.workspaces excludes generated project %s with %q", request.ProjectPath, pattern)
 			}
 			covered = true
 		}
@@ -225,17 +250,8 @@ func (Bun) PrepareGeneration(request core.PackageGenerationContext) ([]core.Merg
 			client["workspaces"] = values
 		}
 	}
-	if err := validateBunGenerationPaths(request, "", client); err != nil {
-		return nil, err
-	}
-	output, err := json.MarshalIndent(client, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	return []core.MergeEntry{request.RootEntry("package.json", append(output, '\n'))}, nil
+	return nil
 }
-
-// Private helpers ------------------------------------------------------------
 
 func bunPackageRegistry(pkg core.BunPackage) (*url.URL, error) {
 	if pkg.Private {
@@ -467,6 +483,14 @@ func mergeGenerationJSON(client, incoming map[string]any, path string, resolver 
 			continue
 		}
 		conflict := core.MergeConflict{Path: "package.json", Key: path + "." + key, Kind: "native value", Shared: fmt.Sprint(next), Selected: fmt.Sprint(previous)}
+		if slices.Contains([]string{"package.json.dependencies", "package.json.devDependencies", "package.json.optionalDependencies", "package.json.peerDependencies"}, path) {
+			value, err := core.MergeDependencyVersion(conflict, resolver)
+			if err != nil {
+				return err
+			}
+			client[key] = value
+			continue
+		}
 		if resolver == nil {
 			return fmt.Errorf("merge conflict for %s requires a resolver", conflict.Key)
 		}

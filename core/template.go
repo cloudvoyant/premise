@@ -210,11 +210,11 @@ func runTemplateContracts(ctx context.Context, directory, kind, label string, st
 	return errors.Join(failures...)
 }
 
-func runGenerationMiseInstall(ctx context.Context, directory, label string, failureOutput io.Writer) error {
+func runGenerationMiseCommand(ctx context.Context, directory, label string, failureOutput io.Writer, arguments ...string) error {
 	if failureOutput == nil {
 		failureOutput = io.Discard
 	}
-	fmt.Fprintf(failureOutput, "[%s] mise install...\n", label)
+	fmt.Fprintf(failureOutput, "[%s] mise %s...\n", label, strings.Join(arguments, " "))
 	started := time.Now()
 	var commandOutput bytes.Buffer
 	mise := miseRunner{
@@ -222,22 +222,11 @@ func runGenerationMiseInstall(ctx context.Context, directory, label string, fail
 		Stderr:  &commandOutput,
 		Ceiling: filepath.Dir(filepath.Clean(directory)),
 	}
-	if err := mise.run(ctx, directory, []string{"PREMISE_TEMPLATE_TEST=1"}, "install"); err != nil {
+	if err := mise.run(ctx, directory, []string{"PREMISE_TEMPLATE_TEST=1"}, arguments...); err != nil {
 		_, _ = io.Copy(failureOutput, &commandOutput)
-		return fmt.Errorf("template %s tool install failed: %w", label, err)
+		return fmt.Errorf("template %s mise %s failed: %w", label, strings.Join(arguments, " "), err)
 	}
-	fmt.Fprintf(failureOutput, "[%s] mise install done (%s)\n", label, time.Since(started).Round(time.Millisecond))
-	return nil
-}
-
-func runGenerationMiseTask(ctx context.Context, directory, task, label string, failureOutput io.Writer) error {
-	var output bytes.Buffer
-	fmt.Fprintf(failureOutput, "[%s] mise run %s...\n", label, task)
-	mise := miseRunner{Stdout: &output, Stderr: &output, Ceiling: filepath.Dir(filepath.Clean(directory))}
-	if err := mise.run(ctx, directory, []string{"PREMISE_TEMPLATE_TEST=1"}, "run", task); err != nil {
-		_, _ = io.Copy(failureOutput, &output)
-		return fmt.Errorf("template %s task %s failed: %w", label, task, err)
-	}
+	fmt.Fprintf(failureOutput, "[%s] mise %s done (%s)\n", label, strings.Join(arguments, " "), time.Since(started).Round(time.Millisecond))
 	return nil
 }
 

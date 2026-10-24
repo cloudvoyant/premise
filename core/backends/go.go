@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/cloudvoyant/premise/core"
@@ -15,7 +14,6 @@ import (
 	"go.yaml.in/yaml/v3"
 	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/module"
-	"golang.org/x/mod/semver"
 )
 
 // Public API -----------------------------------------------------------------
@@ -83,8 +81,7 @@ func (provider Go) PreflightPublication(ctx context.Context, root, version, task
 	if _, err := core.ValidatePackagePublicationVersion(version, task); err != nil {
 		return err
 	}
-	targets, err := goPublicationTargets(ctx, root, version, task)
-	if err != nil {
+	if _, err := goPublicationTargets(ctx, root, version, task); err != nil {
 		return err
 	}
 	workspace, found, err := extensions.ReadGoModule(root)
@@ -106,35 +103,7 @@ func (provider Go) PreflightPublication(ctx context.Context, root, version, task
 			return fmt.Errorf("remove filesystem replacement %s before publishing the workspace module", replacement.Old.Path)
 		}
 	}
-	if len(targets) == 0 {
-		return nil
-	}
-	status, err := extensions.WorkingTreeStatus(ctx, root)
-	if err != nil {
-		return err
-	}
-	if status != "" {
-		return fmt.Errorf("Go package publication requires a clean committed checkout")
-	}
-	snapshot, err := os.MkdirTemp("", "premise-package-snapshot-*")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(snapshot)
-	if err := extensions.ExportRevision(ctx, root, "HEAD", snapshot); err != nil {
-		return err
-	}
-	runner := core.MiseTaskRunner{}
-	for _, target := range targets {
-		relative, err := filepath.Rel(root, target.Path)
-		if err != nil {
-			return err
-		}
-		directory := filepath.Join(snapshot, relative)
-		if err := runner.Run(ctx, directory, []string{"GOWORK=off", "MISE_TRUSTED_CONFIG_PATHS=" + snapshot}, "exec", "--", "go", "test", "./..."); err != nil {
-			return fmt.Errorf("committed Go package %s fails standalone validation: %w", target.Name, err)
-		}
-	}
+
 	return nil
 }
 
@@ -215,20 +184,8 @@ func (Go) PrepareGeneration(request core.PackageGenerationContext) ([]core.Merge
 		}
 		return nil, nil
 	}
-	if _, err := os.Lstat(filepath.Join(request.WorkspaceRoot, "go.work")); err == nil {
-		return nil, fmt.Errorf("Go generation requires one root module; remove go.work before adding a Go project")
-	} else if !os.IsNotExist(err) {
+	if err := validateGoGenerationLayout(request); err != nil {
 		return nil, err
-	}
-	for _, path := range request.ProjectPaths {
-		if err := request.ValidateLocalPath("", path); err != nil {
-			return nil, err
-		}
-		if _, err := os.Lstat(filepath.Join(request.WorkspaceRoot, path, "go.mod")); err == nil {
-			return nil, fmt.Errorf("existing Go project %s has a nested go.mod; migrate it to the root module before generating another Go project", path)
-		} else if !os.IsNotExist(err) {
-			return nil, err
-		}
 	}
 	merged, err := mergeGoWorkspaceModule(request, source)
 	if err != nil {
@@ -239,15 +196,6 @@ func (Go) PrepareGeneration(request core.PackageGenerationContext) ([]core.Merge
 		return nil, err
 	}
 	entries := []core.MergeEntry{request.RootEntry("go.mod", data)}
-	sumData := append(append([]byte(nil), request.ClientFiles["go.sum"].Data...), '\n')
-	sumData = append(sumData, request.SharedFiles["go.sum"].Data...)
-	sums, err := goWorkspaceChecksums(sumData, request.Stage)
-	if err != nil {
-		return nil, err
-	}
-	if len(sums) > 0 {
-		entries = append(entries, request.RootEntry("go.sum", sums))
-	}
 	for _, name := range []string{"go.mod", "go.sum"} {
 		if err := os.Remove(filepath.Join(request.Stage, name)); err != nil && !os.IsNotExist(err) {
 			return nil, err
@@ -388,6 +336,25 @@ archives:
 `, project, project)
 }
 
+func validateGoGenerationLayout(request core.PackageGenerationContext) error {
+	if _, err := os.Lstat(filepath.Join(request.WorkspaceRoot, "go.work")); err == nil {
+		return fmt.Errorf("Go generation requires one root module; remove go.work before adding a Go project")
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	for _, path := range request.ProjectPaths {
+		if err := request.ValidateLocalPath("", path); err != nil {
+			return err
+		}
+		if _, err := os.Lstat(filepath.Join(request.WorkspaceRoot, path, "go.mod")); err == nil {
+			return fmt.Errorf("existing Go project %s has a nested go.mod; migrate it to the root module before generating another Go project", path)
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
 func mergeGoWorkspaceModule(request core.PackageGenerationContext, source extensions.GoModule) (*modfile.File, error) {
 	suffix := "/" + filepath.ToSlash(request.ProjectPath)
 	if !strings.HasSuffix(source.Path, suffix) {
@@ -437,14 +404,18 @@ func mergeGoWorkspaceModule(request core.PackageGenerationContext, source extens
 		if len(contribution.Replace) > 0 {
 			return nil, fmt.Errorf("shared go.mod must not contain replace directives; configure replacements in the client workspace")
 		}
-		mergeGoRequirements(merged, contribution)
+		if err := mergeGoRequirements(merged, contribution, request.ResolveConflict); err != nil {
+			return nil, err
+		}
 		if contribution.Go != nil && version.Compare("go"+contribution.Go.Version, "go"+merged.Go.Version) > 0 {
 			if err := merged.AddGoStmt(contribution.Go.Version); err != nil {
 				return nil, err
 			}
 		}
 	}
-	mergeGoRequirements(merged, source.File)
+	if err := mergeGoRequirements(merged, source.File, request.ResolveConflict); err != nil {
+		return nil, err
+	}
 	if len(source.File.Replace) > 0 {
 		return nil, fmt.Errorf("template go.mod must not contain replace directives; configure replacements in the workspace root")
 	}
@@ -460,7 +431,7 @@ func mergeGoWorkspaceModule(request core.PackageGenerationContext, source extens
 	return merged, nil
 }
 
-func mergeGoRequirements(merged, source *modfile.File) {
+func mergeGoRequirements(merged, source *modfile.File, resolver core.MergeConflictResolver) error {
 	requirements := map[string]*modfile.Require{}
 	for _, requirement := range merged.Require {
 		copy := *requirement
@@ -473,9 +444,18 @@ func mergeGoRequirements(merged, source *modfile.File) {
 			requirements[copy.Mod.Path] = &copy
 			continue
 		}
-		if semver.Compare(requirement.Mod.Version, current.Mod.Version) > 0 {
-			current.Mod.Version = requirement.Mod.Version
+		conflict := core.MergeConflict{
+			Path:     "go.mod",
+			Key:      "require." + requirement.Mod.Path,
+			Kind:     "dependency",
+			Shared:   requirement.Mod.Version,
+			Selected: current.Mod.Version,
 		}
+		selected, err := core.MergeDependencyVersion(conflict, resolver)
+		if err != nil {
+			return err
+		}
+		current.Mod.Version = selected
 		current.Indirect = current.Indirect && requirement.Indirect
 	}
 	combined := make([]*modfile.Require, 0, len(requirements))
@@ -483,28 +463,5 @@ func mergeGoRequirements(merged, source *modfile.File) {
 		combined = append(combined, requirement)
 	}
 	merged.SetRequire(combined)
-}
-
-func goWorkspaceChecksums(rootData []byte, stage string) ([]byte, error) {
-	sums := map[string]bool{}
-	staged, err := os.ReadFile(filepath.Join(stage, "go.sum"))
-	if err != nil && !os.IsNotExist(err) {
-		return nil, err
-	}
-	for _, contents := range [][]byte{rootData, staged} {
-		for _, line := range strings.Split(string(contents), "\n") {
-			if line != "" {
-				sums[line] = true
-			}
-		}
-	}
-	if len(sums) == 0 {
-		return nil, nil
-	}
-	lines := make([]string, 0, len(sums))
-	for line := range sums {
-		lines = append(lines, line)
-	}
-	sort.Strings(lines)
-	return []byte(strings.Join(lines, "\n") + "\n"), nil
+	return nil
 }

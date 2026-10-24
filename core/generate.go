@@ -616,11 +616,11 @@ func validateWorkspaceCandidateContracts(ctx context.Context, candidate, project
 				return err
 			}
 		} else {
-			if err := runGenerationMiseInstall(ctx, candidate, label+" workspace", output); err != nil {
+			if err := runGenerationMiseCommand(ctx, candidate, label+" workspace", output, "install"); err != nil {
 				return err
 			}
 			if _, declared := config.Tasks["install"]; declared {
-				if err := runGenerationMiseTask(ctx, candidate, "install", label+" workspace", output); err != nil {
+				if err := runGenerationMiseCommand(ctx, candidate, label+" workspace", output, "run", "install"); err != nil {
 					return err
 				}
 			}

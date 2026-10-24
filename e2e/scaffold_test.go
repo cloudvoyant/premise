@@ -156,6 +156,20 @@ func testNativeWorkspaceGeneration(t *testing.T) {
 			runCommand(t, workspace, binary, "init")
 
 			runCommand(t, workspace, binary, "generate", registry+":lib-template", "--answer", "name=helper,library=helper")
+			// Arrange stale root and template locks; native installation must replace them.
+			lock := ""
+			switch manager {
+			case "cargo":
+				lock = "Cargo.lock"
+			case "bun":
+				lock = "bun.lock"
+			}
+			if lock != "" {
+				writeFixtureFile(t, filepath.Join(workspace, lock), "stale lock fixture", 0640)
+				writeFixtureFile(t, filepath.Join(registry, "templates/app-template", lock), "stale template lock fixture", 0644)
+			}
+
+			// Act
 			runCommand(t, workspace, binary, "generate", registry+":app-template", "--answer", "name=tool,library=helper")
 			var generatedLockErr error
 			if manager == "cargo" || manager == "bun" {
@@ -170,6 +184,16 @@ func testNativeWorkspaceGeneration(t *testing.T) {
 			t.Run("it resolves the root and uses its existing sibling", func(t *testing.T) {
 				if generatedLockErr != nil {
 					t.Fatalf("generation discarded candidate lockfile: %v", generatedLockErr)
+				}
+				if lock != "" {
+					if strings.Contains(readFile(t, filepath.Join(workspace, lock)), "stale") {
+						t.Fatal("native installation did not replace the stale lockfile")
+					}
+					assertAbsent(t, filepath.Join(workspace, "apps/tool", lock))
+					info, err := os.Stat(filepath.Join(workspace, lock))
+					if err != nil || info.Mode().Perm() != 0640 {
+						t.Fatalf("regenerated lock mode changed: %v %v", info, err)
+					}
 				}
 				output := runCommand(t, workspace, binary, "run", "tool:run")
 				if strings.TrimSpace(output) != "hello" {
@@ -201,7 +225,7 @@ func testNativeWorkspaceGeneration(t *testing.T) {
 					if _, err := os.Stat(filepath.Join(workspace, "bun.lock")); err != nil {
 						t.Fatal(err)
 					}
-					runCommand(t, workspace, "bun", "install", "--ignore-scripts", "--frozen-lockfile")
+					runCommand(t, filepath.Join(workspace, "apps/tool"), "bun", "install", "--ignore-scripts", "--frozen-lockfile")
 					root := readFile(t, filepath.Join(workspace, "package.json"))
 					if strings.Contains(root, "registry-development") || strings.Contains(root, "templates/") {
 						t.Fatalf("registry root leaked: %s", root)
