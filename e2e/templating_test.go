@@ -669,3 +669,27 @@ func testTemplateContractsCollectAllFailures(t *testing.T) {
 		}
 	}
 }
+
+func nativeRegistry(t *testing.T, manager, root string) string {
+	t.Helper()
+	manifest := core.NewManifest("registry-development")
+	manifest.Workspace.PackageManagers = []string{manager}
+	manifest.TemplateRegistry = &core.TemplateRegistry{WorkspaceFiles: []string{}, Templates: []core.Template{}}
+	for _, kind := range []string{"lib", "app"} {
+		name := kind + "-template"
+		manifest.TemplateRegistry.Templates = append(manifest.TemplateRegistry.Templates, core.Template{
+			Name: name, Kind: kind, Path: "templates/" + name, Version: "0.1.0",
+			Questions:     []core.Question{{Prompt: "Name:", Type: "string", Populate: "name"}, {Prompt: "Sibling name:", Type: "string", Populate: "library"}},
+			Substitutions: map[string]string{name: "name", "LIBRARY_NAME": "library"},
+		})
+		copyFixture(t, filepath.Join(repositoryRoot(t), "e2e/testdata/package-generation", manager, kind), filepath.Join(root, "templates", name))
+	}
+	if manager == "bun" {
+		manifest.TemplateRegistry.WorkspaceFiles = []string{"package.json"}
+		writeFixtureFile(t, filepath.Join(root, "package.json"), `{"name":"registry-development","private":true,"workspaces":["templates/*","apps/*","libs/*"]}`, 0644)
+	}
+	if err := core.SaveManifest(filepath.Join(root, core.ManifestFilename), manifest); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}

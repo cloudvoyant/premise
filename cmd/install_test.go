@@ -10,6 +10,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Tests ----------------------------------------------------------------------
+
 func TestInstallRunsDevToolAndRootTaskInstallation(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "premise.yaml"), []byte("workspace: {}\n"), 0o644); err != nil {
@@ -110,38 +112,38 @@ func TestInstallRunsRootTaskInstallationWhenNoProjects(t *testing.T) {
 
 func TestInstallRunsProjectsWithoutRootInstallTask(t *testing.T) {
 	t.Run("when the workspace declares only project install tasks", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "premise.yaml"), []byte("workspace: {}\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "mise.toml"), []byte("monorepo_root = true\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		project := filepath.Join(root, "libs/helper")
+		if err := os.MkdirAll(project, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(project, "mise.toml"), []byte("[tasks.install]\nrun = 'echo project'\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		capture := installCommandMiseShim(t)
+		previous, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chdir(previous) })
+		if err := os.Chdir(root); err != nil {
+			t.Fatal(err)
+		}
+		command := &cobra.Command{}
+		command.SetContext(t.Context())
+		var output bytes.Buffer
+		command.SetOut(&output)
+		command.SetErr(&output)
+
+		err = InstallCommand().RunE(command, nil)
+
 		t.Run("it installs project dependencies without requiring a root task", func(t *testing.T) {
-			root := t.TempDir()
-			if err := os.WriteFile(filepath.Join(root, "premise.yaml"), []byte("workspace: {}\n"), 0644); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(root, "mise.toml"), []byte("monorepo_root = true\n"), 0644); err != nil {
-				t.Fatal(err)
-			}
-			project := filepath.Join(root, "libs/helper")
-			if err := os.MkdirAll(project, 0755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(project, "mise.toml"), []byte("[tasks.install]\nrun = 'echo project'\n"), 0644); err != nil {
-				t.Fatal(err)
-			}
-			capture := installCommandMiseShim(t)
-			previous, err := os.Getwd()
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = os.Chdir(previous) })
-			if err := os.Chdir(root); err != nil {
-				t.Fatal(err)
-			}
-			command := &cobra.Command{}
-			command.SetContext(t.Context())
-			var output bytes.Buffer
-			command.SetOut(&output)
-			command.SetErr(&output)
-
-			err = InstallCommand().RunE(command, nil)
-
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -155,6 +157,8 @@ func TestInstallRunsProjectsWithoutRootInstallTask(t *testing.T) {
 		})
 	})
 }
+
+// Private helpers ------------------------------------------------------------
 
 func installCommandMiseShim(t *testing.T) string {
 	t.Helper()

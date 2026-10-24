@@ -84,7 +84,7 @@ flowchart TD
     Capture --> Apply["Publish files with rollback"]
 ```
 
-`PackageGenerationContext` supplies the client workspace name, project path, staged template, original `ClientFiles`, declared registry `SharedFiles`, existing client `ProjectPaths`, and a conflict resolver. Providers return native contents. Core attaches original values and modes, enforces unique ownership, stages existing source, and publishes validated outputs. There is no provider candidate-copy hook.
+`PackageGenerationContext` supplies the client workspace name, project path, staged template, original `ClientFiles`, declared registry `SharedFiles`, existing client `ProjectPaths`, and a conflict resolver. Providers return native contents. Core attaches original values and modes, enforces unique ownership, stages existing source, and publishes validated outputs. There is no provider candidate-copy hook. Shared context helpers create root entries, match the selected project, and validate local paths. These helpers live with the existing package-manager contract.
 
 | Backend | Owned roots | Preparation |
 | --- | --- | --- |

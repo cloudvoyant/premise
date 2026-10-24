@@ -1,75 +1,83 @@
 package backends
 
 import (
-	"github.com/cloudvoyant/premise/core"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cloudvoyant/premise/core"
 )
 
 // Tests ----------------------------------------------------------------------
 
 func TestGoProvider(t *testing.T) {
 	t.Run("when reading package metadata", func(t *testing.T) {
-		t.Run("it identifies public packages under the root module path", func(t *testing.T) {
+		t.Run("when a library is public", func(t *testing.T) {
 			root := goPackageFixture(t)
 			target := core.Template{Name: "math", Path: "libs/math", Kind: "lib", Package: &core.PackageDeclaration{Public: boolPointer(true)}}
 
 			metadata, found, err := (Go{}).GetPackageMetadata(root, target)
 
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !found || !metadata.Publishable || metadata.Name != "example.com/workspace/v4/libs/math" {
-				t.Fatalf("expected public package at the root module path, got %+v (found=%v)", metadata, found)
-			}
+			t.Run("it identifies public packages under the root module path", func(t *testing.T) {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !found || !metadata.Publishable || metadata.Name != "example.com/workspace/v4/libs/math" {
+					t.Fatalf("expected public package at the root module path, got %+v (found=%v)", metadata, found)
+				}
+			})
 		})
-		t.Run("it defaults to public when the setting is omitted", func(t *testing.T) {
+		t.Run("when library visibility is omitted", func(t *testing.T) {
 			root := goPackageFixture(t)
 			target := core.Template{Name: "math", Path: "libs/math", Kind: "lib"}
 
 			metadata, found, err := (Go{}).GetPackageMetadata(root, target)
 
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !found || !metadata.Public || !metadata.Publishable {
-				t.Fatalf("expected a public package by default, got %+v", metadata)
-			}
+			t.Run("it defaults to public when the setting is omitted", func(t *testing.T) {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !found || !metadata.Public || !metadata.Publishable {
+					t.Fatalf("expected a public package by default, got %+v", metadata)
+				}
+			})
 		})
 
-		t.Run("it skips publication when public is false", func(t *testing.T) {
+		t.Run("when a library is private", func(t *testing.T) {
 			root := goPackageFixture(t)
 			target := core.Template{Name: "math", Path: "libs/math", Kind: "lib", Package: &core.PackageDeclaration{Public: boolPointer(false)}}
 
 			ready, err := (Go{}).WillPublishOk(t.Context(), root, target, "v4.0.0-rc.42", "publish:rc")
 
-			if err != nil {
-				t.Fatal(err)
-			}
-			if ready {
-				t.Fatal("public false did not skip the publication task")
-			}
+			t.Run("it skips publication when public is false", func(t *testing.T) {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if ready {
+					t.Fatal("public false did not skip the publication task")
+				}
+			})
 		})
-
 	})
 
 	t.Run("when validating a shared module release", func(t *testing.T) {
-		t.Run("it accepts a public library that uses a local helper", func(t *testing.T) {
+		t.Run("when a public library uses a committed local helper", func(t *testing.T) {
 			root := goPackageFixture(t)
 			t.Setenv("MISE_TRUSTED_CONFIG_PATHS", root)
 
 			err := (Go{}).PreflightPublication(t.Context(), root, "v4.0.0-rc.42", "publish:rc")
 
-			if err != nil {
-				t.Fatalf("expected release validation to succeed: %v", err)
-			}
+			t.Run("it accepts a public library that uses a local helper", func(t *testing.T) {
+				if err != nil {
+					t.Fatalf("expected release validation to succeed: %v", err)
+				}
+			})
 		})
 
-		t.Run("it rejects dependencies on ignored source files", func(t *testing.T) {
+		t.Run("when a library depends on ignored source files", func(t *testing.T) {
 			root := goPackageFixture(t)
 			t.Setenv("MISE_TRUSTED_CONFIG_PATHS", root)
 			writePackageFixtureFile(t, root, ".gitignore", "libs/math/generated.go\n")
@@ -80,23 +88,27 @@ func TestGoProvider(t *testing.T) {
 
 			err := (Go{}).PreflightPublication(t.Context(), root, "v4.0.0-rc.43", "publish:rc")
 
-			if err == nil || !strings.Contains(err.Error(), "committed Go package") {
-				t.Fatalf("expected committed-source validation to fail, got %v", err)
-			}
+			t.Run("it rejects dependencies on ignored source files", func(t *testing.T) {
+				if err == nil || !strings.Contains(err.Error(), "committed Go package") {
+					t.Fatalf("expected committed-source validation to fail, got %v", err)
+				}
+			})
 		})
-		t.Run("it rejects uncommitted source changes", func(t *testing.T) {
+		t.Run("when source changes are uncommitted", func(t *testing.T) {
 			root := goPackageFixture(t)
 			t.Setenv("MISE_TRUSTED_CONFIG_PATHS", root)
 			writePackageFixtureFile(t, root, "libs/math/math.go", "package math\nconst Changed = 42\n")
 
 			err := (Go{}).PreflightPublication(t.Context(), root, "v4.0.0-rc.42", "publish:rc")
 
-			if err == nil || !strings.Contains(err.Error(), "requires a clean committed checkout") {
-				t.Fatalf("uncommitted source passed publication checks: %v", err)
-			}
+			t.Run("it rejects uncommitted source changes", func(t *testing.T) {
+				if err == nil || !strings.Contains(err.Error(), "requires a clean committed checkout") {
+					t.Fatalf("uncommitted source passed publication checks: %v", err)
+				}
+			})
 		})
 
-		t.Run("it removes temporary validation files", func(t *testing.T) {
+		t.Run("when release validation finishes", func(t *testing.T) {
 			root := goPackageFixture(t)
 			t.Setenv("MISE_TRUSTED_CONFIG_PATHS", root)
 			snapshots := t.TempDir()
@@ -104,22 +116,24 @@ func TestGoProvider(t *testing.T) {
 
 			err := (Go{}).PreflightPublication(t.Context(), root, "v4.0.0-rc.42", "publish:rc")
 
-			if err != nil {
-				t.Fatal(err)
-			}
-			remaining, err := filepath.Glob(filepath.Join(snapshots, "premise-package-snapshot-*"))
-			if err != nil || len(remaining) != 0 {
-				t.Fatalf("validation files remain: %v (%v)", remaining, err)
-			}
+			t.Run("it removes temporary validation files", func(t *testing.T) {
+				if err != nil {
+					t.Fatal(err)
+				}
+				remaining, err := filepath.Glob(filepath.Join(snapshots, "premise-package-snapshot-*"))
+				if err != nil || len(remaining) != 0 {
+					t.Fatalf("validation files remain: %v (%v)", remaining, err)
+				}
+			})
 		})
 	})
 	t.Run("when generating the first Go project", func(t *testing.T) {
+		root, source := t.TempDir(), t.TempDir()
+		writePackageFixtureFile(t, source, "go.mod", "module example.com/repository/libs/math\ngo 1.25.0\n")
+
+		entries, err := (Go{}).PrepareGeneration(generationTestContext(t, root, source, "libs/math", (Go{}).GenerationRootFiles()))
+
 		t.Run("it uses the repository module path in the root manifest", func(t *testing.T) {
-			root, source := t.TempDir(), t.TempDir()
-			writePackageFixtureFile(t, source, "go.mod", "module example.com/repository/libs/math\ngo 1.25.0\n")
-
-			entries, err := (Go{}).PrepareGeneration(generationTestContext(t, root, source, "libs/math", (Go{}).GenerationRootFiles()))
-
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -130,53 +144,29 @@ func TestGoProvider(t *testing.T) {
 	})
 
 	t.Run("when generating a library in an existing workspace", func(t *testing.T) {
+		root, source := goGenerationFixture(t)
+
+		entries, err := (Go{}).PrepareGeneration(generationTestContext(t, root, source, "libs/math", (Go{}).GenerationRootFiles()))
+		if err != nil {
+			t.Fatal(err)
+		}
+
 		t.Run("it combines dependencies in the root manifest", func(t *testing.T) {
-			root, source := goGenerationFixture(t)
-
-			entries, err := (Go{}).PrepareGeneration(generationTestContext(t, root, source, "libs/math", (Go{}).GenerationRootFiles()))
-
-			if err != nil {
-				t.Fatal(err)
-			}
 			if len(entries) != 1 || !strings.Contains(string(entries[0].Output.Data), "example.com/dependency v1.2.0") {
 				t.Fatalf("expected the newer dependency in the root manifest, got %v", entries)
 			}
 		})
-
 		t.Run("it preserves the workspace module path", func(t *testing.T) {
-			root, source := goGenerationFixture(t)
-
-			entries, err := (Go{}).PrepareGeneration(generationTestContext(t, root, source, "libs/math", (Go{}).GenerationRootFiles()))
-
-			if err != nil {
-				t.Fatal(err)
-			}
 			if len(entries) != 1 || !strings.Contains(string(entries[0].Output.Data), "module example.com/shared\n") {
 				t.Fatalf("expected the shared module path, got %v", entries)
 			}
 		})
-
 		t.Run("it removes the staged project manifest", func(t *testing.T) {
-			root, source := goGenerationFixture(t)
-
-			_, err := (Go{}).PrepareGeneration(generationTestContext(t, root, source, "libs/math", (Go{}).GenerationRootFiles()))
-
-			if err != nil {
-				t.Fatal(err)
-			}
 			if _, err := os.Stat(filepath.Join(source, "go.mod")); !os.IsNotExist(err) {
 				t.Fatalf("staged project retains a module manifest: %v", err)
 			}
 		})
-
 		t.Run("it leaves the existing workspace unchanged during planning", func(t *testing.T) {
-			root, source := goGenerationFixture(t)
-
-			_, err := (Go{}).PrepareGeneration(generationTestContext(t, root, source, "libs/math", (Go{}).GenerationRootFiles()))
-
-			if err != nil {
-				t.Fatal(err)
-			}
 			original, err := os.ReadFile(filepath.Join(root, "go.mod"))
 			if err != nil {
 				t.Fatal(err)
@@ -188,36 +178,75 @@ func TestGoProvider(t *testing.T) {
 	})
 
 	t.Run("when building release artifacts", func(t *testing.T) {
-		t.Run("it creates one archive for each application", func(t *testing.T) {
+		t.Run("when the workspace contains applications", func(t *testing.T) {
 			root := goArtifactFixture(t, true)
 
 			config, err := core.GoReleaserConfig(root)
 
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, want := range []string{"dir: apps/cli", "dir: apps/service", "id: go-cli", "id: go-service", "binary: service-custom"} {
-				if !strings.Contains(string(config), want) {
-					t.Errorf("application release omits %q", want)
+			t.Run("it creates one archive for each application", func(t *testing.T) {
+				if err != nil {
+					t.Fatal(err)
 				}
-			}
-			if strings.Contains(string(config), "id: go-math") || strings.Contains(string(config), "binary: shared") {
-				t.Fatal("library or root invents a binary")
-			}
+				for _, want := range []string{"dir: apps/cli", "dir: apps/service", "id: go-cli", "id: go-service", "binary: service-custom"} {
+					if !strings.Contains(string(config), want) {
+						t.Errorf("application release omits %q", want)
+					}
+				}
+				if strings.Contains(string(config), "id: go-math") || strings.Contains(string(config), "binary: shared") {
+					t.Fatal("library or root invents a binary")
+				}
+			})
 		})
 
-		t.Run("it creates a source-only release for libraries", func(t *testing.T) {
+		t.Run("when the workspace contains only libraries", func(t *testing.T) {
 			root := goArtifactFixture(t, false)
 
 			config, err := core.GoReleaserConfig(root)
 
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !strings.Contains(string(config), "skip: true") || strings.Contains(string(config), "binary:") {
-				t.Fatalf("library produces executable artifacts: %s", config)
-			}
+			t.Run("it creates a source-only release for libraries", func(t *testing.T) {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(string(config), "skip: true") || strings.Contains(string(config), "binary:") {
+					t.Fatalf("library produces executable artifacts: %s", config)
+				}
+			})
 		})
+	})
+}
+
+func TestGoGeneration(t *testing.T) {
+	registerBuiltins(t)
+	t.Run("when existing Go configuration defines multiple modules", func(t *testing.T) {
+		for _, path := range []string{"go.work", "libs/existing/go.mod"} {
+			t.Run("when existing configuration contains "+path, func(t *testing.T) {
+				root, stage := t.TempDir(), t.TempDir()
+				original := "module example.com/standalone\ngo 1.25.0\n"
+				if path == "go.work" {
+					original = "go 1.25.0\nuse ./libs/existing\n"
+				}
+				writePackageFixtureFile(t, root, path, original)
+				writePackageFixtureFile(t, stage, "go.mod", "module example.com/workspace/libs/new\ngo 1.25.0\n")
+
+				plan, err := core.BuildGeneratePlan(core.GenerateParameters{PackageManagers: []string{"go"}, ProjectPaths: []string{"libs/existing"}, ClientRepoRoot: root, TemplateRoot: stage, ProjectPath: "libs/new", TemplateKind: "lib"})
+
+				t.Run("it rejects the layout without converting client files", func(t *testing.T) {
+					if plan != nil {
+						discardGenerationPlan(t, plan, root, "libs/new")
+					}
+					if err == nil || !strings.Contains(err.Error(), "root module") {
+						t.Fatalf("expected existing module layout error: %v", err)
+					}
+					data, readErr := os.ReadFile(filepath.Join(root, path))
+					if readErr != nil || string(data) != original {
+						t.Fatal("existing Go layout was changed")
+					}
+					if _, err := os.Stat(filepath.Join(root, "libs/new")); !os.IsNotExist(err) {
+						t.Fatalf("new project exists after layout rejection: %v", err)
+					}
+				})
+			})
+		}
 	})
 }
 

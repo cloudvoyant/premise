@@ -12,11 +12,11 @@ import (
 
 func TestReleaseConfiguration(t *testing.T) {
 	t.Run("when releasing the root Go CLI", func(t *testing.T) {
+		root := releaseConfigurationFixture(t, []string{"go"}, false)
+
+		config, err := core.GoReleaserConfig(root)
+
 		t.Run("it preserves the existing binary and archive names", func(t *testing.T) {
-			root := releaseConfigurationFixture(t, []string{"go"}, false)
-
-			config, err := core.GoReleaserConfig(root)
-
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -28,11 +28,11 @@ func TestReleaseConfiguration(t *testing.T) {
 		})
 	})
 	t.Run("when releasing Cargo applications", func(t *testing.T) {
+		root := releaseConfigurationFixture(t, []string{"cargo"}, false)
+
+		config, err := core.GoReleaserConfig(root)
+
 		t.Run("it includes application builds and omits library builds", func(t *testing.T) {
-			root := releaseConfigurationFixture(t, []string{"cargo"}, false)
-
-			config, err := core.GoReleaserConfig(root)
-
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -50,11 +50,11 @@ func TestReleaseConfiguration(t *testing.T) {
 		})
 	})
 	t.Run("when releasing a mixed Go Cargo and Bun workspace", func(t *testing.T) {
+		root := releaseConfigurationFixture(t, []string{"go", "cargo", "bun"}, false)
+
+		config, err := core.GoReleaserConfig(root)
+
 		t.Run("it combines the selected providers in one release", func(t *testing.T) {
-			root := releaseConfigurationFixture(t, []string{"go", "cargo", "bun"}, false)
-
-			config, err := core.GoReleaserConfig(root)
-
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -66,11 +66,11 @@ func TestReleaseConfiguration(t *testing.T) {
 		})
 	})
 	t.Run("when releasing only libraries", func(t *testing.T) {
+		root := releaseConfigurationFixture(t, []string{"go", "cargo", "bun"}, true)
+
+		config, err := core.GoReleaserConfig(root)
+
 		t.Run("it creates a source release without executable builds", func(t *testing.T) {
-			root := releaseConfigurationFixture(t, []string{"go", "cargo", "bun"}, true)
-
-			config, err := core.GoReleaserConfig(root)
-
 			if err != nil {
 				t.Fatal(err)
 			}

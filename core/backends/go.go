@@ -221,7 +221,7 @@ func (Go) PrepareGeneration(request core.PackageGenerationContext) ([]core.Merge
 		return nil, err
 	}
 	for _, path := range request.ProjectPaths {
-		if err := validateGenerationLocalPath(request.WorkspaceRoot, "", path); err != nil {
+		if err := request.ValidateLocalPath("", path); err != nil {
 			return nil, err
 		}
 		if _, err := os.Lstat(filepath.Join(request.WorkspaceRoot, path, "go.mod")); err == nil {
@@ -238,7 +238,7 @@ func (Go) PrepareGeneration(request core.PackageGenerationContext) ([]core.Merge
 	if err != nil {
 		return nil, err
 	}
-	entries := []core.MergeEntry{generationEntry("go.mod", data)}
+	entries := []core.MergeEntry{request.RootEntry("go.mod", data)}
 	sumData := append(append([]byte(nil), request.ClientFiles["go.sum"].Data...), '\n')
 	sumData = append(sumData, request.SharedFiles["go.sum"].Data...)
 	sums, err := goWorkspaceChecksums(sumData, request.Stage)
@@ -246,7 +246,7 @@ func (Go) PrepareGeneration(request core.PackageGenerationContext) ([]core.Merge
 		return nil, err
 	}
 	if len(sums) > 0 {
-		entries = append(entries, generationEntry("go.sum", sums))
+		entries = append(entries, request.RootEntry("go.sum", sums))
 	}
 	for _, name := range []string{"go.mod", "go.sum"} {
 		if err := os.Remove(filepath.Join(request.Stage, name)); err != nil && !os.IsNotExist(err) {
@@ -450,7 +450,7 @@ func mergeGoWorkspaceModule(request core.PackageGenerationContext, source extens
 	}
 	for _, replacement := range merged.Replace {
 		if replacement.New.Version == "" {
-			if err := validateGenerationLocalPath(request.WorkspaceRoot, "", replacement.New.Path); err != nil {
+			if err := request.ValidateLocalPath("", replacement.New.Path); err != nil {
 				return nil, err
 			}
 		}

@@ -5,7 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
+	"strings"
 	"sync"
+
+	"github.com/gobwas/glob"
 )
 
 // Public API -----------------------------------------------------------------
@@ -100,6 +104,37 @@ func RegisterPackageManagerBackend(backend PackageManagerBackend) error {
 		}
 	}
 	packageManagerRegistry.plugins = append(packageManagerRegistry.plugins, backend)
+	return nil
+}
+
+// RootEntry supplies native contents with the original client mode when present.
+func (request PackageGenerationContext) RootEntry(path string, data []byte) MergeEntry {
+	mode := request.ClientFiles[path].Mode
+	if mode == 0 {
+		mode = 0644
+	}
+	return MergeEntry{Path: path, Output: PathValue{Present: true, Kind: "file", Mode: mode, Data: data}, Strategy: MergeStrategyCopy}
+}
+
+// MatchesProject checks a native member pattern against the selected project.
+func (request PackageGenerationContext) MatchesProject(pattern string) (bool, error) {
+	matcher, err := glob.Compile(strings.TrimPrefix(pattern, "./"), '/')
+	if err != nil {
+		return false, fmt.Errorf("invalid workspace pattern %q: %w", pattern, err)
+	}
+	return matcher.Match(filepath.ToSlash(request.ProjectPath)), nil
+}
+
+// ValidateLocalPath rejects references that could resolve outside the disposable workspace.
+func (request PackageGenerationContext) ValidateLocalPath(base, path string) error {
+	if filepath.IsAbs(path) {
+		return fmt.Errorf("absolute local dependency path %q is unsupported; use a workspace-relative path so candidate validation cannot read the live workspace", path)
+	}
+	absolute := filepath.Join(request.WorkspaceRoot, base, filepath.FromSlash(path))
+	relative, err := filepath.Rel(request.WorkspaceRoot, absolute)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("local dependency path %q escapes workspace; generation supports local sources within the workspace root", path)
+	}
 	return nil
 }
 
