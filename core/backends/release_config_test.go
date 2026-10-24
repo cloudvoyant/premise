@@ -1,7 +1,6 @@
 package backends
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,183 +10,120 @@ import (
 
 // Tests ----------------------------------------------------------------------
 
-func TestBuiltinDetectionAndGoReleaserConfig(t *testing.T) {
-	registerBuiltins(t)
-	goRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(goRoot, "go.mod"), []byte("module example.com/app\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	os.WriteFile(filepath.Join(goRoot, "main.go"), []byte("package main\nfunc main() {}\n"), 0o644)
-	goManifest := core.NewManifest("premise")
-	goManifest.Workspace.PackageManagers = []string{"go"}
-	if err := core.SaveManifest(filepath.Join(goRoot, core.ManifestFilename), goManifest); err != nil {
-		t.Fatal(err)
-	}
-	config, err := core.GoReleaserConfig(goRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"project_name: premise", "binary: premise", "{{ .ProjectName }}-{{ .Tag }}-", "mode: keep-existing", "replace_existing_artifacts: true"} {
-		if !strings.Contains(string(config), want) {
-			t.Errorf("Go config does not contain %q", want)
-		}
-	}
+func TestReleaseConfiguration(t *testing.T) {
+	t.Run("when releasing the root Go CLI", func(t *testing.T) {
+		t.Run("it preserves the existing binary and archive names", func(t *testing.T) {
+			root := releaseConfigurationFixture(t, []string{"go"}, false)
 
-	cargoRoot := t.TempDir()
-	manifest := core.NewManifest("premise-cargo")
-	manifest.Workspace.PackageManagers = []string{"cargo"}
-	manifest.TemplateRegistry = &core.TemplateRegistry{WorkspaceFiles: []string{}, Templates: []core.Template{
-		templateFixture("premise-rust-lib", "lib"),
-		templateFixture("premise-rust-app", "app"),
-		templateFixture("premise-clap-cli", "app"),
-		templateFixture("premise-tauri-app", "app"),
-	}}
-	if err := core.SaveManifest(filepath.Join(cargoRoot, core.ManifestFilename), manifest); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(cargoRoot, "Cargo.toml"), []byte("[workspace]\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"premise-rust-lib", "premise-rust-app", "premise-clap-cli"} {
-		dir := filepath.Join(cargoRoot, "templates", name)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		content := "[package]\nname = \"" + name + "\"\nversion = \"0.1.0\"\n"
-		if name == "premise-clap-cli" {
-			content += "publish = false\n"
-		}
-		if err := os.WriteFile(filepath.Join(dir, "Cargo.toml"), []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	nested := filepath.Join(cargoRoot, "templates", "premise-tauri-app", "src-tauri")
-	if err := os.MkdirAll(nested, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(nested, "Cargo.toml"), []byte("[package]\nname = \"premise-tauri-app\"\nversion = \"0.1.0\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	config, err = core.GoReleaserConfig(cargoRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(config)
-	for _, want := range []string{"id: premise-rust-app", "id: premise-clap-cli", "builder: rust", "x86_64-unknown-linux-gnu", "aarch64-apple-darwin"} {
-		if !strings.Contains(text, want) {
-			t.Errorf("Cargo config does not contain %q", want)
-		}
-	}
-	for _, unwanted := range []string{"id: premise-rust-lib", "id: premise-tauri-app"} {
-		if strings.Contains(text, unwanted) {
-			t.Errorf("Cargo config unexpectedly contains %q", unwanted)
-		}
-	}
-	if count := strings.Count(text, "builder: rust"); count != 2 {
-		t.Fatalf("Cargo config contains %d builds, want 2", count)
-	}
+			config, err := core.GoReleaserConfig(root)
 
-	// One workspace can explicitly enable Go, Cargo, and Bun. Build the Go
-	// and Cargo artifacts together; Bun has no downloadable artifacts.
-	if err := os.WriteFile(filepath.Join(cargoRoot, "go.mod"), []byte("module example.com/mixed\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(cargoRoot, "package.json"), []byte(`{"name":"mixed"}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(cargoRoot, "bunfig.toml"), nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	os.WriteFile(filepath.Join(cargoRoot, "main.go"), []byte("package main\nfunc main() {}\n"), 0o644)
-	manifest.Workspace.PackageManagers = []string{"go", "cargo", "bun"}
-	if err := core.SaveManifest(filepath.Join(cargoRoot, core.ManifestFilename), manifest); err != nil {
-		t.Fatal(err)
-	}
-	config, err = core.GoReleaserConfig(cargoRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	mixed := string(config)
-	for _, want := range []string{"main: .", "builder: rust", "id: premise-rust-app", "{{ .ProjectName }}-{{ .Tag }}-"} {
-		if !strings.Contains(mixed, want) {
-			t.Errorf("mixed config does not contain %q: %s", want, mixed)
-		}
-	}
-	if count := strings.Count(mixed, "builder: rust"); count != 2 {
-		t.Fatalf("mixed config contains %d Rust builds, want 2", count)
-	}
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{"project_name: workspace", "binary: workspace", "{{ .ProjectName }}-{{ .Tag }}-", "mode: keep-existing", "replace_existing_artifacts: true"} {
+				if !strings.Contains(string(config), want) {
+					t.Errorf("release configuration omits %q", want)
+				}
+			}
+		})
+	})
+	t.Run("when releasing Cargo applications", func(t *testing.T) {
+		t.Run("it includes application builds and omits library builds", func(t *testing.T) {
+			root := releaseConfigurationFixture(t, []string{"cargo"}, false)
 
-	root := t.TempDir()
-	noDirectApp := core.NewManifest("premise-cargo")
-	noDirectApp.Workspace.PackageManagers = []string{"cargo"}
-	noDirectApp.TemplateRegistry = &core.TemplateRegistry{WorkspaceFiles: []string{}, Templates: []core.Template{templateFixture("nested-app", "app")}}
-	if err := core.SaveManifest(filepath.Join(root, core.ManifestFilename), noDirectApp); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "Cargo.toml"), []byte("[workspace]\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, "templates", "nested-app"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	config, err = core.GoReleaserConfig(root)
-	if err != nil || !strings.Contains(string(config), "skip: true") || !strings.Contains(string(config), "disable: true") {
-		t.Fatalf("GoReleaserConfig(no direct app) = %q, %v; want source-only release", config, err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/mixed\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	noDirectApp.Workspace.PackageManagers = []string{"go", "cargo"}
-	if err := core.SaveManifest(filepath.Join(root, core.ManifestFilename), noDirectApp); err != nil {
-		t.Fatal(err)
-	}
-	config, err = core.GoReleaserConfig(root)
-	if err != nil || !strings.Contains(string(config), "skip: true") {
-		t.Fatalf("GoReleaserConfig(Go and Cargo library only) = %q, %v", config, err)
-	}
+			config, err := core.GoReleaserConfig(root)
+
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{"id: rust-app", "id: rust-cli", "builder: rust", "x86_64-unknown-linux-gnu", "aarch64-apple-darwin"} {
+				if !strings.Contains(string(config), want) {
+					t.Errorf("release configuration omits %q", want)
+				}
+			}
+			if strings.Contains(string(config), "id: rust-lib") || strings.Contains(string(config), "id: tauri-app") {
+				t.Fatal("library produces an executable")
+			}
+			if count := strings.Count(string(config), "builder: rust"); count != 2 {
+				t.Fatalf("expected two Cargo application builds, got %d", count)
+			}
+		})
+	})
+	t.Run("when releasing a mixed Go Cargo and Bun workspace", func(t *testing.T) {
+		t.Run("it combines the selected providers in one release", func(t *testing.T) {
+			root := releaseConfigurationFixture(t, []string{"go", "cargo", "bun"}, false)
+
+			config, err := core.GoReleaserConfig(root)
+
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{"main: .", "builder: rust", "id: rust-app", "{{ .ProjectName }}-{{ .Tag }}-"} {
+				if !strings.Contains(string(config), want) {
+					t.Errorf("combined release omits %q", want)
+				}
+			}
+		})
+	})
+	t.Run("when releasing only libraries", func(t *testing.T) {
+		t.Run("it creates a source release without executable builds", func(t *testing.T) {
+			root := releaseConfigurationFixture(t, []string{"go", "cargo", "bun"}, true)
+
+			config, err := core.GoReleaserConfig(root)
+
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(config), "skip: true") || !strings.Contains(string(config), "disable: true") || strings.Contains(string(config), "binary:") {
+				t.Fatalf("expected a source-only release, got %s", config)
+			}
+		})
+	})
 }
 
-func TestGoWorkspaceArtifactsAndLibraryOnly(t *testing.T) {
+// Private helpers ------------------------------------------------------------
+
+func releaseConfigurationFixture(t *testing.T, managers []string, librariesOnly bool) string {
+	t.Helper()
+	registerBuiltins(t)
 	root := t.TempDir()
 	manifest := core.NewManifest("workspace")
-	manifest.Workspace.Kind = core.ProjectKindMonorepo
-	manifest.Workspace.PackageManagers = []string{"go"}
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/repo\ngo 1.25.0\n"), 0644); err != nil {
+	manifest.Workspace.Kind = core.ProjectKindTemplateRegistry
+	manifest.TemplateRegistry = &core.TemplateRegistry{WorkspaceFiles: []string{}, Templates: []core.Template{}}
+	manifest.Workspace.PackageManagers = managers
+	for _, manager := range managers {
+		switch manager {
+		case "go":
+			writePackageFixtureFile(t, root, "go.mod", "module example.com/repo\ngo 1.25.0\n")
+			if !librariesOnly {
+				writePackageFixtureFile(t, root, "main.go", "package main\nfunc main() {}\n")
+			}
+		case "cargo":
+			writePackageFixtureFile(t, root, "Cargo.toml", "[workspace]\n")
+			names := []string{"rust-lib"}
+			if !librariesOnly {
+				names = append(names, "rust-app", "rust-cli", "tauri-app")
+			}
+			for _, name := range names {
+				kind := "app"
+				if name == "rust-lib" {
+					kind = "lib"
+				}
+				relative := "templates/" + name
+				manifest.TemplateRegistry.Templates = append(manifest.TemplateRegistry.Templates, core.Template{Name: name, Kind: kind, Path: relative, Questions: []core.Question{{Prompt: "Name:", Type: "string", Populate: "name"}}})
+				if name == "tauri-app" {
+					writePackageFixtureFile(t, root, relative+"/src-tauri/Cargo.toml", "[package]\nname = \"tauri-app\"\nversion = \"0.1.0\"\n")
+					continue
+				}
+				writePackageFixtureFile(t, root, relative+"/Cargo.toml", "[package]\nname = \""+name+"\"\nversion = \"0.1.0\"\n")
+			}
+		case "bun":
+			writePackageFixtureFile(t, root, "package.json", `{"name":"workspace","private":true}`)
+			writePackageFixtureFile(t, root, "bunfig.toml", "")
+		}
+	}
+	if err := core.SaveManifest(filepath.Join(root, core.ManifestFilename), manifest); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"cli", "service", "math"} {
-		kind, source := "apps", "package main\nfunc main() {}\n"
-		if name == "math" {
-			kind = "libs"
-			source = "package math\nconst Value = 42\n"
-		}
-		relative := kind + "/" + name
-		manifest.Workspace.Projects = append(manifest.Workspace.Projects, core.Project{Name: name, Path: relative, Template: "go:" + name})
-		directory := filepath.Join(root, relative)
-		if err := os.MkdirAll(directory, 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(directory, "main.go"), []byte(source), 0644); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	fragment, err := (Go{}).CreateGoReleaserConfig(root, manifest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"dir: apps/cli", "dir: apps/service", "id: go-cli", "id: go-service"} {
-		if !strings.Contains(fragment, want) {
-			t.Fatalf("missing %s in %s", want, fragment)
-		}
-	}
-	if strings.Contains(fragment, "math") || strings.Contains(fragment, "binary: workspace") {
-		t.Fatalf("library or empty root invented a binary: %s", fragment)
-	}
-
-	manifest.Workspace.Projects = manifest.Workspace.Projects[2:]
-	fragment, err = (Go{}).CreateGoReleaserConfig(root, manifest)
-	if err != nil || fragment != "" {
-		t.Fatalf("library-only artifacts: %s %v", fragment, err)
-	}
+	return root
 }

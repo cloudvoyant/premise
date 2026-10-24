@@ -73,6 +73,14 @@ type PlatformDeclaration struct {
 	ReleasePlatforms []string `yaml:"release_platforms,omitempty"`
 }
 
+// PackageDeclaration holds project settings absent from a native package manifest.
+// All projects still use the repository release version.
+type PackageDeclaration struct {
+	Publication string `yaml:"publication,omitempty"`
+	Main        string `yaml:"main,omitempty"`
+	Binary      string `yaml:"binary,omitempty"`
+}
+
 type Project struct {
 	Name     string              `yaml:"name"`
 	Template string              `yaml:"template"`
@@ -80,6 +88,7 @@ type Project struct {
 	Path     string              `yaml:"path"`
 	CI       PlatformDeclaration `yaml:"ci,omitempty"`
 	Answers  map[string]string   `yaml:"answers,omitempty"`
+	Package  *PackageDeclaration `yaml:"package,omitempty"`
 }
 
 type Template struct {
@@ -90,6 +99,7 @@ type Template struct {
 	CI            PlatformDeclaration `yaml:"ci,omitempty"`
 	Questions     []Question          `yaml:"questions"`
 	Substitutions map[string]string   `yaml:"substitutions,omitempty"`
+	Package       *PackageDeclaration `yaml:"package,omitempty"`
 }
 
 type Question struct {
@@ -402,6 +412,9 @@ func (manifest Config) Validate() error {
 		if err := ValidateTemplateName(template.Name); err != nil {
 			return fmt.Errorf("template_registry.templates[%d].name: %w", index, err)
 		}
+		if err := validatePackageDeclaration(template.Package, template.Substitutions); err != nil {
+			return fmt.Errorf("template %s package: %w", template.Name, err)
+		}
 		if _, exists := templateNames[template.Name]; exists {
 			return fmt.Errorf("duplicate template name %q", template.Name)
 		}
@@ -470,6 +483,9 @@ func (manifest Config) Validate() error {
 		if project.Path == "" || filepath.IsAbs(project.Path) || escapesRoot(project.Path) {
 			return fmt.Errorf("workspace.projects[%d].path must be a relative path inside the workspace", index)
 		}
+		if err := validatePackageDeclaration(project.Package, nil); err != nil {
+			return fmt.Errorf("project %s package: %w", project.Name, err)
+		}
 		if _, exists := projectNames[project.Name]; exists {
 			return fmt.Errorf("duplicate project name %q", project.Name)
 		}
@@ -528,7 +544,7 @@ func (manifest Config) PublicationTargets() []Template {
 			} else if strings.HasPrefix(filepath.ToSlash(project.Path), "libs/") {
 				kind = "lib"
 			}
-			targets = append(targets, Template{Name: project.Name, Kind: kind, Path: project.Path, Version: project.Version})
+			targets = append(targets, Template{Name: project.Name, Kind: kind, Path: project.Path, Version: project.Version, Package: project.Package})
 		}
 	}
 	sort.SliceStable(targets, func(i, j int) bool {
@@ -620,6 +636,26 @@ func ResolveSubstitutions(template Template, answers map[string]string) (map[str
 }
 
 // Private helpers ------------------------------------------------------------
+
+func validatePackageDeclaration(declaration *PackageDeclaration, substitutions map[string]string) error {
+	if declaration == nil {
+		return nil
+	}
+	if declaration.Publication != "" && declaration.Publication != "public" && declaration.Publication != "private-local" {
+		if _, placeholder := substitutions[declaration.Publication]; !placeholder {
+			return fmt.Errorf("publication must be public or private-local")
+		}
+	}
+	if declaration.Main != "" && !filepath.IsLocal(declaration.Main) {
+		return fmt.Errorf("main must be inside its project")
+	}
+	if declaration.Binary != "" {
+		if err := ValidateProjectName(declaration.Binary); err != nil {
+			return fmt.Errorf("binary: %w", err)
+		}
+	}
+	return nil
+}
 
 func preflightWorkspace(root string, assets []WorkflowAsset) error {
 	for _, path := range []string{

@@ -124,6 +124,10 @@ func Generate(ctx context.Context, cwd, selector string, options GenerateOptions
 	if templateManifest.TemplateRegistry == nil {
 		return fmt.Errorf("template source %q does not configure template_registry", sourceRoot)
 	}
+	packageDeclaration, err := resolveGeneratedPackage(template.Package, replacements)
+	if err != nil {
+		return err
+	}
 	fmt.Fprintln(output, "Staging generated candidate...")
 	started = time.Now()
 	plan, err := BuildGeneratePlan(GenerateParameters{
@@ -157,6 +161,7 @@ func Generate(ctx context.Context, cwd, selector string, options GenerateOptions
 		CI:       template.CI,
 		Path:     filepath.ToSlash(relativeDestination),
 		Answers:  answers,
+		Package:  packageDeclaration,
 	}
 	if err := workspaceManifest.MergePackageManagers(templateManifest.Workspace.PackageManagers...); err != nil {
 		return errors.Join(err, removeGeneratedDestination(destination), plan.rollbackRoot())
@@ -290,6 +295,22 @@ type generationSources struct {
 type generationStages struct {
 	stage         string
 	selectedStage string
+}
+
+func resolveGeneratedPackage(declaration *PackageDeclaration, replacements map[string]string) (*PackageDeclaration, error) {
+	if declaration == nil {
+		return nil, nil
+	}
+	resolved := *declaration
+	if replacer := literalReplacer(replacements); replacer != nil {
+		resolved.Publication = replacer.Replace(resolved.Publication)
+		resolved.Main = replacer.Replace(resolved.Main)
+		resolved.Binary = replacer.Replace(resolved.Binary)
+	}
+	if err := validatePackageDeclaration(&resolved, nil); err != nil {
+		return nil, fmt.Errorf("generated package: %w", err)
+	}
+	return &resolved, nil
 }
 
 func (plan *GeneratePlan) packageGenerationContext() PackageGenerationContext {

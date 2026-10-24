@@ -1,22 +1,22 @@
 package backends
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"go/parser"
-	"go/token"
 	"go/version"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/cloudvoyant/premise/core"
 	"github.com/cloudvoyant/premise/core/extensions"
-	"github.com/pelletier/go-toml/v2"
 	"go.yaml.in/yaml/v3"
+	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/module"
+	"golang.org/x/mod/semver"
 )
 
 // Public API -----------------------------------------------------------------
@@ -29,7 +29,7 @@ func (Go) SupportsPackages() bool            { return true }
 func (Go) PublishesRepositoryPackages() bool { return true }
 
 func (Go) GetPackageMetadata(root string, target core.Template) (core.PackageMetadata, bool, error) {
-	workspace, found, err := readGoModule(root)
+	workspace, found, err := extensions.ReadGoModule(root)
 	if err != nil || !found {
 		return core.PackageMetadata{}, false, err
 	}
@@ -42,13 +42,18 @@ func (Go) GetPackageMetadata(root string, target core.Template) (core.PackageMet
 	} else if !os.IsNotExist(err) {
 		return core.PackageMetadata{}, false, err
 	}
-	policy, handled, err := readGoProjectPolicy(directory)
-	if err != nil || !handled {
+	files, err := filepath.Glob(filepath.Join(directory, "*.go"))
+	if err != nil || len(files) == 0 {
 		return core.PackageMetadata{}, false, err
 	}
+	public := target.Package != nil && target.Package.Publication == "public"
 	return core.PackageMetadata{
-		Name: workspace.Path + "/" + filepath.ToSlash(target.Path), Path: directory,
-		PackageManager: "go", Ecosystem: "go", Public: policy.Publication == "public", Publishable: policy.Publication == "public",
+		Name:           workspace.Path + "/" + filepath.ToSlash(target.Path),
+		Path:           directory,
+		PackageManager: "go",
+		Ecosystem:      "go",
+		Public:         public,
+		Publishable:    public,
 	}, true, nil
 }
 
@@ -83,7 +88,7 @@ func (provider Go) PreflightPublication(ctx context.Context, root, version, task
 	if err != nil {
 		return err
 	}
-	workspace, found, err := readGoModule(root)
+	workspace, found, err := extensions.ReadGoModule(root)
 	if err != nil {
 		return err
 	}
@@ -153,7 +158,7 @@ func (Go) ReleaseWorkspace(_ context.Context, root string, _, _ io.Writer) (stri
 }
 
 func (Go) ReleaseTools(root string, manifest core.Config) ([]string, error) {
-	workspace, found, err := readGoModule(root)
+	workspace, found, err := extensions.ReadGoModule(root)
 	if err != nil || !found {
 		return nil, err
 	}
@@ -202,12 +207,12 @@ func (Go) PrepareGenerationCandidate(request core.PackageGenerationContext, cand
 }
 
 func (Go) CreateGoReleaserConfig(root string, manifest core.Config) (string, error) {
-	_, found, err := readGoModule(root)
+	_, found, err := extensions.ReadGoModule(root)
 	if err != nil || !found {
 		return "", err
 	}
 	var builds, archives []map[string]any
-	if rootMain, err := goDirectoryHasMain(root); err != nil {
+	if rootMain, err := extensions.GoDirectoryHasMain(root); err != nil {
 		return "", err
 	} else if rootMain {
 		var legacy struct {
@@ -224,24 +229,19 @@ func (Go) CreateGoReleaserConfig(root string, manifest core.Config) (string, err
 	}
 	for _, target := range manifest.PublicationTargets() {
 		directory := filepath.Join(root, target.Path)
-		policy, handled, err := readGoProjectPolicy(directory)
-		if err != nil {
-			return "", err
-		}
-		if !handled {
-			continue
+		policy := core.PackageDeclaration{}
+		if target.Package != nil {
+			policy = *target.Package
 		}
 		main := policy.Main
 		if main == "" {
-			hasMain, err := goDirectoryHasMain(directory)
-			if err != nil {
-				return "", err
-			}
-			if hasMain {
-				main = "."
-			}
+			main = "."
 		}
-		if main == "" {
+		hasMain, err := extensions.GoDirectoryHasMain(filepath.Join(directory, main))
+		if err != nil {
+			return "", err
+		}
+		if !hasMain {
 			continue
 		}
 		name := "go-" + target.Name
@@ -256,59 +256,6 @@ func (Go) CreateGoReleaserConfig(root string, manifest core.Config) (string, err
 }
 
 // Private helpers ------------------------------------------------------------
-
-type goProjectPolicy struct {
-	Publication string `toml:"publication"`
-	Main        string `toml:"main"`
-	Binary      string `toml:"binary"`
-}
-
-func readGoProjectPolicy(directory string) (goProjectPolicy, bool, error) {
-	policy := goProjectPolicy{Publication: "private-local"}
-	data, err := os.ReadFile(filepath.Join(directory, ".premise-go.toml"))
-	if os.IsNotExist(err) {
-		files, err := filepath.Glob(filepath.Join(directory, "*.go"))
-		return policy, len(files) > 0, err
-	}
-	if err != nil {
-		return policy, false, err
-	}
-	if err := toml.NewDecoder(bytes.NewReader(data)).DisallowUnknownFields().Decode(&policy); err != nil {
-		return policy, false, err
-	}
-	if policy.Publication != "public" && policy.Publication != "private-local" {
-		return policy, false, fmt.Errorf("invalid Go API policy %q", policy.Publication)
-	}
-	if policy.Main != "" && policy.Main != "." && !filepath.IsLocal(policy.Main) {
-		return policy, false, fmt.Errorf("Go main must be inside its project")
-	}
-	if policy.Binary != "" {
-		if err := core.ValidateProjectName(policy.Binary); err != nil {
-			return policy, false, err
-		}
-	}
-	return policy, true, nil
-}
-
-func goDirectoryHasMain(directory string) (bool, error) {
-	files, err := filepath.Glob(filepath.Join(directory, "*.go"))
-	if err != nil {
-		return false, err
-	}
-	for _, file := range files {
-		if strings.HasSuffix(file, "_test.go") {
-			continue
-		}
-		parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, parser.PackageClauseOnly)
-		if err != nil {
-			return false, err
-		}
-		if parsed.Name.Name == "main" {
-			return true, nil
-		}
-	}
-	return false, nil
-}
 
 func goPublicationTargets(ctx context.Context, root, version, task string) ([]core.PackageMetadata, error) {
 	manifest, err := core.LoadManifest(filepath.Join(root, core.ManifestFilename))
@@ -389,4 +336,171 @@ archives:
       {{- if eq .Arch "amd64" }}x86_64{{- else }}aarch64{{- end }}-
       {{- if eq .Os "darwin" }}macos{{- else }}{{ .Os }}{{- end }}
 `, project, project)
+}
+
+// prepareGoWorkspace promotes a template's dependencies into the shared root
+// manifest. Generated projects contain packages, not nested Go modules.
+func prepareGoWorkspace(request core.PackageGenerationContext) ([]core.MergeEntry, error) {
+	source, found, err := extensions.ReadGoModule(request.Stage)
+	if err != nil || !found {
+		return nil, err
+	}
+	suffix := "/" + filepath.ToSlash(request.ProjectPath)
+	if !strings.HasSuffix(source.Path, suffix) {
+		return nil, fmt.Errorf("template module %s must end with its project path %s", source.Path, suffix)
+	}
+	workspacePath := strings.TrimSuffix(source.Path, suffix)
+	if err := module.CheckPath(workspacePath); err != nil {
+		return nil, err
+	}
+	existing, exists, err := extensions.ReadGoModule(request.WorkspaceRoot)
+	if err != nil {
+		return nil, err
+	}
+	var merged *modfile.File
+	if exists {
+		if existing.Path != workspacePath {
+			return nil, fmt.Errorf("workspace Go module is %s; use that module path instead of %s", existing.Path, workspacePath)
+		}
+		merged = existing.File
+	} else {
+		merged = &modfile.File{}
+		if err := merged.AddModuleStmt(workspacePath); err != nil {
+			return nil, err
+		}
+	}
+	goVersion := "1.25.0"
+	if source.File.Go != nil {
+		goVersion = source.File.Go.Version
+	}
+	if merged.Go == nil || version.Compare("go"+goVersion, "go"+merged.Go.Version) > 0 {
+		if err := merged.AddGoStmt(goVersion); err != nil {
+			return nil, err
+		}
+	}
+	requirements := map[string]*modfile.Require{}
+	for _, requirement := range merged.Require {
+		copy := *requirement
+		requirements[copy.Mod.Path] = &copy
+	}
+	for _, requirement := range source.File.Require {
+		current, exists := requirements[requirement.Mod.Path]
+		if !exists {
+			copy := *requirement
+			requirements[copy.Mod.Path] = &copy
+			continue
+		}
+		if semver.Compare(requirement.Mod.Version, current.Mod.Version) > 0 {
+			current.Mod.Version = requirement.Mod.Version
+		}
+		current.Indirect = current.Indirect && requirement.Indirect
+	}
+	combined := make([]*modfile.Require, 0, len(requirements))
+	for _, requirement := range requirements {
+		combined = append(combined, requirement)
+	}
+	merged.SetRequire(combined)
+	if len(source.File.Replace) > 0 {
+		return nil, fmt.Errorf("template go.mod must not contain replace directives; configure replacements in the workspace root")
+	}
+	merged.SortBlocks()
+	merged.Cleanup()
+	data, err := merged.Format()
+	if err != nil {
+		return nil, err
+	}
+	entry, err := goWorkspaceEntry(request.WorkspaceRoot, "go.mod", data)
+	if err != nil {
+		return nil, err
+	}
+	entries := []core.MergeEntry{entry}
+	sums := map[string]bool{}
+	for _, directory := range []string{request.WorkspaceRoot, request.Stage} {
+		contents, err := os.ReadFile(filepath.Join(directory, "go.sum"))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		for _, line := range strings.Split(string(contents), "\n") {
+			if line != "" {
+				sums[line] = true
+			}
+		}
+	}
+	if len(sums) > 0 {
+		lines := make([]string, 0, len(sums))
+		for line := range sums {
+			lines = append(lines, line)
+		}
+		sort.Strings(lines)
+		entry, err := goWorkspaceEntry(request.WorkspaceRoot, "go.sum", []byte(strings.Join(lines, "\n")+"\n"))
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, entry)
+	}
+	for _, name := range []string{"go.mod", "go.sum"} {
+		if err := os.Remove(filepath.Join(request.Stage, name)); err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+	return entries, nil
+}
+
+// copyGoWorkspaceSources supplies existing packages and assets to isolated
+// generation checks without copying dependency caches or build output.
+func copyGoWorkspaceSources(source, destination string) error {
+	return filepath.WalkDir(source, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		if relative == "." {
+			return nil
+		}
+		if entry.IsDir() {
+			if relative == "bin" || relative == "dist" || strings.HasPrefix(entry.Name(), ".") || entry.Name() == "node_modules" {
+				return filepath.SkipDir
+			}
+			return os.MkdirAll(filepath.Join(destination, relative), 0755)
+		}
+		// Root files are already staged by generation.
+		if !strings.ContainsRune(relative, filepath.Separator) {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(destination, relative), contents, info.Mode().Perm())
+	})
+}
+
+func goWorkspaceEntry(root, name string, data []byte) (core.MergeEntry, error) {
+	selected := core.PathValue{Kind: "file", Mode: 0644}
+	previous, err := os.ReadFile(filepath.Join(root, name))
+	if err == nil {
+		selected.Present = true
+		selected.Data = previous
+		info, err := os.Stat(filepath.Join(root, name))
+		if err != nil {
+			return core.MergeEntry{}, err
+		}
+		selected.Mode = info.Mode().Perm()
+	} else if !os.IsNotExist(err) {
+		return core.MergeEntry{}, err
+	}
+	return core.MergeEntry{Path: name, Selected: selected, Output: core.PathValue{Present: true, Kind: "file", Mode: selected.Mode, Data: data}, Strategy: core.MergeStrategyCopy}, nil
 }

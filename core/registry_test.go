@@ -25,12 +25,19 @@ func TestRegistryEntrySelector(t *testing.T) {
 
 func TestOfficialSourcesIncludesBunRegistry(t *testing.T) {
 	const bunSource = "cloudvoyant/premise-bun"
-	if !slices.Contains(OfficialSources, "cloudvoyant/premise-go") {
-		t.Fatal("Go registry missing")
-	}
 	if !slices.Contains(OfficialSources, bunSource) {
 		t.Fatalf("OfficialSources does not include %q", bunSource)
 	}
+}
+
+func TestGoRegistry(t *testing.T) {
+	t.Run("when listing official sources", func(t *testing.T) {
+		t.Run("it includes the Go template registry", func(t *testing.T) {
+			if !slices.Contains(OfficialSources, "cloudvoyant/premise-go") {
+				t.Fatal("official sources omit the Go registry")
+			}
+		})
+	})
 }
 
 func TestDefaultRegistryMergesOfficialSources(t *testing.T) {

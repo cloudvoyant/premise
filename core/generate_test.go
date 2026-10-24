@@ -12,6 +12,130 @@ import (
 	"testing"
 )
 
+// Fixtures -------------------------------------------------------------------
+
+type generationTestProvider struct {
+	testPackageManager
+	prepared *bool
+}
+
+// Tests ----------------------------------------------------------------------
+
+func TestGenerateProviderIntegration(t *testing.T) {
+	t.Run("when a selected provider prepares workspace files", func(t *testing.T) {
+		t.Run("it stages the files without changing the workspace", func(t *testing.T) {
+			prepared := false
+			provider := generationTestProvider{testPackageManager: testPackageManager{id: "future"}, prepared: &prepared}
+			useTestPackageManagers(t, provider)
+			root, source := t.TempDir(), t.TempDir()
+			if err := os.WriteFile(filepath.Join(source, "README.md"), []byte("project\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			plan, err := BuildGeneratePlan(GenerateParameters{PackageManagers: []string{"future"}, ClientRepoRoot: root, TemplateRoot: source, ProjectPath: "libs/example", TemplateKind: "lib"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = plan.close() })
+			if err := prepareWorkspaceCandidate(plan, t.TempDir(), true); err != nil {
+				t.Fatal(err)
+			}
+
+			if !prepared || len(plan.Entries) != 1 || plan.Entries[0].Path != "future.lock" {
+				t.Fatalf("selected provider was bypassed: %v", plan.Entries)
+			}
+			if _, err := os.Stat(filepath.Join(root, "future.lock")); !os.IsNotExist(err) {
+				t.Fatal("planning modified the workspace")
+			}
+
+			stages := []string{plan.stage, plan.selectedStage}
+			if err := plan.close(); err != nil {
+				t.Fatal(err)
+			}
+			for _, stage := range stages {
+				if _, err := os.Stat(stage); !os.IsNotExist(err) {
+					t.Fatalf("generation stage remains: %s (%v)", stage, err)
+				}
+			}
+		})
+	})
+	t.Run("when generating a project without a Go provider", func(t *testing.T) {
+		t.Run("it leaves an unrelated Go workspace alone", func(t *testing.T) {
+			root, source := t.TempDir(), t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, "go.work"), []byte("go 1.25.0\nuse /outside/workspace\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(source, "package.json"), []byte(`{"name":"web"}`), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			plan, err := BuildGeneratePlan(GenerateParameters{ClientRepoRoot: root, TemplateRoot: source, ProjectPath: "apps/web", TemplateKind: "app"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = plan.close() })
+			err = prepareWorkspaceCandidate(plan, t.TempDir(), true)
+
+			if err != nil {
+				t.Fatalf("unrelated generation applied Go workspace rules: %v", err)
+			}
+
+			stages := []string{plan.stage, plan.selectedStage}
+			if err := plan.close(); err != nil {
+				t.Fatal(err)
+			}
+			for _, stage := range stages {
+				if _, err := os.Stat(stage); !os.IsNotExist(err) {
+					t.Fatalf("generation stage remains: %s (%v)", stage, err)
+				}
+			}
+		})
+	})
+}
+
+func TestGeneratePackageSettings(t *testing.T) {
+	t.Run("when a template declares package settings", func(t *testing.T) {
+		for _, publication := range []string{"public", "private-local"} {
+			t.Run("given a "+publication+" library", func(t *testing.T) {
+				t.Run("it records substituted settings in premise.yaml", func(t *testing.T) {
+					installMiseTestShim(t, false)
+					template := templateFixture("premise-configurable-lib", "lib")
+					template.Questions = append(template.Questions, Question{Prompt: "API:", Type: "select", Populate: "publication", Choices: []string{"public", "private-local"}})
+					template.Substitutions = map[string]string{"package-visibility": "publication", "premise-configurable-lib": "name"}
+					template.Package = &PackageDeclaration{Publication: "package-visibility", Main: "cmd/tool", Binary: "tool-premise-configurable-lib"}
+					registry := writeRegistryFixture(t, template)
+					restore := overrideResolveRepository(map[string]string{"cloudvoyant/package-fixture": registry})
+					t.Cleanup(restore)
+					root := filepath.Join(t.TempDir(), "workspace")
+					if _, err := InitializeWorkspace(root, "[tasks.build]\nrun = 'echo ok'\n"); err != nil {
+						t.Fatal(err)
+					}
+
+					err := Generate(t.Context(), root, "cloudvoyant/package-fixture:premise-configurable-lib", fixedGenerateOptions(fixedQuestionnaire{"name": "math", "publication": publication}), io.Discard)
+
+					if err != nil {
+						t.Fatal(err)
+					}
+					manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
+					if err != nil {
+						t.Fatal(err)
+					}
+					declaration := manifest.Workspace.Projects[0].Package
+					if declaration == nil || declaration.Publication != publication || declaration.Binary != "tool-math" || declaration.Main != "cmd/tool" {
+						t.Fatalf("package settings were not resolved: %+v", declaration)
+					}
+					if manifest.PublicationTargets()[0].Package != declaration {
+						t.Fatal("publication targets lost the project settings")
+					}
+					if template.Package.Publication != "package-visibility" {
+						t.Fatal("generation changed the source template declaration")
+					}
+				})
+			})
+		}
+	})
+}
+
 // -----------------------------------------------------------------------------
 // Generate API
 // -----------------------------------------------------------------------------
@@ -890,4 +1014,12 @@ func installMiseTestShim(t *testing.T, fail bool) string {
 	t.Setenv("MISE_LOG", log)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return log
+}
+
+func (provider generationTestProvider) PrepareGeneration(request PackageGenerationContext) ([]MergeEntry, error) {
+	return []MergeEntry{{Path: "future.lock", Selected: PathValue{Kind: "file", Mode: 0644}, Output: PathValue{Present: true, Kind: "file", Mode: 0644, Data: []byte("dependencies\n")}}}, nil
+}
+func (provider generationTestProvider) PrepareGenerationCandidate(_ PackageGenerationContext, _ string) error {
+	*provider.prepared = true
+	return nil
 }

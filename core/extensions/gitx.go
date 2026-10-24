@@ -30,8 +30,8 @@ func CurrentFeatureBranch(ctx context.Context, root string) (string, error) {
 	return branch, nil
 }
 
-// ExportRevision writes committed files into an existing temporary directory.
-// Ignored and untracked checkout files cannot enter this snapshot.
+// ExportRevision extracts a Git archive into the destination directory.
+// Publication validation uses this committed source instead of checkout files.
 func ExportRevision(ctx context.Context, root, revision, destination string) error {
 	command := exec.CommandContext(ctx, "git", "archive", "--format=tar", revision)
 	command.Dir = root

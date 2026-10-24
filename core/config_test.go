@@ -8,6 +8,8 @@ import (
 	"testing"
 )
 
+// Tests ----------------------------------------------------------------------
+
 func TestInitializeWorkspaceWorkflowCollisionDoesNotWriteScaffold(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "workspace")
 	if err := os.MkdirAll(filepath.Join(root, ".github", "workflows"), 0o755); err != nil {
@@ -212,4 +214,33 @@ func TestTemplateRegistryWorkspaceFilePatternsStayAtRoot(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestProjectPackageSettings(t *testing.T) {
+	t.Run("when recording invalid package settings", func(t *testing.T) {
+		for _, scenario := range []struct {
+			name        string
+			declaration PackageDeclaration
+			want        string
+		}{
+			{"an unknown publication mode", PackageDeclaration{Publication: "sometimes"}, "publication must be"},
+			{"a main package outside its project", PackageDeclaration{Main: "../other"}, "main must be"},
+			{"a binary name containing a path", PackageDeclaration{Binary: "path/tool"}, "binary:"},
+		} {
+			t.Run("given "+scenario.name, func(t *testing.T) {
+				t.Run("it rejects the manifest", func(t *testing.T) {
+					root := t.TempDir()
+					manifest := NewManifest("workspace")
+					manifest.Workspace.Projects = []Project{{Name: "math", Path: "libs/math", Template: "test:math", Package: &scenario.declaration}}
+					path := filepath.Join(root, ManifestFilename)
+
+					err := SaveManifest(path, manifest)
+
+					if err == nil || !strings.Contains(err.Error(), scenario.want) {
+						t.Fatalf("invalid package settings accepted: %v", err)
+					}
+				})
+			})
+		}
+	})
 }

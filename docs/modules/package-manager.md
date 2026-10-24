@@ -6,22 +6,6 @@ The package-manager module defines how selected package ecosystems expose metada
 
 ## Design
 
-### API
-
-| API | Use |
-| --- | --- |
-| `PackageManagerBackend.ID()` | Return the value accepted by `workspace.package_managers`. |
-| `PackageManagerBackend.Ecosystem()` | Return the incompatibility key, such as `npm`, `cargo`, or `go`. |
-| `GetPackageMetadata(root, template)` | Parse one native package specification into `PackageMetadata`. |
-| `ValidatePackage(root, template)` | Perform static package validation. |
-| `WillPublishOk(ctx, root, template, version, task)` | Preflight one package without publication. |
-| `CreateGoReleaserConfig(root, manifest)` | Contribute GoReleaser `builds` and `archives`. |
-| `SupportsPackages()` | Report whether the manager publishes a language registry package. |
-| `PublishPackages(ctx, root, version, task, ...)` | Preflight and publish eligible packages. |
-| `ReleaseWorkspace(ctx, root, ...)` | Prepare the workspace used for artifact builds. |
-| `RegisterPackageManagerBackend(backend)` | Register an implementation before invoking release APIs. |
-| `PackageMetadata` | Carry manager-neutral package name, version, path, registry, visibility, and publication capability. |
-
 ### Usage
 
 ```go
@@ -40,12 +24,40 @@ workspace:
 
 The CLI registers built-ins in its composition root. Library clients register their own implementations explicitly; backends never self-register through `init`.
 
-## Maintainer notes
+### API
 
-The package manager list in `premise.yaml` is the source of release policy. A manager runs only when it is listed. File presence does not select a manager.
+| API | Use |
+| --- | --- |
+| `PackageManagerBackend.ID()` | Return the value accepted by `workspace.package_managers`. |
+| `PackageManagerBackend.Ecosystem()` | Return the incompatibility key, such as `npm`, `cargo`, or `go`. |
+| `GetPackageMetadata(root, template)` | Parse one native package specification into `PackageMetadata`. |
+| `ValidatePackage(root, template)` | Perform static package validation. |
+| `WillPublishOk(ctx, root, template, version, task)` | Preflight one package without publication. |
+| `PreflightPublication(ctx, root, version, task)` | Check workspace publication before changes. |
+| `CreateGoReleaserConfig(root, manifest)` | Contribute GoReleaser `builds` and `archives`. |
+| `SupportsPackages()` | Report whether the manager handles language packages. |
+| `PublishPackages(ctx, root, version, task, ...)` | Preflight and publish eligible packages. |
+| `ReleaseWorkspace(ctx, root, ...)` | Prepare the workspace used for artifact builds. |
+| `RegisterPackageManagerBackend(backend)` | Register an implementation before invoking release APIs. |
+| `PackageManagerGeneration` | Prepare shared dependency files and the validation workspace. |
+| `PackageManagerReleaseTools` | Select tools for executable builds. |
+| `PackageManagerRepositoryPublication` | Require source checks before the shared Git tag makes packages available. |
+| `PackageMetadata` | Carry manager-neutral package name, version, path, registry, visibility, and publication capability. |
 
-The module keeps package-manager contracts separate from built-in backends. This lets library users register their own backends and keeps core independent of the built-in implementations.
+## Implementation Details
 
-Before publication, the release process checks manager selection, artifact configuration, tasks, and credentials. If a check fails, no tag or package is published. Fix the cause and run the release again.
+Premise monorepos contain packages that release together and services that depend on each other. Every package manager uses the same repository version and Git tag. Providers adapt native package files and commands to this shared release flow. They do not choose separate project versions.
 
-Providers can also implement native workspace preparation, artifact tool selection, and repository-tag publication capabilities. These capabilities apply through the selected provider interface, without language-name branches in core. Go uses one root module and the normal repository tag; Bun and Cargo retain their registry publication tasks.
+The `workspace.package_managers` list selects the providers. A provider runs only when it appears in that list. Core calls their shared methods to check packages, build files, and run publication tasks. Native manifests still define package details when the package manager supports them.
+
+Some providers need extra steps. The generation interface prepares root dependency files before a project is created. The release tools interface selects tools needed to build executables. The repository publication interface marks packages that become available through the Git tag itself. Core checks those packages before creating the tag. Registry uploads run in the later package publication job with their own credentials. Both jobs use the same release version.
+
+### Go backend
+
+Go packages share one root module. During generation, the backend combines template requirements and checksums with the root `go.mod` and `go.sum`. It removes the staged project manifests and copies existing package sources into the temporary validation workspace.
+
+Go has no per-package publication or executable settings in `go.mod`. The backend reads these settings from each project's `package` block in `premise.yaml`. Template declarations can supply that block, and generation applies questionnaire substitutions before recording it with the project. Public projects run publication tasks. Private-local projects skip those tasks but remain in the root module download.
+
+Before publication, the backend tests public projects from a committed Git archive with `GOWORK=off`. Ignored files cannot make an incomplete release pass. The backend rejects filesystem replacements and a module path that does not match the release major version. Git utilities export committed files. Go utilities parse native module files and inspect source package declarations. These utilities live in `core/extensions`. Workspace and release policy stays in `core/backends/go.go`.
+
+The backend creates an archive for each declared Go application. A root main package keeps the existing CLI archive names. A workspace with only libraries creates a source release without executables. See [Using Premise with Go](../guides/go.md) for commands and import examples.

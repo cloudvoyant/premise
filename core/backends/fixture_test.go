@@ -1,12 +1,15 @@
 package backends
 
 import (
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 
 	"github.com/cloudvoyant/premise/core"
 )
+
+// Fixtures -------------------------------------------------------------------
 
 type Template = core.Template
 type TemplateRegistry = core.TemplateRegistry
@@ -18,6 +21,8 @@ var SaveManifest = core.SaveManifest
 
 var testRegisterBuiltinsOnce sync.Once
 var testRegisterBuiltinsErr error
+
+// Private helpers ------------------------------------------------------------
 
 func registerBuiltins(t *testing.T) {
 	t.Helper()
@@ -40,5 +45,16 @@ func templateFixture(name, kind string) core.Template {
 		Path:      filepath.ToSlash(filepath.Join("templates", name)),
 		Version:   "0.1.0",
 		Questions: []core.Question{{Prompt: "Project name:", Type: "string", Populate: "name"}},
+	}
+}
+
+func writePackageFixtureFile(t *testing.T, root, path, text string) {
+	t.Helper()
+	destination := filepath.Join(root, path)
+	if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(destination, []byte(text), 0644); err != nil {
+		t.Fatal(err)
 	}
 }
