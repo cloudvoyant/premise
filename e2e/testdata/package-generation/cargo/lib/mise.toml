@@ -1,0 +1,57 @@
+[tools]
+rust = "1.88.0"
+
+[tasks."install"]
+run = '''
+cargo fetch --offline
+'''
+
+[tasks."build"]
+run = '''
+cargo build --offline
+'''
+
+[tasks."test"]
+run = '''
+cargo test --offline
+'''
+
+[tasks."lint"]
+run = '''
+cargo check --offline
+'''
+
+[tasks."lint:fix"]
+run = '''
+cargo fmt --all
+'''
+
+[tasks."format"]
+run = '''
+cargo fmt --all
+'''
+
+[tasks."format:check"]
+run = '''
+cargo fmt --all --check
+'''
+
+[tasks."clean"]
+run = '''
+rm -rf dist
+'''
+
+[tasks."env-pull"]
+run = '''
+echo no secrets
+'''
+
+[tasks."publish:rc"]
+run = '''
+echo local fixture has no registry
+'''
+
+[tasks."publish"]
+run = '''
+echo local fixture has no registry
+'''

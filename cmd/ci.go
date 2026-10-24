@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	core "github.com/cloudvoyant/premise/core"
-	"github.com/cloudvoyant/premise/core/backends"
 	"github.com/cloudvoyant/premise/core/extensions"
 	"github.com/spf13/cobra"
 )
@@ -115,9 +114,6 @@ func CIFlowCommand() *cobra.Command {
 			}
 			root, err := premiseRoot()
 			if err != nil {
-				return err
-			}
-			if err := backends.RegisterPackageManagers(); err != nil {
 				return err
 			}
 			if rootOnly && skipRoot {

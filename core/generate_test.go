@@ -16,7 +16,6 @@ import (
 
 type generationTestProvider struct {
 	testPackageManager
-	prepared *bool
 }
 
 // Tests ----------------------------------------------------------------------
@@ -24,8 +23,7 @@ type generationTestProvider struct {
 func TestGenerateProviderIntegration(t *testing.T) {
 	t.Run("when a selected provider prepares workspace files", func(t *testing.T) {
 		t.Run("it stages the files without changing the workspace", func(t *testing.T) {
-			prepared := false
-			provider := generationTestProvider{testPackageManager: testPackageManager{id: "future"}, prepared: &prepared}
+			provider := generationTestProvider{testPackageManager: testPackageManager{id: "future"}}
 			useTestPackageManagers(t, provider)
 			root, source := t.TempDir(), t.TempDir()
 			if err := os.WriteFile(filepath.Join(source, "README.md"), []byte("project\n"), 0644); err != nil {
@@ -41,7 +39,7 @@ func TestGenerateProviderIntegration(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if !prepared || len(plan.Entries) != 1 || plan.Entries[0].Path != "future.lock" {
+			if len(plan.Entries) != 1 || plan.Entries[0].Path != "future.lock" {
 				t.Fatalf("selected provider was bypassed: %v", plan.Entries)
 			}
 			if _, err := os.Stat(filepath.Join(root, "future.lock")); !os.IsNotExist(err) {
@@ -298,6 +296,7 @@ func TestGenerateCandidateFailureLeavesDestinationAndManifestUntouched(t *testin
 
 func TestGenerateProjectRegistrationFailureRemovesCommittedDestination(t *testing.T) {
 	installMiseTestShim(t, false)
+	useTestPackageManagers(t, generationTestProvider{testPackageManager: testPackageManager{id: "future"}})
 	registry := writeRegistryFixture(t, templateFixture("app", "app"))
 	writeTestFile(t, filepath.Join(registry, ".shared-config"), "shared\n", 0o640)
 	setRegistryWorkspaceFiles(t, registry, ".shared-config")
@@ -310,6 +309,8 @@ func TestGenerateProjectRegistrationFailureRemovesCommittedDestination(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
+	manifest.Workspace.PackageManagers = []string{"future"}
+	writeTestFile(t, filepath.Join(workspace, "future.lock"), "original native\n", 0640)
 	manifest.Workspace.Projects = append(manifest.Workspace.Projects, Project{Name: "orders", Template: "old:app", Path: "apps/orders"})
 	if err := SaveManifest(manifestPath, manifest); err != nil {
 		t.Fatal(err)
@@ -328,6 +329,14 @@ func TestGenerateProjectRegistrationFailureRemovesCommittedDestination(t *testin
 	}
 	if _, err := os.Stat(filepath.Join(workspace, ".shared-config")); !os.IsNotExist(err) {
 		t.Fatalf("shared workspace file exists after registration failure: %v", err)
+	}
+	native, nativeErr := os.ReadFile(filepath.Join(workspace, "future.lock"))
+	if nativeErr != nil || string(native) != "original native\n" {
+		t.Fatalf("native output was not restored: %q %v", native, nativeErr)
+	}
+	info, statErr := os.Stat(filepath.Join(workspace, "future.lock"))
+	if statErr != nil || info.Mode().Perm() != 0640 {
+		t.Fatalf("native output mode was not restored: %v %v", info, statErr)
 	}
 	after, err := os.ReadFile(manifestPath)
 	if err != nil {
@@ -1026,7 +1035,4 @@ func installMiseTestShim(t *testing.T, fail bool) string {
 func (provider generationTestProvider) PrepareGeneration(request PackageGenerationContext) ([]MergeEntry, error) {
 	return []MergeEntry{{Path: "future.lock", Selected: PathValue{Kind: "file", Mode: 0644}, Output: PathValue{Present: true, Kind: "file", Mode: 0644, Data: []byte("dependencies\n")}}}, nil
 }
-func (provider generationTestProvider) PrepareGenerationCandidate(_ PackageGenerationContext, _ string) error {
-	*provider.prepared = true
-	return nil
-}
+func (generationTestProvider) GenerationRootFiles() []string { return []string{"future.lock"} }

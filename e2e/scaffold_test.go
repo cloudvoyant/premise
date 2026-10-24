@@ -121,6 +121,11 @@ func TestScaffold(t *testing.T) {
 		})
 	})
 
+	t.Run("when generating native workspaces", testNativeWorkspaceGeneration)
+	t.Run("when combining native workspaces", testMixedNativeWorkspaceGeneration)
+	t.Run("when extending an existing standalone Cargo workspace", testExistingStandaloneCargoGeneration)
+	t.Run("when native generation inputs conflict", testNativeGenerationConflicts)
+
 	t.Run("when validating workspace and template inputs", func(t *testing.T) {
 		t.Run("it requires an initialized workspace for generation", testCLIGenerateRequiresInitializedWorkspace)
 		t.Run("it requires the workspace root for installation", testCLIInstallRequiresWorkspaceRoot)

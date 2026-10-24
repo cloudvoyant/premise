@@ -38,8 +38,8 @@ The CLI registers built-ins in its composition root. Library clients register th
 | `SupportsPackages()` | Report whether the manager handles language packages. |
 | `PublishPackages(ctx, root, version, task, ...)` | Preflight and publish eligible packages. |
 | `ReleaseWorkspace(ctx, root, ...)` | Prepare the workspace used for artifact builds. |
-| `RegisterPackageManagerBackend(backend)` | Register an implementation before invoking release APIs. |
-| `PackageManagerGeneration` | Prepare shared dependency files and the validation workspace. |
+| `RegisterPackageManagerBackend(backend)` | Register an implementation before invoking generation or release APIs. |
+| `PackageManagerGeneration` | Declare native root ownership and prepare native file contents. |
 | `PackageManagerReleaseTools` | Select tools for executable builds. |
 | `PackageManagerRepositoryPublication` | Require source checks before the shared Git tag makes packages available. |
 | `PackageMetadata` | Carry manager-neutral package name, version, path, registry, visibility, and publication capability. |
@@ -63,23 +63,40 @@ Core decides when checks, publication, and deployment run. Providers read native
 
 `GetPackageMetadata` reads package details. `ValidatePackage` checks those details without publication. `WillPublishOk` checks whether one package can run its publication task. `PreflightPublication` checks the selected packages as a group. The provider uses these checks inside its publication methods.
 
-### Generation hooks
+### Native workspace preparation
 
-Some package managers need shared dependency files at the workspace root. Go uses these hooks to prepare one root `go.mod` and `go.sum` before creating the project:
+All three built-ins use the same optional generation capability:
 
-```mermaid
-sequenceDiagram
-    participant Core as Generate
-    participant Provider as Selected provider
-    Core->>Provider: PrepareGeneration(context)
-    Provider-->>Core: Planned root-file changes
-    Core->>Provider: PrepareGenerationCandidate(context, directory)
-    Provider-->>Core: Existing package files for validation
-    Core->>Core: Run template tasks in the temporary directory
-    Core->>Core: Apply files and record the project
+```go
+type PackageManagerGeneration interface {
+    GenerationRootFiles() []string
+    PrepareGeneration(PackageGenerationContext) ([]MergeEntry, error)
+}
 ```
 
-`PackageManagerGeneration` defines both hooks. Providers that do not need them use the normal file merge. Planning does not change the user's root files. Core applies the prepared changes only after the temporary project passes its tasks.
+```mermaid
+flowchart TD
+    Core["Core generation"] --> Claims["Read native root ownership"]
+    Claims --> Provider["Prepare native contents from client and shared inputs"]
+    Provider --> Stage["Core stages the complete workspace"]
+    Stage --> Tasks["Run Mise validation contracts"]
+    Tasks --> Capture["Core captures declared native outputs"]
+    Capture --> Apply["Publish files with rollback"]
+```
+
+`PackageGenerationContext` supplies the client workspace name, project path, staged template, original `ClientFiles`, declared registry `SharedFiles`, existing client `ProjectPaths`, and a conflict resolver. Providers return native contents. Core attaches original values and modes, enforces unique ownership, stages existing source, and publishes validated outputs. There is no provider candidate-copy hook.
+
+| Backend | Owned roots | Preparation |
+| --- | --- | --- |
+| Go | `go.mod`, `go.sum` | Merge requirements and checksums into one root module; remove staged project module files. |
+| Cargo | `Cargo.toml`, `Cargo.lock` | Create or extend workspace membership; retain per-crate manifests and dependencies. |
+| Bun | `package.json`, `bun.lock`, `bun.lockb` | Merge root shared tooling by field and ensure native membership; retain per-project manifests. |
+
+Cargo adds actual crate paths, avoiding mixed-language globs. When creating the first root workspace, it includes existing declared client crates so earlier standalone projects remain usable. Existing resolver, root package, workspace policy, and unrelated comments remain intact. Registry-development Cargo roots are not client contributions. Bun creates new roots with the client name and `apps/*`/`libs/*`, preserves existing client identity and configuration, and reports focused dependency conflicts. Incoming registry identity and template membership do not become client identity or membership.
+
+Unknown client fields remain intact. An exclusion preventing the selected project's membership or an unsupported local dependency path fails before publication. Native lockfiles start from the client, never the registry-development workspace. Providers without generation capability keep the generic shared-file path.
+
+See [Generate](generate.md) for staging, install-task execution, native output capture, and rollback.
 
 ### Release hooks and CI
 
@@ -106,21 +123,21 @@ See the [CI module](ci.md) for sequencing and the [release module](release.md) f
 
 ### Go generation
 
-Go projects contain packages under one root module. The generation hook combines template dependencies with the root manifests. It also includes existing package sources when checking the temporary project.
+Go projects contain packages under one root module. The Go provider combines template dependencies with the original root manifests. Core includes existing source when validating every package manager.
 
 ```mermaid
 flowchart TD
     Template["Template go.mod and go.sum"] --> Merge["PrepareGeneration: combine root dependencies"]
     Existing["Existing workspace dependencies"] --> Merge
     Merge --> Root["Planned root go.mod and go.sum"]
-    Root --> Candidate["PrepareGenerationCandidate: include existing packages"]
+    Root --> Candidate["Core includes existing packages"]
     Candidate --> Checks["Run project tasks"]
     Checks --> Apply["Apply root manifests and project packages"]
 ```
 
-The generated project has no nested `go.mod`. The workspace has no `go.work`. The root module path uses the repository path supplied by the user, without the application or library directory.
+The generated project has no nested `go.mod`. Go generation rejects an existing root `go.work` or a declared project with its own `go.mod`; it does not convert independent modules. The generated workspace uses one root module. The root module path uses the repository path supplied by the user, without the application or library directory.
 
-Go-specific merging stays in `core/backends/go.go`. Native Go file parsing stays in `core/extensions/gox.go`. Core generation calls the provider hooks and does not select Go by name.
+Go-specific merging stays in `core/backends/go.go`. Native Go file parsing stays in `core/extensions/gox.go`. Core generation calls the common capability and does not select Go by name.
 
 ### Go publication
 

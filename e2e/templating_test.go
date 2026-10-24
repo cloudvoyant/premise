@@ -272,16 +272,20 @@ func writeFixtureFile(t *testing.T, path, content string, mode os.FileMode) {
 }
 
 func testGenerateFromCargoAndBunRegistries(t *testing.T) {
-	log := installMiseTaskShim(t)
 	base := t.TempDir()
 	workspace := filepath.Join(base, "workspace")
-	if _, err := core.InitializeWorkspace(workspace, workspaceMiseTemplate(t)+"\n[tools]\nbun = '1.1'\n"); err != nil {
+	if _, err := core.InitializeWorkspace(workspace, workspaceMiseTemplate(t)+"\n[tools]\nbun = '1.2'\n"); err != nil {
 		t.Fatal(err)
 	}
 	cargoRegistry := filepath.Join(base, "cargo-fixture")
 	bunRegistry := filepath.Join(base, "bun-fixture")
 	cargoRegistryFixture(t, cargoRegistry)
 	bunRegistryFixture(t, bunRegistry)
+	// Native success contracts; controlled failure fixtures retain their doubles.
+	nativeFixtures := filepath.Join(repositoryRoot(t), "e2e/testdata/package-generation")
+	writeFixtureFile(t, filepath.Join(cargoRegistry, "templates/rust-cli/mise.toml"), readFile(t, filepath.Join(nativeFixtures, "cargo/app/mise.toml"))+"\n[env]\nAPP_KIND = 'rust-cli'\n", 0644)
+	writeFixtureFile(t, filepath.Join(bunRegistry, "templates/hono-api/mise.toml"), readFile(t, filepath.Join(nativeFixtures, "bun/app/mise.toml"))+"\n[env]\nAPP_KIND = 'hono-api'\n", 0644)
+	writeFixtureFile(t, filepath.Join(bunRegistry, "templates/hono-api/src/index.test.ts"), "import { expect, test } from 'bun:test';\nimport { appName } from './index';\ntest('uses generated name', () => expect(appName).toBe('hono-api'));\n", 0644)
 
 	cargoSelector := cargoRegistry + ":rust-cli"
 	cargoResolver := core.MergeDecisions{
@@ -328,8 +332,8 @@ func testGenerateFromCargoAndBunRegistries(t *testing.T) {
 		t.Fatalf("selected package.json was merged into workspace root:\n%s", content)
 	}
 	assertWorkspaceMise(t, filepath.Join(workspace, "mise.toml"))
-	assertProjectMise(t, filepath.Join(orders, "mise.toml"), "rust", "1.83", "orders-cli")
-	assertProjectMise(t, filepath.Join(gateway, "mise.toml"), "bun", "1.1", "gateway-api")
+	assertProjectMise(t, filepath.Join(orders, "mise.toml"), "rust", "1.88.0", "orders-cli")
+	assertProjectMise(t, filepath.Join(gateway, "mise.toml"), "bun", "1.4.2", "gateway-api")
 
 	manifest, err := core.LoadManifest(filepath.Join(workspace, core.ManifestFilename))
 	if err != nil {
@@ -352,50 +356,12 @@ func testGenerateFromCargoAndBunRegistries(t *testing.T) {
 		t.Fatalf("first destination changed after second generation: %v", err)
 	}
 
-	invocations := log.Invocations(t)
-	contracts, err := core.ContractTasks("app")
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantPerValidation := 1 + len(contracts)
-	groups := map[string]int{}
-	preflights := 0
-	for _, invocation := range invocations {
-		if invocation.Environment != "1" {
-			t.Fatalf("PREMISE_TEMPLATE_TEST = %q for %#v", invocation.Environment, invocation)
-		}
-		if invocation.Directory == orders || invocation.Directory == gateway {
-			t.Fatalf("validation ran in live destination: %#v", invocation)
-		}
-		groups[invocation.Directory]++
-		if strings.Contains(invocation.Directory, "premise-tool-preflight-") {
-			preflights++
-		}
-	}
-	if len(groups) != 6 {
-		t.Fatalf("validation directories = %#v, want workspace and project checks for Rust candidate, Bun preflight, and Bun candidate", groups)
-	}
-	rootChecks := 0
-	projectChecks := 0
-	for directory, count := range groups {
-		switch count {
-		case 1:
-			rootChecks++
-		case wantPerValidation:
-			projectChecks++
-		default:
-			t.Fatalf("Mise calls in %s = %d, want 1 root install or %d project contract calls", directory, count, wantPerValidation)
-		}
-	}
-	if rootChecks != 3 || projectChecks != 3 {
-		t.Fatalf("validation split = %d root and %d project checks, want 3 each", rootChecks, projectChecks)
-	}
-	if preflights != 1+wantPerValidation {
-		t.Fatalf("preflight calls = %d, want one root install plus one %d-call project preflight", preflights, wantPerValidation)
-	}
-	if strings.Count(output.String(), "Validating tool bun 1.1 -> 1.2...\n") != 1 {
-		t.Fatalf("Bun preflight output =\n%s", output.String())
-	}
+	// Real native membership and resolution replace success-shim invocation counts.
+	runCommand(t, workspace, "cargo", "metadata", "--no-deps", "--format-version=1", "--offline")
+	runCommand(t, workspace, "cargo", "fetch", "--offline")
+	runCommand(t, workspace, "bun", "install", "--ignore-scripts", "--frozen-lockfile")
+	assertFileContains(t, filepath.Join(workspace, "Cargo.toml"), "apps/orders-cli")
+	assertNoGenerationTemporaryDirectories(t, filepath.Join(workspace, "apps"))
 }
 
 func assertFileContent(t *testing.T, path, want string) {
@@ -512,6 +478,11 @@ func testGenerateValidationFailuresLeaveNoLiveState(t *testing.T) {
 			}
 			registry := filepath.Join(base, "registry")
 			test.fixture(t, registry)
+			nativePath, nativeOriginal := "Cargo.toml", "[workspace]\nmembers=[]\nresolver='2'\n"
+			if test.template == "hono-api" {
+				nativePath, nativeOriginal = "package.json", `{"name":"client","private":true,"workspaces":["apps/*"]}`
+			}
+			writeFixtureFile(t, filepath.Join(workspace, nativePath), nativeOriginal, 0640)
 			before, err := os.ReadFile(manifestPath)
 			if err != nil {
 				t.Fatal(err)
@@ -532,6 +503,13 @@ func testGenerateValidationFailuresLeaveNoLiveState(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(workspace, "apps", test.project)); !os.IsNotExist(err) {
 				t.Fatalf("destination exists after failure: %v", err)
 			}
+			assertFileContent(t, filepath.Join(workspace, nativePath), nativeOriginal)
+			nativeInfo, err := os.Stat(filepath.Join(workspace, nativePath))
+			if err != nil || nativeInfo.Mode().Perm() != 0640 {
+				t.Fatalf("native root mode changed after failure: %v %v", nativeInfo, err)
+			}
+			assertAbsent(t, filepath.Join(workspace, "bun.lock"))
+			assertAbsent(t, filepath.Join(workspace, "Cargo.lock"))
 			after, err := os.ReadFile(manifestPath)
 			if err != nil {
 				t.Fatal(err)

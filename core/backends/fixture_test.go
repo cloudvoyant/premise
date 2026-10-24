@@ -58,3 +58,19 @@ func writePackageFixtureFile(t *testing.T, root, path, text string) {
 		t.Fatal(err)
 	}
 }
+
+func generationTestContext(t *testing.T, root, stage, project string, paths []string) core.PackageGenerationContext {
+	t.Helper()
+	values := map[string]core.PathValue{}
+	for _, path := range paths {
+		data, err := os.ReadFile(filepath.Join(root, path))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		values[path] = core.PathValue{Present: true, Kind: "file", Mode: 0644, Data: data}
+	}
+	return core.PackageGenerationContext{WorkspaceRoot: root, WorkspaceName: "client", ProjectPath: project, Stage: stage, ClientFiles: values, ResolveConflict: core.MergeDecisions{}.Resolve}
+}

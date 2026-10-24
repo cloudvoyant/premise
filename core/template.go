@@ -230,6 +230,17 @@ func runGenerationMiseInstall(ctx context.Context, directory, label string, fail
 	return nil
 }
 
+func runGenerationMiseTask(ctx context.Context, directory, task, label string, failureOutput io.Writer) error {
+	var output bytes.Buffer
+	fmt.Fprintf(failureOutput, "[%s] mise run %s...\n", label, task)
+	mise := miseRunner{Stdout: &output, Stderr: &output, Ceiling: filepath.Dir(filepath.Clean(directory))}
+	if err := mise.run(ctx, directory, []string{"PREMISE_TEMPLATE_TEST=1"}, "run", task); err != nil {
+		_, _ = io.Copy(failureOutput, &output)
+		return fmt.Errorf("template %s task %s failed: %w", label, task, err)
+	}
+	return nil
+}
+
 // runGenerationTemplateContracts validates a generated candidate without
 // exposing successful command output. Failed command output is written to
 // failureOutput so generation errors retain the useful Mise diagnostics.

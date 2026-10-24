@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"go/version"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -203,12 +202,35 @@ func (Go) ReleaseTools(root string, manifest core.Config) ([]string, error) {
 	return []string{"go@" + selected}, nil
 }
 
+func (Go) GenerationRootFiles() []string { return []string{"go.mod", "go.sum"} }
+
 func (Go) PrepareGeneration(request core.PackageGenerationContext) ([]core.MergeEntry, error) {
 	source, found, err := extensions.ReadGoModule(request.Stage)
-	if err != nil || !found {
+	if err != nil {
 		return nil, err
 	}
-	merged, err := mergeGoWorkspaceModule(request.WorkspaceRoot, request.ProjectPath, source)
+	if !found {
+		if request.SharedFiles["go.mod"].Present || request.SharedFiles["go.sum"].Present {
+			return nil, fmt.Errorf("Go root contributions require a selected Go template; omit registry-development module files from workspace_files")
+		}
+		return nil, nil
+	}
+	if _, err := os.Lstat(filepath.Join(request.WorkspaceRoot, "go.work")); err == nil {
+		return nil, fmt.Errorf("Go generation requires one root module; remove go.work before adding a Go project")
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+	for _, path := range request.ProjectPaths {
+		if err := validateGenerationLocalPath(request.WorkspaceRoot, "", path); err != nil {
+			return nil, err
+		}
+		if _, err := os.Lstat(filepath.Join(request.WorkspaceRoot, path, "go.mod")); err == nil {
+			return nil, fmt.Errorf("existing Go project %s has a nested go.mod; migrate it to the root module before generating another Go project", path)
+		} else if !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+	merged, err := mergeGoWorkspaceModule(request, source)
 	if err != nil {
 		return nil, err
 	}
@@ -216,21 +238,15 @@ func (Go) PrepareGeneration(request core.PackageGenerationContext) ([]core.Merge
 	if err != nil {
 		return nil, err
 	}
-	entry, err := goWorkspaceEntry(request.WorkspaceRoot, "go.mod", data)
-	if err != nil {
-		return nil, err
-	}
-	entries := []core.MergeEntry{entry}
-	sums, err := goWorkspaceChecksums(request.WorkspaceRoot, request.Stage)
+	entries := []core.MergeEntry{generationEntry("go.mod", data)}
+	sumData := append(append([]byte(nil), request.ClientFiles["go.sum"].Data...), '\n')
+	sumData = append(sumData, request.SharedFiles["go.sum"].Data...)
+	sums, err := goWorkspaceChecksums(sumData, request.Stage)
 	if err != nil {
 		return nil, err
 	}
 	if len(sums) > 0 {
-		entry, err := goWorkspaceEntry(request.WorkspaceRoot, "go.sum", sums)
-		if err != nil {
-			return nil, err
-		}
-		entries = append(entries, entry)
+		entries = append(entries, generationEntry("go.sum", sums))
 	}
 	for _, name := range []string{"go.mod", "go.sum"} {
 		if err := os.Remove(filepath.Join(request.Stage, name)); err != nil && !os.IsNotExist(err) {
@@ -238,43 +254,6 @@ func (Go) PrepareGeneration(request core.PackageGenerationContext) ([]core.Merge
 		}
 	}
 	return entries, nil
-}
-
-func (Go) PrepareGenerationCandidate(request core.PackageGenerationContext, candidate string) error {
-	return filepath.WalkDir(request.WorkspaceRoot, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		relative, err := filepath.Rel(request.WorkspaceRoot, path)
-		if err != nil {
-			return err
-		}
-		if relative == "." {
-			return nil
-		}
-		if entry.IsDir() {
-			if relative == "bin" || relative == "dist" || strings.HasPrefix(entry.Name(), ".") || entry.Name() == "node_modules" {
-				return filepath.SkipDir
-			}
-			return os.MkdirAll(filepath.Join(candidate, relative), 0755)
-		}
-		// Root files are already staged by generation.
-		if !strings.ContainsRune(relative, filepath.Separator) {
-			return nil
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		if !info.Mode().IsRegular() {
-			return nil
-		}
-		contents, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(filepath.Join(candidate, relative), contents, info.Mode().Perm())
-	})
 }
 
 func (Go) CreateGoReleaserConfig(root string, manifest core.Config) (string, error) {
@@ -409,8 +388,8 @@ archives:
 `, project, project)
 }
 
-func mergeGoWorkspaceModule(root, projectPath string, source extensions.GoModule) (*modfile.File, error) {
-	suffix := "/" + filepath.ToSlash(projectPath)
+func mergeGoWorkspaceModule(request core.PackageGenerationContext, source extensions.GoModule) (*modfile.File, error) {
+	suffix := "/" + filepath.ToSlash(request.ProjectPath)
 	if !strings.HasSuffix(source.Path, suffix) {
 		return nil, fmt.Errorf("template module %s must end with its project path %s", source.Path, suffix)
 	}
@@ -418,16 +397,20 @@ func mergeGoWorkspaceModule(root, projectPath string, source extensions.GoModule
 	if err := module.CheckPath(workspacePath); err != nil {
 		return nil, err
 	}
-	existing, exists, err := extensions.ReadGoModule(root)
-	if err != nil {
-		return nil, err
-	}
+	original := request.ClientFiles["go.mod"]
 	var merged *modfile.File
-	if exists {
-		if existing.Path != workspacePath {
-			return nil, fmt.Errorf("workspace Go module is %s; use that module path instead of %s", existing.Path, workspacePath)
+	if original.Present {
+		existing, err := modfile.Parse("go.mod", original.Data, nil)
+		if err != nil {
+			return nil, err
 		}
-		merged = existing.File
+		if existing.Module == nil {
+			return nil, fmt.Errorf("workspace go.mod has no module directive")
+		}
+		if existing.Module.Mod.Path != workspacePath {
+			return nil, fmt.Errorf("workspace Go module is %s; use that module path instead of %s", existing.Module.Mod.Path, workspacePath)
+		}
+		merged = existing
 	} else {
 		merged = &modfile.File{}
 		if err := merged.AddModuleStmt(workspacePath); err != nil {
@@ -443,9 +426,34 @@ func mergeGoWorkspaceModule(root, projectPath string, source extensions.GoModule
 			return nil, err
 		}
 	}
+	if shared := request.SharedFiles["go.mod"]; shared.Present {
+		contribution, err := modfile.Parse("shared go.mod", shared.Data, nil)
+		if err != nil {
+			return nil, err
+		}
+		if contribution.Module == nil || contribution.Module.Mod.Path != workspacePath {
+			return nil, fmt.Errorf("shared go.mod must use client repository module %s", workspacePath)
+		}
+		if len(contribution.Replace) > 0 {
+			return nil, fmt.Errorf("shared go.mod must not contain replace directives; configure replacements in the client workspace")
+		}
+		mergeGoRequirements(merged, contribution)
+		if contribution.Go != nil && version.Compare("go"+contribution.Go.Version, "go"+merged.Go.Version) > 0 {
+			if err := merged.AddGoStmt(contribution.Go.Version); err != nil {
+				return nil, err
+			}
+		}
+	}
 	mergeGoRequirements(merged, source.File)
 	if len(source.File.Replace) > 0 {
 		return nil, fmt.Errorf("template go.mod must not contain replace directives; configure replacements in the workspace root")
+	}
+	for _, replacement := range merged.Replace {
+		if replacement.New.Version == "" {
+			if err := validateGenerationLocalPath(request.WorkspaceRoot, "", replacement.New.Path); err != nil {
+				return nil, err
+			}
+		}
 	}
 	merged.SortBlocks()
 	merged.Cleanup()
@@ -477,16 +485,13 @@ func mergeGoRequirements(merged, source *modfile.File) {
 	merged.SetRequire(combined)
 }
 
-func goWorkspaceChecksums(root, stage string) ([]byte, error) {
+func goWorkspaceChecksums(rootData []byte, stage string) ([]byte, error) {
 	sums := map[string]bool{}
-	for _, directory := range []string{root, stage} {
-		contents, err := os.ReadFile(filepath.Join(directory, "go.sum"))
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
+	staged, err := os.ReadFile(filepath.Join(stage, "go.sum"))
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	for _, contents := range [][]byte{rootData, staged} {
 		for _, line := range strings.Split(string(contents), "\n") {
 			if line != "" {
 				sums[line] = true
@@ -502,21 +507,4 @@ func goWorkspaceChecksums(root, stage string) ([]byte, error) {
 	}
 	sort.Strings(lines)
 	return []byte(strings.Join(lines, "\n") + "\n"), nil
-}
-
-func goWorkspaceEntry(root, name string, data []byte) (core.MergeEntry, error) {
-	selected := core.PathValue{Kind: "file", Mode: 0644}
-	previous, err := os.ReadFile(filepath.Join(root, name))
-	if err == nil {
-		selected.Present = true
-		selected.Data = previous
-		info, err := os.Stat(filepath.Join(root, name))
-		if err != nil {
-			return core.MergeEntry{}, err
-		}
-		selected.Mode = info.Mode().Perm()
-	} else if !os.IsNotExist(err) {
-		return core.MergeEntry{}, err
-	}
-	return core.MergeEntry{Path: name, Selected: selected, Output: core.PathValue{Present: true, Kind: "file", Mode: selected.Mode, Data: data}, Strategy: core.MergeStrategyCopy}, nil
 }

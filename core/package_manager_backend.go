@@ -50,18 +50,25 @@ type PackageManagerBackend interface {
 }
 
 // PackageGenerationContext identifies the selected template and its destination.
-// Providers may move native dependency manifests from Stage into root entries.
+// ClientFiles contains original client values; SharedFiles contains declared registry
+// contributions. Providers return native contents; core owns file snapshots and modes.
 type PackageGenerationContext struct {
-	WorkspaceRoot string
-	ProjectPath   string
-	Stage         string
+	WorkspaceRoot   string
+	WorkspaceName   string
+	ProjectPaths    []string
+	ProjectPath     string
+	Stage           string
+	ClientFiles     map[string]PathValue
+	SharedFiles     map[string]PathValue
+	ResolveConflict MergeConflictResolver
 }
 
 // PackageManagerGeneration prepares native workspace files when a template is
 // generated. Providers without native workspace preparation need no hook.
 type PackageManagerGeneration interface {
+	// GenerationRootFiles declares exclusive native roots, including lock outputs.
+	GenerationRootFiles() []string
 	PrepareGeneration(PackageGenerationContext) ([]MergeEntry, error)
-	PrepareGenerationCandidate(PackageGenerationContext, string) error
 }
 
 // PackageManagerReleaseTools supplies tools needed to build native artifacts.

@@ -118,7 +118,7 @@ func TestGoProvider(t *testing.T) {
 			root, source := t.TempDir(), t.TempDir()
 			writePackageFixtureFile(t, source, "go.mod", "module example.com/repository/libs/math\ngo 1.25.0\n")
 
-			entries, err := (Go{}).PrepareGeneration(core.PackageGenerationContext{WorkspaceRoot: root, ProjectPath: "libs/math", Stage: source})
+			entries, err := (Go{}).PrepareGeneration(generationTestContext(t, root, source, "libs/math", (Go{}).GenerationRootFiles()))
 
 			if err != nil {
 				t.Fatal(err)
@@ -133,7 +133,7 @@ func TestGoProvider(t *testing.T) {
 		t.Run("it combines dependencies in the root manifest", func(t *testing.T) {
 			root, source := goGenerationFixture(t)
 
-			entries, err := (Go{}).PrepareGeneration(core.PackageGenerationContext{WorkspaceRoot: root, ProjectPath: "libs/math", Stage: source})
+			entries, err := (Go{}).PrepareGeneration(generationTestContext(t, root, source, "libs/math", (Go{}).GenerationRootFiles()))
 
 			if err != nil {
 				t.Fatal(err)
@@ -146,7 +146,7 @@ func TestGoProvider(t *testing.T) {
 		t.Run("it preserves the workspace module path", func(t *testing.T) {
 			root, source := goGenerationFixture(t)
 
-			entries, err := (Go{}).PrepareGeneration(core.PackageGenerationContext{WorkspaceRoot: root, ProjectPath: "libs/math", Stage: source})
+			entries, err := (Go{}).PrepareGeneration(generationTestContext(t, root, source, "libs/math", (Go{}).GenerationRootFiles()))
 
 			if err != nil {
 				t.Fatal(err)
@@ -159,7 +159,7 @@ func TestGoProvider(t *testing.T) {
 		t.Run("it removes the staged project manifest", func(t *testing.T) {
 			root, source := goGenerationFixture(t)
 
-			_, err := (Go{}).PrepareGeneration(core.PackageGenerationContext{WorkspaceRoot: root, ProjectPath: "libs/math", Stage: source})
+			_, err := (Go{}).PrepareGeneration(generationTestContext(t, root, source, "libs/math", (Go{}).GenerationRootFiles()))
 
 			if err != nil {
 				t.Fatal(err)
@@ -172,7 +172,7 @@ func TestGoProvider(t *testing.T) {
 		t.Run("it leaves the existing workspace unchanged during planning", func(t *testing.T) {
 			root, source := goGenerationFixture(t)
 
-			_, err := (Go{}).PrepareGeneration(core.PackageGenerationContext{WorkspaceRoot: root, ProjectPath: "libs/math", Stage: source})
+			_, err := (Go{}).PrepareGeneration(generationTestContext(t, root, source, "libs/math", (Go{}).GenerationRootFiles()))
 
 			if err != nil {
 				t.Fatal(err)
