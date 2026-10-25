@@ -246,7 +246,7 @@ func (Cargo) WriteDependencies(manifest []byte, dependencies []core.Dependency) 
 func (Cargo) ReleaseTools(string, core.Config) ([]string, error) { return nil, nil }
 func (Cargo) PublishesFromGitTag() bool                          { return false }
 
-func (Cargo) GenerationRootFiles() []string { return []string{"Cargo.toml", "Cargo.lock"} }
+func (Cargo) ManagedWorkspaceFiles() []string { return []string{"Cargo.toml", "Cargo.lock"} }
 
 func (Cargo) PrepareGeneration(request core.PackageGenerationContext) ([]core.MergeEntry, error) {
 	selected, found, err := readCargoWorkspaceCrate(request, request.ProjectPath, request.Stage)

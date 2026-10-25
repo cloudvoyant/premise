@@ -197,7 +197,9 @@ func (Bun) WriteDependencies(manifest []byte, dependencies []core.Dependency) ([
 func (Bun) ReleaseTools(string, core.Config) ([]string, error) { return nil, nil }
 func (Bun) PublishesFromGitTag() bool                          { return false }
 
-func (Bun) GenerationRootFiles() []string { return []string{"package.json", "bun.lock", "bun.lockb"} }
+func (Bun) ManagedWorkspaceFiles() []string {
+	return []string{"package.json", "bun.lock", "bun.lockb"}
+}
 
 func (Bun) PrepareGeneration(request core.PackageGenerationContext) ([]core.MergeEntry, error) {
 	client, err := mergeBunWorkspaceConfig(request)

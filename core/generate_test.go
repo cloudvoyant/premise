@@ -1184,9 +1184,9 @@ func (provider generationTestProvider) PrepareGeneration(request PackageGenerati
 	return []MergeEntry{{Path: "future.lock", Selected: PathValue{Kind: "file", Mode: 0644}, Output: PathValue{Present: true, Kind: "file", Mode: 0644, Data: []byte("dependencies\n")}}}, nil
 }
 
-func (generationTestProvider) GenerationRootFiles() []string { return []string{"future.lock"} }
+func (generationTestProvider) ManagedWorkspaceFiles() []string { return []string{"future.lock"} }
 
-func (provider workspaceGenerationProvider) GenerationRootFiles() []string {
+func (provider workspaceGenerationProvider) ManagedWorkspaceFiles() []string {
 	if provider.paths != nil {
 		return provider.paths
 	}

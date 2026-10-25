@@ -58,7 +58,7 @@ flowchart LR
 | --- | --- |
 | `ID`, `Ecosystem` | Select compatible backends from workspace configuration. |
 | `ParseDependencies`, `WriteDependencies` | Translate native manifests to and from the common dependency model. |
-| `GenerationRootFiles`, `PrepareGeneration` | Declare native root ownership and prepare contents. No selected native manifest means no native contribution. |
+| `ManagedWorkspaceFiles`, `PrepareGeneration` | Declare native root ownership and prepare contents. No selected native manifest means no native contribution. |
 | `GetPackageMetadata`, `ValidatePackage` | Read and validate native package details. |
 | `WillPublishOk`, `PreflightPublication` | Check package and workspace publication requirements. |
 | `CreateGoReleaserConfig`, `ReleaseWorkspace`, `ReleaseTools` | Supply artifacts, build directory, and tools. |

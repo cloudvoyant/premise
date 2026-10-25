@@ -461,7 +461,7 @@ func buildGenerationEntries(plan *GeneratePlan, sources generationSources, reque
 		return fmt.Errorf("inspect selected template stage: %w", err)
 	}
 	plan.Root = PathValue{Present: true, Kind: "dir", Mode: selectedInfo.Mode().Perm()}
-	if err := prepareNativeGeneration(plan, request, shared); err != nil {
+	if err := buildPackageManagerManifestUpdatePlan(plan, request, shared); err != nil {
 		return err
 	}
 	paths := unionPathKeys(shared, nil)
@@ -576,7 +576,7 @@ func validateGeneratePlanCandidate(ctx context.Context, plan *GeneratePlan, outp
 	if err := validateWorkspaceCandidateContracts(ctx, candidate, plan.projectPath, plan.templateKind, "generated candidate", output); err != nil {
 		return fmt.Errorf("generated candidate validation failed: %w", err)
 	}
-	return plan.captureNativeOutputs(candidate)
+	return plan.capturePackageManagerManifestUpdates(candidate)
 }
 
 func prepareWorkspaceCandidate(plan *GeneratePlan, candidate string, mergedRoot bool) error {
@@ -854,7 +854,7 @@ type generationProvider struct {
 	paths   []string
 }
 
-func prepareNativeGeneration(plan *GeneratePlan, request GenerateParameters, shared map[string]PathValue) error {
+func buildPackageManagerManifestUpdatePlan(plan *GeneratePlan, request GenerateParameters, shared map[string]PathValue) error {
 	backends, err := packageManagersForConfig(Config{Workspace: Workspace{PackageManagers: request.PackageManagers}})
 	if err != nil {
 		return err
@@ -862,7 +862,7 @@ func prepareNativeGeneration(plan *GeneratePlan, request GenerateParameters, sha
 	owners := map[string]string{}
 	var providers []generationProvider
 	for _, backend := range backends {
-		paths := backend.GenerationRootFiles()
+		paths := backend.ManagedWorkspaceFiles()
 		for _, path := range paths {
 			if path == "" || path == "." || filepath.Base(path) != path || strings.ContainsAny(path, "/\\") || path == ManifestFilename || path == "mise.toml" || path == ".git" || path == ".difflab" {
 				return fmt.Errorf("package manager %s claims invalid native root path %q", backend.ID(), path)
@@ -938,7 +938,7 @@ func prepareNativeGeneration(plan *GeneratePlan, request GenerateParameters, sha
 	return nil
 }
 
-func (plan *GeneratePlan) captureNativeOutputs(candidate string) error {
+func (plan *GeneratePlan) capturePackageManagerManifestUpdates(candidate string) error {
 	paths := unionPathKeys(plan.nativeRoots, nil)
 	outputs, err := readClientRootValues(candidate, paths)
 	if err != nil {

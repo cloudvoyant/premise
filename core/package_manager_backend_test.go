@@ -135,7 +135,7 @@ func useTestPackageManagers(t *testing.T, plugins ...PackageManagerBackend) {
 	}
 }
 
-func (p testPackageManager) GenerationRootFiles() []string { return nil }
+func (p testPackageManager) ManagedWorkspaceFiles() []string { return nil }
 func (p testPackageManager) PrepareGeneration(PackageGenerationContext) ([]MergeEntry, error) {
 	return nil, nil
 }

@@ -84,7 +84,7 @@ func TestGoProvider(t *testing.T) {
 		root, source := t.TempDir(), t.TempDir()
 		writePackageFixtureFile(t, source, "go.mod", "module example.com/repository/libs/math\ngo 1.25.0\n")
 
-		entries, err := (Go{}).PrepareGeneration(generationTestContext(t, root, source, "libs/math", (Go{}).GenerationRootFiles()))
+		entries, err := (Go{}).PrepareGeneration(generationTestContext(t, root, source, "libs/math", (Go{}).ManagedWorkspaceFiles()))
 
 		t.Run("it uses the repository module path in the root manifest", func(t *testing.T) {
 			if err != nil {
@@ -99,7 +99,7 @@ func TestGoProvider(t *testing.T) {
 	t.Run("when generating a library in an existing workspace", func(t *testing.T) {
 		root, source := goGenerationFixture(t)
 
-		entries, err := (Go{}).PrepareGeneration(generationTestContext(t, root, source, "libs/math", (Go{}).GenerationRootFiles()))
+		entries, err := (Go{}).PrepareGeneration(generationTestContext(t, root, source, "libs/math", (Go{}).ManagedWorkspaceFiles()))
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -58,9 +58,9 @@ type PackageManagerBackend interface {
 	// The boolean result requests serial artifact builds.
 	ReleaseWorkspace(context.Context, string, io.Writer, io.Writer) (string, bool, error)
 
-	// GenerationRootFiles declares exclusive native roots, including lock outputs.
+	// ManagedWorkspaceFiles declares exclusive native roots, including lock outputs.
 	// A backend with no native workspace files returns an empty list.
-	GenerationRootFiles() []string
+	ManagedWorkspaceFiles() []string
 	// PrepareGeneration returns native contents, or no entries for a non-native project.
 	PrepareGeneration(PackageGenerationContext) ([]MergeEntry, error)
 

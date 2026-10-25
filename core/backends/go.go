@@ -215,7 +215,7 @@ func (Go) WriteDependencies(manifest []byte, dependencies []core.Dependency) ([]
 	return file.Format()
 }
 
-func (Go) GenerationRootFiles() []string { return []string{"go.mod", "go.sum"} }
+func (Go) ManagedWorkspaceFiles() []string { return []string{"go.mod", "go.sum"} }
 
 func (Go) PrepareGeneration(request core.PackageGenerationContext) ([]core.MergeEntry, error) {
 	source, found, err := extensions.ReadGoModule(request.Stage)
