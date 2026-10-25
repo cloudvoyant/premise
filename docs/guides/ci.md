@@ -55,6 +55,8 @@ Publish from a clean checkout after checks pass:
 pm release
 ```
 
+Generated workflows use `cloudvoyant/premise@v0` and install the latest stable CLI by default. Premise moves the major action tag after each successful stable GitHub release. Client repositories do not need to edit workflow references for each release.
+
 The generated main-branch workflow publishes stable releases. It creates or reuses the release tag, publishes downloadable files, then publishes eligible language packages.
 
 For an RC that another repository must test, include the exact marker in a feature-branch commit:

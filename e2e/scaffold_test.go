@@ -424,7 +424,7 @@ func scaffoldProject(t *testing.T, binary, kind string, infrastructure bool) str
 func assertScaffoldWorkflows(t *testing.T, workspace string, infrastructure bool) {
 	t.Helper()
 	for _, name := range []string{"on-commit", "on-merge"} {
-		assertFileContains(t, filepath.Join(workspace, ".github/workflows", name+".yml"), "cloudvoyant/premise@v")
+		assertFileContains(t, filepath.Join(workspace, ".github/workflows", name+".yml"), "cloudvoyant/premise@v0\n")
 	}
 	deploy := filepath.Join(workspace, ".github/workflows/on-deploy.yml")
 	if infrastructure {

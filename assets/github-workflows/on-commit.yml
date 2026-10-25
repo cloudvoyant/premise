@@ -37,7 +37,7 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
-      - uses: cloudvoyant/premise@v0.6.0-rc.306
+      - uses: cloudvoyant/premise@v0
         id: plan
         with:
           command: plan
@@ -46,7 +46,7 @@ jobs:
           install-premise: build
       - name: Run the root hook once before matrix rows
         if: steps.plan.outputs.mode == 'matrix'
-        uses: cloudvoyant/premise@v0.6.0-rc.306
+        uses: cloudvoyant/premise@v0
         with:
           command: flow
           flow: on-commit
@@ -67,7 +67,7 @@ jobs:
           fetch-tags: true
           persist-credentials: false
       - name: Run complete flow
-        uses: cloudvoyant/premise@v0.6.0-rc.306
+        uses: cloudvoyant/premise@v0
         with:
           command: flow
           flow: on-commit
@@ -99,7 +99,7 @@ jobs:
           fetch-tags: true
           persist-credentials: false
       - name: Run scoped complete flow
-        uses: cloudvoyant/premise@v0.6.0-rc.306
+        uses: cloudvoyant/premise@v0
         with:
           command: flow-matrix
           flow: on-commit
@@ -161,7 +161,7 @@ jobs:
             exit 1
           fi
       - name: Publish combined release
-        uses: cloudvoyant/premise@v0.6.0-rc.306
+        uses: cloudvoyant/premise@v0
         env:
           GH_TOKEN: ${{ github.token }}
         with:
@@ -187,7 +187,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Publish registry packages
-        uses: cloudvoyant/premise@v0.6.0-rc.306
+        uses: cloudvoyant/premise@v0
         env:
           GH_TOKEN: ${{ github.token }}
           CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
@@ -215,10 +215,9 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: cloudvoyant/premise@v0.6.0-rc.306
+      - uses: cloudvoyant/premise@v0
         with:
           setup-only: true
-          premise-version: v0.6.0-rc.306
           install-premise: pre-built
       - name: Authenticate infrastructure providers
         run: mise exec -- pm infra auth --ci --env-file "$GITHUB_ENV"

@@ -175,6 +175,11 @@ jobs:
           channel: stable
           version: ${{ needs.plan.outputs.version }}
           files-dir: ${{ needs.plan.outputs.native == 'true' && format('{0}/premise-files', runner.temp) || '' }}
+      - name: Update the stable action major tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+        run: mise run publish:action
 
   publish-packages:
     needs: publish-release
