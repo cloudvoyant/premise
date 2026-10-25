@@ -1057,6 +1057,140 @@ func TestGenerateWorkspace(t *testing.T) {
 
 }
 
+func TestGenerateWorkspaceInitialization(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		name := "when the first project needs workspace quality rules"
+		if existing {
+			name = "when the workspace already has custom quality rules"
+		}
+		t.Run(name, func(t *testing.T) {
+			// Arrange
+			installMiseTestShim(t, false)
+			temporary := t.TempDir()
+			t.Setenv("TMPDIR", temporary)
+			root := filepath.Join(t.TempDir(), "client")
+			if _, err := InitializeWorkspace(root, "monorepo_root = true\n"); err != nil {
+				t.Fatal(err)
+			}
+			registry := writeRegistryFixture(t, templateFixture("example", "lib"))
+			writeTestFile(t, filepath.Join(registry, ".quality.yml"), "complexity: 30\n", 0644)
+			writeTestFile(t, filepath.Join(registry, "mise.toml"), "[tools]\ngo = '1.25.0'\n", 0644)
+			manifestPath := filepath.Join(registry, ManifestFilename)
+			manifest, err := LoadManifest(manifestPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			manifest.TemplateRegistry.WorkspaceFiles = []string{"mise.toml"}
+			manifest.TemplateRegistry.WorkspaceInitFiles = []string{".quality.yml"}
+			if err := SaveManifest(manifestPath, manifest); err != nil {
+				t.Fatal(err)
+			}
+			original := "# Client rules\ncomplexity: 20\n"
+			if existing {
+				writeTestFile(t, filepath.Join(root, ".quality.yml"), original, 0600)
+			}
+
+			// Act
+			err = Generate(t.Context(), root, registry+":example", fixedGenerateOptions(fixedQuestionnaire{"name": "first"}), io.Discard)
+
+			// Assert
+			t.Run("it copies missing defaults and preserves existing contents and permissions", func(t *testing.T) {
+				if err != nil {
+					t.Fatal(err)
+				}
+				data, err := os.ReadFile(filepath.Join(root, ".quality.yml"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				want, mode := "complexity: 30\n", os.FileMode(0644)
+				if existing {
+					want, mode = original, 0600
+				}
+				if string(data) != want {
+					t.Fatalf("quality rules = %q, want %q", data, want)
+				}
+				info, err := os.Stat(filepath.Join(root, ".quality.yml"))
+				if err != nil || info.Mode().Perm() != mode {
+					t.Fatalf("quality mode = %v, %v", info, err)
+				}
+			})
+
+			// Arrange
+			writeTestFile(t, filepath.Join(root, ".quality.yml"), original, 0600)
+			writeTestFile(t, filepath.Join(registry, ".quality.yml"), "complexity: 50\n", 0644)
+			writeTestFile(t, filepath.Join(registry, "mise.toml"), "[tools]\ngo = '1.25.1'\n", 0644)
+
+			// Act
+			err = Generate(t.Context(), root, registry+":example", fixedGenerateOptions(fixedQuestionnaire{"name": "second"}), io.Discard)
+
+			// Assert
+			t.Run("it merges later tool dependencies without replacing workspace rules", func(t *testing.T) {
+				if err != nil {
+					t.Fatal(err)
+				}
+				data, err := os.ReadFile(filepath.Join(root, ".quality.yml"))
+				if err != nil || string(data) != original {
+					t.Fatalf("client quality rules changed: %q, %v", data, err)
+				}
+				configuration, err := os.ReadFile(filepath.Join(root, "mise.toml"))
+				if err != nil || !strings.Contains(string(configuration), "1.25.1") {
+					t.Fatalf("dependency was not merged: %s, %v", configuration, err)
+				}
+				stages, err := filepath.Glob(filepath.Join(root, "libs", ".premise-stage-*"))
+				if err != nil || len(stages) != 0 {
+					t.Fatalf("project stages remain: %v, %v", stages, err)
+				}
+				entries, err := os.ReadDir(temporary)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, entry := range entries {
+					if strings.HasPrefix(entry.Name(), "premise-") {
+						t.Fatalf("temporary stage remains: %s", entry.Name())
+					}
+				}
+			})
+		})
+	}
+	t.Run("when a file is declared for initialization and merging", func(t *testing.T) {
+		// Arrange
+		root, source, registry := t.TempDir(), t.TempDir(), t.TempDir()
+		writeTestFile(t, filepath.Join(source, "README.md"), "project", 0644)
+		writeTestFile(t, filepath.Join(registry, ".quality.yml"), "complexity: 30\n", 0644)
+
+		// Act
+		plan, err := BuildGeneratePlan(GenerateParameters{
+
+			ClientRepoRoot: root,
+
+			TemplateRoot: source,
+
+			RegistryRoot: registry,
+
+			RegistryWorkspaceFiles: []string{".quality.yml"},
+
+			RegistryWorkspaceInitFiles: []string{".quality.yml"},
+
+			ProjectPath: "libs/new",
+
+			TemplateKind: "lib",
+		})
+		if plan != nil {
+			t.Cleanup(func() { _ = plan.close() })
+		}
+
+		// Assert
+		t.Run("it rejects ambiguous ownership before writing files", func(t *testing.T) {
+			if err == nil || !strings.Contains(err.Error(), "both initialization and merging") {
+				t.Fatalf("expected declaration conflict, got %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(root, ".quality.yml")); !os.IsNotExist(err) {
+				t.Fatalf("quality rules published: %v", err)
+			}
+		})
+	})
+}
+
 // Private helpers ------------------------------------------------------------
 
 func (answers fixedQuestionnaire) Ask(_ []Question) (map[string]string, error) {

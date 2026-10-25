@@ -679,7 +679,12 @@ func nativeRegistry(t *testing.T, manager, root string) string {
 	t.Helper()
 	manifest := core.NewManifest("registry-development")
 	manifest.Workspace.PackageManagers = []string{manager}
-	manifest.TemplateRegistry = &core.TemplateRegistry{WorkspaceFiles: []string{}, Templates: []core.Template{}}
+	manifest.TemplateRegistry = &core.TemplateRegistry{
+		WorkspaceFiles:     []string{},
+		WorkspaceInitFiles: []string{".editorconfig"},
+		Templates:          []core.Template{},
+	}
+	writeFixtureFile(t, filepath.Join(root, ".editorconfig"), readFile(t, filepath.Join(repositoryRoot(t), "e2e/testdata/package-generation/shared/.editorconfig")), 0644)
 	for _, kind := range []string{"lib", "app"} {
 		name := kind + "-template"
 		manifest.TemplateRegistry.Templates = append(manifest.TemplateRegistry.Templates, core.Template{

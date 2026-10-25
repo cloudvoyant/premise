@@ -53,6 +53,23 @@ return core.ApplyGeneratePlan(ctx, plan, output)
 
 ## Implementation Details
 
+### Workspace initialization
+
+Registries can declare `workspace_init_files` for initial workspace rules. Missing files are copied to the client root. Existing files remain under client control, including their permissions.
+
+| Declaration | First project | Later projects |
+| --- | --- | --- |
+| `workspace_init_files` | Copy missing quality rules. | Keep existing client rules. |
+| `workspace_files` | Copy or merge shared files. | Merge dependency and workspace contributions. |
+
+```mermaid
+flowchart LR
+    Defaults["Registry quality rules"] --> Missing{"Client file missing?"}
+    Missing -->|Yes| Copy["Plan initial copy"]
+    Missing -->|No| Keep["Keep client rules"]
+    Manifests["Dependency contributions"] --> Merge["Normal manifest merge"]
+```
+
 ### Ownership and staging
 
 ```mermaid

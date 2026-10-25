@@ -64,7 +64,7 @@ pm template ls
 pm template test
 ```
 
-Register template questions and literal substitutions in `premise.yaml`. Templates remain valid projects before generation. Root files listed in `template_registry.workspace_files` are shared with the client. Premise asks about conflicting root files before it writes the generated project.
+Register template questions and literal substitutions in `premise.yaml`. Templates remain valid projects before generation. Root files listed in `template_registry.workspace_files` merge with the client. Use `template_registry.workspace_init_files` for quality rules that are copied only when missing. Later templates preserve those client rules. Premise asks about other conflicting root files before it writes the generated project.
 
 Template registries provide application and library templates. Clients own infrastructure code under `infra/` and import published providers directly. See [Generation](../generation.md) and [Infrastructure](../modules/infrastructure.md).
 

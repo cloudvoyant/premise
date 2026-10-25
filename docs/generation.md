@@ -9,7 +9,7 @@ Generation does not overwrite an existing project destination or update an exist
 ## Requirements
 
 - Resolve a selector to a registry and one declared template, whether the source is local or remote.
-- Read client workspace files only from `template_registry.workspace_files` in the registry manifest.
+- Read shared workspace files from `template_registry.workspace_files` and `template_registry.workspace_init_files` in the registry manifest.
 - Restrict workspace-file patterns to direct regular files at the registry repository root.
 - Always exclude `premise.yaml`, directories, symlinks, special files, and nested paths.
 - Apply questionnaire answers and literal substitutions to declared registry files and selected-template files.
@@ -40,6 +40,8 @@ template_registry:
 ```
 
 `workspace_files` is required when `template_registry` exists. An explicit empty list means the registry shares no workspace files. Every pattern is relative to the repository root, cannot contain a path separator, and must match at least one eligible direct regular file. Matches are deduplicated and sorted. `premise.yaml` is registry metadata and is never copied, even when a glob would otherwise match it.
+
+`workspace_init_files` is optional. Use it for workspace quality rules such as `.golangci.yml`, `.editorconfig`, or `.prettierrc`. Premise copies each file only when the client path is absent. Later projects keep the client contents and permissions without a conflict prompt. Use `workspace_files` for dependency manifests and other files that must merge on later additions. The two lists cannot select the same file.
 
 Every template declaration has an explicit repository-relative `path`. Existing registries can keep paths such as `templates/premise-app`; the path is independent of `workspace_files`. Direct files inside the physical `templates/` directory have no generation meaning unless a template path contains them.
 

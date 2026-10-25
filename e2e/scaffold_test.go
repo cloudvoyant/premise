@@ -156,6 +156,9 @@ func testNativeWorkspaceGeneration(t *testing.T) {
 			runCommand(t, workspace, binary, "init")
 
 			runCommand(t, workspace, binary, "generate", registry+":lib-template", "--answer", "name=helper,library=helper")
+			initialRules := readFile(t, filepath.Join(workspace, ".editorconfig"))
+			clientRules := initialRules + "\n# Client quality rules\n"
+			writeFixtureFile(t, filepath.Join(workspace, ".editorconfig"), clientRules, 0644)
 			// Arrange stale root and template locks; native installation must replace them.
 			lock := ""
 			switch manager {
@@ -180,6 +183,16 @@ func testNativeWorkspaceGeneration(t *testing.T) {
 				_, generatedLockErr = os.Stat(filepath.Join(workspace, lock))
 			}
 			runCommand(t, workspace, binary, "install")
+
+			t.Run("it initializes quality rules once and preserves client changes", func(t *testing.T) {
+				baseline := readFile(t, filepath.Join(registry, ".editorconfig"))
+				if initialRules != baseline {
+					t.Fatalf("initial rules = %q, want %q", initialRules, baseline)
+				}
+				assertFileContent(t, filepath.Join(workspace, ".editorconfig"), clientRules)
+				assertAbsent(t, filepath.Join(workspace, "libs/helper/.editorconfig"))
+				assertAbsent(t, filepath.Join(workspace, "apps/tool/.editorconfig"))
+			})
 
 			t.Run("it resolves the root and uses its existing sibling", func(t *testing.T) {
 				if generatedLockErr != nil {

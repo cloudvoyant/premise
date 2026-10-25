@@ -29,19 +29,20 @@ type GenerateOptions struct {
 
 // GenerateParameters contains roots and choices resolved for one generated project.
 type GenerateParameters struct {
-	ProjectPaths           []string
-	WorkspaceName          string
-	PackageManagers        []string
-	RegistryRoot           string
-	RegistryWorkspaceFiles []string
-	TemplateRoot           string
-	ClientRepoRoot         string
-	ProjectPath            string
-	Substitutions          map[string]string
-	TemplateKind           string
-	RegistryIdentity       string
-	TemplateIdentity       string
-	ResolveConflict        MergeConflictResolver
+	ProjectPaths               []string
+	WorkspaceName              string
+	PackageManagers            []string
+	RegistryRoot               string
+	RegistryWorkspaceFiles     []string
+	RegistryWorkspaceInitFiles []string
+	TemplateRoot               string
+	ClientRepoRoot             string
+	ProjectPath                string
+	Substitutions              map[string]string
+	TemplateKind               string
+	RegistryIdentity           string
+	TemplateIdentity           string
+	ResolveConflict            MergeConflictResolver
 }
 
 // GeneratePlan is the complete, prepared generation. Its staging paths are
@@ -145,19 +146,20 @@ func Generate(ctx context.Context, cwd, selector string, options GenerateOptions
 		projectPaths = append(projectPaths, project.Path)
 	}
 	plan, err := BuildGeneratePlan(GenerateParameters{
-		ProjectPaths:           projectPaths,
-		WorkspaceName:          workspaceManifest.Workspace.Name,
-		PackageManagers:        managers,
-		RegistryRoot:           sourceRoot,
-		RegistryWorkspaceFiles: templateManifest.TemplateRegistry.WorkspaceFiles,
-		TemplateRoot:           source,
-		ClientRepoRoot:         workspaceRoot,
-		ProjectPath:            relativeDestination,
-		Substitutions:          replacements,
-		TemplateIdentity:       selector,
-		TemplateKind:           template.Kind,
-		RegistryIdentity:       selection.Source,
-		ResolveConflict:        options.ConflictResolver,
+		ProjectPaths:               projectPaths,
+		WorkspaceName:              workspaceManifest.Workspace.Name,
+		PackageManagers:            managers,
+		RegistryRoot:               sourceRoot,
+		RegistryWorkspaceFiles:     templateManifest.TemplateRegistry.WorkspaceFiles,
+		RegistryWorkspaceInitFiles: templateManifest.TemplateRegistry.WorkspaceInitFiles,
+		TemplateRoot:               source,
+		ClientRepoRoot:             workspaceRoot,
+		ProjectPath:                relativeDestination,
+		Substitutions:              replacements,
+		TemplateIdentity:           selector,
+		TemplateKind:               template.Kind,
+		RegistryIdentity:           selection.Source,
+		ResolveConflict:            options.ConflictResolver,
 	})
 	if err != nil {
 		return err
@@ -456,6 +458,16 @@ func buildGenerationEntries(plan *GeneratePlan, sources generationSources, reque
 	if err != nil {
 		return err
 	}
+	initial, err := readSharedValues(sources.registryRoot, request.RegistryWorkspaceInitFiles, literalReplacer(request.Substitutions))
+	if err != nil {
+		return err
+	}
+	for path, value := range initial {
+		if _, duplicate := shared[path]; duplicate {
+			return fmt.Errorf("workspace file %s is declared for both initialization and merging", path)
+		}
+		shared[path] = value
+	}
 	selectedInfo, err := os.Stat(plan.selectedStage)
 	if err != nil {
 		return fmt.Errorf("inspect selected template stage: %w", err)
@@ -477,11 +489,18 @@ func buildGenerationEntries(plan *GeneratePlan, sources generationSources, reque
 		registryIdentity = filepath.Base(sources.templateRoot)
 	}
 	for _, path := range paths {
+		_, initialize := initial[path]
 		if _, owned := plan.nativeRoots[path]; owned {
+			if initialize {
+				return fmt.Errorf("managed workspace file %s must use workspace_files so dependencies can merge", path)
+			}
 			continue
 		}
 		sharedValue := shared[path]
 		clientValue, clientOK := client[path]
+		if initialize && clientOK {
+			continue
+		}
 		sharedValue.Present = true
 		clientValue.Present = clientOK
 		entry := MergeEntry{Path: path, Shared: sharedValue, Selected: clientValue}

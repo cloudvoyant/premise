@@ -45,8 +45,9 @@ type Config struct {
 }
 
 type TemplateRegistry struct {
-	WorkspaceFiles []string   `yaml:"workspace_files"`
-	Templates      []Template `yaml:"templates"`
+	WorkspaceFiles     []string   `yaml:"workspace_files"`
+	WorkspaceInitFiles []string   `yaml:"workspace_init_files,omitempty"`
+	Templates          []Template `yaml:"templates"`
 }
 
 type Workspace struct {
@@ -398,16 +399,32 @@ func (manifest Config) Validate() error {
 		if manifest.TemplateRegistry.WorkspaceFiles == nil {
 			return errors.New("template_registry.workspace_files is required; use [] when no workspace files are shared")
 		}
-		seenPatterns := make(map[string]struct{}, len(manifest.TemplateRegistry.WorkspaceFiles))
-		for index, pattern := range manifest.TemplateRegistry.WorkspaceFiles {
-			if err := validateWorkspaceFilePattern(pattern); err != nil {
-				return fmt.Errorf("template_registry.workspace_files[%d]: %w", index, err)
+		for _, files := range []struct {
+			field    string
+			patterns []string
+		}{
+			{
+				field:    "workspace_files",
+				patterns: manifest.TemplateRegistry.WorkspaceFiles,
+			},
+			{
+				field:    "workspace_init_files",
+				patterns: manifest.TemplateRegistry.WorkspaceInitFiles,
+			},
+		} {
+			field, patterns := files.field, files.patterns
+			seenPatterns := make(map[string]struct{}, len(patterns))
+			for index, pattern := range patterns {
+				if err := validateWorkspaceFilePattern(pattern); err != nil {
+					return fmt.Errorf("template_registry.%s[%d]: %w", field, index, err)
+				}
+				if _, duplicate := seenPatterns[pattern]; duplicate {
+					return fmt.Errorf("template_registry.%s contains duplicate pattern %q", field, pattern)
+				}
+				seenPatterns[pattern] = struct{}{}
 			}
-			if _, duplicate := seenPatterns[pattern]; duplicate {
-				return fmt.Errorf("template_registry.workspace_files contains duplicate pattern %q", pattern)
-			}
-			seenPatterns[pattern] = struct{}{}
 		}
+
 		templates = manifest.TemplateRegistry.Templates
 	}
 

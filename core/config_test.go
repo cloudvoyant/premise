@@ -88,6 +88,58 @@ func TestTemplateRegistryRequiresExplicitWorkspaceFiles(t *testing.T) {
 	}
 }
 
+func TestTemplateRegistryWorkspaceInitialization(t *testing.T) {
+	for _, scenario := range []struct {
+		name      string
+		files     []string
+		wantError string
+	}{
+		{name: "when no initialization files are declared"},
+		{
+			name:  "when quality files are declared",
+			files: []string{".golangci.yml", ".editorconfig"},
+		},
+		{
+			name:      "when an initialization path escapes the root",
+			files:     []string{"../rules.yml"},
+			wantError: "workspace_init_files",
+		},
+		{
+			name:      "when initialization patterns repeat",
+			files:     []string{".golangci.yml", ".golangci.yml"},
+			wantError: "duplicate pattern",
+		},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			// Arrange
+			manifest := NewManifest("registry")
+			manifest.Workspace.Kind = ProjectKindTemplateRegistry
+			manifest.TemplateRegistry = &TemplateRegistry{
+
+				WorkspaceFiles: []string{},
+
+				WorkspaceInitFiles: scenario.files,
+
+				Templates: []Template{},
+			}
+
+			// Act
+			err := manifest.Validate()
+
+			// Assert
+			t.Run("it accepts optional safe defaults and rejects invalid declarations", func(t *testing.T) {
+				if scenario.wantError != "" {
+					if err == nil || !strings.Contains(err.Error(), scenario.wantError) {
+						t.Fatalf("error = %v, want %q", err, scenario.wantError)
+					}
+				} else if err != nil {
+					t.Fatal(err)
+				}
+			})
+		})
+	}
+}
+
 func TestTemplateRegistryRequiresExplicitSafeTemplatePaths(t *testing.T) {
 	for _, test := range []struct {
 		path string
