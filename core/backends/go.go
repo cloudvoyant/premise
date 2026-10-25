@@ -228,10 +228,10 @@ func (Go) PrepareGeneration(request core.PackageGenerationContext) ([]core.Merge
 		}
 		return nil, nil
 	}
-	if err := validateGoGenerationLayout(request); err != nil {
+	if err := validateGoWorkspaceLayout(request); err != nil {
 		return nil, err
 	}
-	data, err := buildGoWorkspaceModule(request, source)
+	data, err := mergeGoModuleManifests(request, source)
 	if err != nil {
 		return nil, err
 	}
@@ -257,7 +257,7 @@ func (Go) CreateGoReleaserConfig(root string, manifest core.Config) (string, err
 			Builds   []map[string]any `yaml:"builds"`
 			Archives []map[string]any `yaml:"archives"`
 		}
-		if err := yaml.Unmarshal([]byte(goReleaseBuilds(manifest)), &legacy); err != nil {
+		if err := yaml.Unmarshal([]byte(goRootReleaseConfig(manifest)), &legacy); err != nil {
 			return "", err
 		}
 		legacy.Archives[0]["id"] = "go-root"
@@ -283,8 +283,8 @@ func (Go) CreateGoReleaserConfig(root string, manifest core.Config) (string, err
 			continue
 		}
 		name := "go-" + target.Name
-		builds = append(builds, goProjectBuild(name, filepath.ToSlash(target.Path), main, policy.Binary))
-		archives = append(archives, goProjectArchive(name))
+		builds = append(builds, goProjectBuildConfig(name, filepath.ToSlash(target.Path), main, policy.Binary))
+		archives = append(archives, goProjectArchiveConfig(name))
 	}
 	if len(builds) == 0 {
 		return "", nil
@@ -318,7 +318,7 @@ func goPublicationTargets(ctx context.Context, root, version, task string) ([]co
 	return targets, nil
 }
 
-func goProjectBuild(name, directory, main, binary string) map[string]any {
+func goProjectBuildConfig(name, directory, main, binary string) map[string]any {
 	if binary == "" {
 		binary = strings.TrimPrefix(name, "go-")
 	}
@@ -336,7 +336,7 @@ func goProjectBuild(name, directory, main, binary string) map[string]any {
 	}
 }
 
-func goProjectArchive(name string) map[string]any {
+func goProjectArchiveConfig(name string) map[string]any {
 	return map[string]any{
 		"id":            name,
 		"ids":           []string{name},
@@ -345,8 +345,8 @@ func goProjectArchive(name string) map[string]any {
 	}
 }
 
-// goReleaseBuilds preserves the original root Go CLI archive matrix.
-func goReleaseBuilds(manifest core.Config) string {
+// goRootReleaseConfig preserves the original root Go CLI archive matrix.
+func goRootReleaseConfig(manifest core.Config) string {
 	project := manifest.Workspace.Name
 	return fmt.Sprintf(`builds:
   - id: %s
@@ -376,7 +376,7 @@ archives:
 `, project, project)
 }
 
-func validateGoGenerationLayout(request core.PackageGenerationContext) error {
+func validateGoWorkspaceLayout(request core.PackageGenerationContext) error {
 	if _, err := os.Lstat(filepath.Join(request.WorkspaceRoot, "go.work")); err == nil {
 		return fmt.Errorf("Go generation requires one root module; remove go.work before adding a Go project")
 	} else if !os.IsNotExist(err) {
@@ -395,7 +395,7 @@ func validateGoGenerationLayout(request core.PackageGenerationContext) error {
 	return nil
 }
 
-func buildGoWorkspaceModule(request core.PackageGenerationContext, source extensions.GoModule) ([]byte, error) {
+func mergeGoModuleManifests(request core.PackageGenerationContext, source extensions.GoModule) ([]byte, error) {
 	suffix := "/" + filepath.ToSlash(request.ProjectPath)
 	if !strings.HasSuffix(source.Path, suffix) {
 		return nil, fmt.Errorf("template module %s must end with its project path %s", source.Path, suffix)

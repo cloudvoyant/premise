@@ -148,7 +148,7 @@ func (Cargo) ReleaseWorkspace(ctx context.Context, root string, stdout, stderr i
 
 // CreateGoReleaserConfig returns Rust build and archive definitions.
 func (Cargo) CreateGoReleaserConfig(root string, manifest core.Config) (string, error) {
-	return cargoReleaseBuilds(root, manifest)
+	return cargoApplicationReleaseConfig(root, manifest)
 }
 
 // ParseDependencies reads normal, workspace, and target-specific Cargo tables.
@@ -158,7 +158,7 @@ func (Cargo) ParseDependencies(manifest []byte) ([]core.Dependency, error) {
 	if err := toml.Unmarshal(manifest, &document); err != nil {
 		return nil, err
 	}
-	tables, err := cargoDependencyTables(document)
+	tables, err := readCargoDependencyTables(document)
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +206,7 @@ func (Cargo) WriteDependencies(manifest []byte, dependencies []core.Dependency) 
 	if err := toml.Unmarshal(manifest, &document); err != nil {
 		return nil, err
 	}
-	tables, err := cargoDependencyTables(document)
+	tables, err := readCargoDependencyTables(document)
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +246,7 @@ func (Cargo) WriteDependencies(manifest []byte, dependencies []core.Dependency) 
 func (Cargo) GenerationRootFiles() []string { return []string{"Cargo.toml", "Cargo.lock"} }
 
 func (Cargo) PrepareGeneration(request core.PackageGenerationContext) ([]core.MergeEntry, error) {
-	selected, found, err := readCargoGenerationCrate(request, request.ProjectPath, request.Stage)
+	selected, found, err := readCargoWorkspaceCrate(request, request.ProjectPath, request.Stage)
 	if err != nil || !found {
 		return nil, err
 	}
@@ -279,7 +279,7 @@ func (Cargo) PrepareGeneration(request core.PackageGenerationContext) ([]core.Me
 	if err := toml.Unmarshal(output, &verified); err != nil {
 		return nil, fmt.Errorf("cannot extend Cargo workspace without changing its layout: %w", err)
 	}
-	if err := validateCargoGenerationManifest(request, "", verified); err != nil {
+	if err := validateCargoManifestPaths(request, "", verified); err != nil {
 		return nil, err
 	}
 	return request.ResetLocks([]core.MergeEntry{request.RootEntry("Cargo.toml", output)}, "Cargo.lock")
@@ -292,7 +292,7 @@ type cargoDependencyTable struct {
 	values map[string]any
 }
 
-func cargoDependencyTables(document map[string]any) ([]cargoDependencyTable, error) {
+func readCargoDependencyTables(document map[string]any) ([]cargoDependencyTable, error) {
 	var scopes [][]string
 	for _, section := range []string{"dependencies", "dev-dependencies", "build-dependencies"} {
 		scopes = append(scopes, []string{section})
@@ -334,7 +334,7 @@ func validCargoDependencyScope(scope []string) bool {
 	return len(scope) == 1 || len(scope) == 2 && scope[0] == "workspace" && section == "dependencies" || len(scope) == 3 && scope[0] == "target"
 }
 
-func readCargoGenerationCrate(request core.PackageGenerationContext, base, directory string) (map[string]any, bool, error) {
+func readCargoWorkspaceCrate(request core.PackageGenerationContext, base, directory string) (map[string]any, bool, error) {
 	data, err := os.ReadFile(filepath.Join(directory, "Cargo.toml"))
 	if os.IsNotExist(err) {
 		return nil, false, nil
@@ -352,7 +352,7 @@ func readCargoGenerationCrate(request core.PackageGenerationContext, base, direc
 	if _, found := crate["workspace"]; found {
 		return nil, false, fmt.Errorf("crate Cargo.toml defines a nested workspace; templates must provide a crate that joins the client workspace")
 	}
-	if err := validateCargoGenerationManifest(request, base, crate); err != nil {
+	if err := validateCargoManifestPaths(request, base, crate); err != nil {
 		return nil, false, err
 	}
 	return crate, true, nil
@@ -372,7 +372,7 @@ func collectCargoWorkspaceMembers(request core.PackageGenerationContext) ([]stri
 	if err := toml.Unmarshal(request.ClientFiles["Cargo.toml"].Data, &clientValues); err != nil {
 		return nil, false, err
 	}
-	if err := validateCargoGenerationManifest(request, "", clientValues); err != nil {
+	if err := validateCargoManifestPaths(request, "", clientValues); err != nil {
 		return nil, false, err
 	}
 	members := []string{}
@@ -417,7 +417,7 @@ func readExistingCargoWorkspaceMembers(request core.PackageGenerationContext) ([
 		if err := request.ValidateLocalPath("", path); err != nil {
 			return nil, false, err
 		}
-		_, found, err := readCargoGenerationCrate(request, path, filepath.Join(request.WorkspaceRoot, path))
+		_, found, err := readCargoWorkspaceCrate(request, path, filepath.Join(request.WorkspaceRoot, path))
 		if err != nil {
 			return nil, false, fmt.Errorf("existing crate %s: %w", path, err)
 		}
@@ -459,7 +459,7 @@ func inspectCargoTemplatePackage(root string, template core.Template) (cargoTemp
 	}, true, nil
 }
 
-func cargoReleaseBuilds(root string, manifest core.Config) (string, error) {
+func cargoApplicationReleaseConfig(root string, manifest core.Config) (string, error) {
 	applications := []string{}
 	for _, template := range manifest.DeclaredTemplates() {
 		if template.Kind != "app" {
@@ -745,7 +745,7 @@ func writeCargoWorkspaceMembers(data []byte, members []string) ([]byte, error) {
 		expression := parser.Expression()
 		switch expression.Kind {
 		case unstable.Table, unstable.ArrayTable:
-			section = cargoTOMLKey(expression)
+			section = readCargoTOMLKey(expression)
 			if section == "workspace" && expression.Kind == unstable.Table {
 				first := expression.Child()
 				start := int(first.Raw.Offset + first.Raw.Length)
@@ -756,7 +756,7 @@ func writeCargoWorkspaceMembers(data []byte, members []string) ([]byte, error) {
 				}
 			}
 		case unstable.KeyValue:
-			key := cargoTOMLKey(expression)
+			key := readCargoTOMLKey(expression)
 			if section != "" {
 				key = section + "." + key
 			}
@@ -824,7 +824,7 @@ func writeCargoWorkspaceMembers(data []byte, members []string) ([]byte, error) {
 	return append(output, line...), nil
 }
 
-func cargoTOMLKey(node *unstable.Node) string {
+func readCargoTOMLKey(node *unstable.Node) string {
 	keys := node.Key()
 	var parts []string
 	for keys.Next() {
@@ -833,7 +833,7 @@ func cargoTOMLKey(node *unstable.Node) string {
 	return strings.Join(parts, ".")
 }
 
-func validateCargoGenerationManifest(request core.PackageGenerationContext, base string, manifest map[string]any) error {
+func validateCargoManifestPaths(request core.PackageGenerationContext, base string, manifest map[string]any) error {
 	pkg, _ := manifest["package"].(map[string]any)
 	if workspace, ok := pkg["workspace"].(string); ok {
 		if err := request.ValidateLocalPath(base, workspace); err != nil {
@@ -850,12 +850,12 @@ func validateCargoGenerationManifest(request core.PackageGenerationContext, base
 	}
 	// Only native dependency/source tables contain filesystem references; metadata is opaque.
 	for _, key := range []string{"dependencies", "dev-dependencies", "build-dependencies", "patch", "replace", "lib", "bin", "test", "bench", "example"} {
-		if err := validateCargoGenerationPaths(request, base, manifest[key]); err != nil {
+		if err := validateCargoLocalPaths(request, base, manifest[key]); err != nil {
 			return err
 		}
 	}
 	if workspace, ok := manifest["workspace"].(map[string]any); ok {
-		if err := validateCargoGenerationPaths(request, "", workspace["dependencies"]); err != nil {
+		if err := validateCargoLocalPaths(request, "", workspace["dependencies"]); err != nil {
 			return err
 		}
 	}
@@ -863,7 +863,7 @@ func validateCargoGenerationManifest(request core.PackageGenerationContext, base
 		for _, target := range targets {
 			if object, ok := target.(map[string]any); ok {
 				for _, key := range []string{"dependencies", "dev-dependencies", "build-dependencies"} {
-					if err := validateCargoGenerationPaths(request, base, object[key]); err != nil {
+					if err := validateCargoLocalPaths(request, base, object[key]); err != nil {
 						return err
 					}
 				}
@@ -873,7 +873,7 @@ func validateCargoGenerationManifest(request core.PackageGenerationContext, base
 	return nil
 }
 
-func validateCargoGenerationPaths(request core.PackageGenerationContext, base string, value any) error {
+func validateCargoLocalPaths(request core.PackageGenerationContext, base string, value any) error {
 	switch object := value.(type) {
 	case map[string]any:
 		if path, ok := object["path"].(string); ok {
@@ -882,13 +882,13 @@ func validateCargoGenerationPaths(request core.PackageGenerationContext, base st
 			}
 		}
 		for _, child := range object {
-			if err := validateCargoGenerationPaths(request, base, child); err != nil {
+			if err := validateCargoLocalPaths(request, base, child); err != nil {
 				return err
 			}
 		}
 	case []any:
 		for _, child := range object {
-			if err := validateCargoGenerationPaths(request, base, child); err != nil {
+			if err := validateCargoLocalPaths(request, base, child); err != nil {
 				return err
 			}
 		}

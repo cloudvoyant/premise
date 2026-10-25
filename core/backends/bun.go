@@ -206,7 +206,7 @@ func (Bun) PrepareGeneration(request core.PackageGenerationContext) ([]core.Merg
 	if err := includeBunWorkspaceProject(request, client, selected); err != nil {
 		return nil, err
 	}
-	if err := validateBunGenerationPaths(request, "", client); err != nil {
+	if err := validateBunLocalDependencyPaths(request, "", client); err != nil {
 		return nil, err
 	}
 	output, err := json.MarshalIndent(client, "", "  ")
@@ -234,7 +234,7 @@ func mergeBunWorkspaceConfig(request core.PackageGenerationContext) (map[string]
 		if err != nil {
 			return nil, false, fmt.Errorf("selected package.json: %w", err)
 		}
-		if err := validateBunGenerationPaths(request, request.ProjectPath, project); err != nil {
+		if err := validateBunLocalDependencyPaths(request, request.ProjectPath, project); err != nil {
 			return nil, false, err
 		}
 	}
@@ -280,7 +280,7 @@ func mergeBunWorkspaceConfig(request core.PackageGenerationContext) (map[string]
 }
 
 func includeBunWorkspaceProject(request core.PackageGenerationContext, client map[string]any, selected bool) error {
-	patterns, err := bunGenerationPatterns(client)
+	patterns, err := readBunWorkspacePatterns(client)
 	if err != nil {
 		return err
 	}
@@ -572,7 +572,7 @@ func mergeBunPackageSettings(client, incoming map[string]any, path string, resol
 	return nil
 }
 
-func bunGenerationPatterns(value map[string]any) ([]string, error) {
+func readBunWorkspacePatterns(value map[string]any) ([]string, error) {
 	raw, exists := value["workspaces"]
 	if !exists {
 		return nil, nil
@@ -595,7 +595,7 @@ func bunGenerationPatterns(value map[string]any) ([]string, error) {
 	return patterns, nil
 }
 
-func validateBunGenerationPaths(request core.PackageGenerationContext, base string, pkg map[string]any) error {
+func validateBunLocalDependencyPaths(request core.PackageGenerationContext, base string, pkg map[string]any) error {
 	for _, field := range []string{"dependencies", "devDependencies", "optionalDependencies"} {
 		dependencies, _ := pkg[field].(map[string]any)
 		for _, raw := range dependencies {
