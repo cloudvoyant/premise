@@ -19,7 +19,10 @@ import (
 // manager-specific release operations selected by premise.yaml. Core owns
 // release sequencing; implementations own package-format behavior.
 type PackageManagerBackend interface {
-	PackageManagerDependencies
+	// ParseDependencies and WriteDependencies translate native manifests to and
+	// from the common dependency model. Writers retain unrelated client settings.
+	ParseDependencies(manifest []byte) ([]Dependency, error)
+	WriteDependencies(manifest []byte, dependencies []Dependency) ([]byte, error)
 
 	// ID returns the package manager name used in workspace.package_managers.
 	ID() string
@@ -54,6 +57,19 @@ type PackageManagerBackend interface {
 	// ReleaseWorkspace prepares and returns the directory used by GoReleaser.
 	// The boolean result requests serial artifact builds.
 	ReleaseWorkspace(context.Context, string, io.Writer, io.Writer) (string, bool, error)
+
+	// GenerationRootFiles declares exclusive native roots, including lock outputs.
+	// A backend with no native workspace files returns an empty list.
+	GenerationRootFiles() []string
+	// PrepareGeneration returns native contents, or no entries for a non-native project.
+	PrepareGeneration(PackageGenerationContext) ([]MergeEntry, error)
+
+	// ReleaseTools lists extra build tools; no extra tools means an empty list.
+	ReleaseTools(string, Config) ([]string, error)
+
+	// PublishesFromGitTag reports whether the tag itself distributes packages.
+	// Core must complete native publication checks before creating that tag.
+	PublishesFromGitTag() bool
 }
 
 // Dependency is the manifest-independent form consumed by the merge module.
@@ -68,13 +84,6 @@ type Dependency struct {
 	Indirect bool
 }
 
-// PackageManagerDependencies translates native manifests to and from the common
-// dependency list. Writers retain the client's unrelated manifest settings.
-type PackageManagerDependencies interface {
-	ParseDependencies(manifest []byte) ([]Dependency, error)
-	WriteDependencies(manifest []byte, dependencies []Dependency) ([]byte, error)
-}
-
 // PackageGenerationContext identifies the selected template and its destination.
 // ClientFiles contains original client values; SharedFiles contains declared registry
 // contributions. Providers return native contents; core owns file snapshots and modes.
@@ -87,25 +96,6 @@ type PackageGenerationContext struct {
 	ClientFiles     map[string]PathValue
 	SharedFiles     map[string]PathValue
 	ResolveConflict MergeConflictResolver
-}
-
-// PackageManagerGeneration prepares native workspace files when a template is
-// generated. Providers without native workspace preparation need no hook.
-type PackageManagerGeneration interface {
-	// GenerationRootFiles declares exclusive native roots, including lock outputs.
-	GenerationRootFiles() []string
-	PrepareGeneration(PackageGenerationContext) ([]MergeEntry, error)
-}
-
-// PackageManagerReleaseTools supplies tools needed to build native artifacts.
-type PackageManagerReleaseTools interface {
-	ReleaseTools(string, Config) ([]string, error)
-}
-
-// PackageManagerRepositoryPublication identifies packages distributed by the
-// shared repository tag. Registry publishers keep their existing upload stage.
-type PackageManagerRepositoryPublication interface {
-	PublishesRepositoryPackages() bool
 }
 
 // RegisterPackageManagerBackend registers an implementation by ID. Workspaces

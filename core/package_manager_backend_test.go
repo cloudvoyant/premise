@@ -135,6 +135,12 @@ func useTestPackageManagers(t *testing.T, plugins ...PackageManagerBackend) {
 	}
 }
 
+func (p testPackageManager) GenerationRootFiles() []string { return nil }
+func (p testPackageManager) PrepareGeneration(PackageGenerationContext) ([]MergeEntry, error) {
+	return nil, nil
+}
+func (p testPackageManager) ReleaseTools(string, Config) ([]string, error) { return nil, nil }
+
 func (p testPackageManager) ParseDependencies([]byte) ([]Dependency, error) { return nil, nil }
 func (p testPackageManager) WriteDependencies(manifest []byte, _ []Dependency) ([]byte, error) {
 	return append([]byte(nil), manifest...), nil
@@ -177,4 +183,4 @@ func (p testPackageManager) CreateGoReleaserConfig(_ string, _ Config) (string, 
 	return p.builds, p.buildErr
 }
 
-func (p testPackageManager) PublishesRepositoryPackages() bool { return p.repositoryPackages }
+func (p testPackageManager) PublishesFromGitTag() bool { return p.repositoryPackages }

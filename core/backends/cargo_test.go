@@ -884,3 +884,27 @@ func TestCargoDependencyManifests(t *testing.T) {
 	})
 
 }
+func TestCargoReleaseConfiguration(t *testing.T) {
+	t.Run("when releasing Cargo applications", func(t *testing.T) {
+		root := releaseConfigurationFixture(t, []string{"cargo"}, false)
+
+		config, err := core.GoReleaserConfig(root)
+
+		t.Run("it includes application builds and omits library builds", func(t *testing.T) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{"id: rust-app", "id: rust-cli", "builder: rust", "x86_64-unknown-linux-gnu", "aarch64-apple-darwin"} {
+				if !strings.Contains(string(config), want) {
+					t.Errorf("release configuration omits %q", want)
+				}
+			}
+			if strings.Contains(string(config), "id: rust-lib") || strings.Contains(string(config), "id: tauri-app") {
+				t.Fatal("library produces an executable")
+			}
+			if count := strings.Count(string(config), "builder: rust"); count != 2 {
+				t.Fatalf("expected two Cargo application builds, got %d", count)
+			}
+		})
+	})
+}

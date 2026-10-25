@@ -850,7 +850,7 @@ func unionPathKeys(left, right map[string]PathValue) []string {
 
 type generationProvider struct {
 	id      string
-	backend PackageManagerGeneration
+	backend PackageManagerBackend
 	paths   []string
 }
 
@@ -862,11 +862,7 @@ func prepareNativeGeneration(plan *GeneratePlan, request GenerateParameters, sha
 	owners := map[string]string{}
 	var providers []generationProvider
 	for _, backend := range backends {
-		generation, ok := backend.(PackageManagerGeneration)
-		if !ok {
-			continue
-		}
-		paths := generation.GenerationRootFiles()
+		paths := backend.GenerationRootFiles()
 		for _, path := range paths {
 			if path == "" || path == "." || filepath.Base(path) != path || strings.ContainsAny(path, "/\\") || path == ManifestFilename || path == "mise.toml" || path == ".git" || path == ".difflab" {
 				return fmt.Errorf("package manager %s claims invalid native root path %q", backend.ID(), path)
@@ -876,7 +872,7 @@ func prepareNativeGeneration(plan *GeneratePlan, request GenerateParameters, sha
 			}
 			owners[path] = backend.ID()
 		}
-		providers = append(providers, generationProvider{id: backend.ID(), backend: generation, paths: paths})
+		providers = append(providers, generationProvider{id: backend.ID(), backend: backend, paths: paths})
 	}
 	paths := make([]string, 0, len(owners))
 	for path := range owners {

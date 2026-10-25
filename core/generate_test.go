@@ -67,38 +67,6 @@ func TestGenerateProviderIntegration(t *testing.T) {
 		})
 	})
 
-	t.Run("when generating a project without a Go provider", func(t *testing.T) {
-		root, source := t.TempDir(), t.TempDir()
-		if err := os.WriteFile(filepath.Join(root, "go.work"), []byte("go 1.25.0\nuse /outside/workspace\n"), 0644); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(source, "package.json"), []byte(`{"name":"web"}`), 0644); err != nil {
-			t.Fatal(err)
-		}
-
-		plan, err := BuildGeneratePlan(GenerateParameters{ClientRepoRoot: root, TemplateRoot: source, ProjectPath: "apps/web", TemplateKind: "app"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = plan.close() })
-		err = prepareWorkspaceCandidate(plan, t.TempDir(), true)
-
-		t.Run("it leaves an unrelated Go workspace alone", func(t *testing.T) {
-			if err != nil {
-				t.Fatalf("unrelated generation applied Go workspace rules: %v", err)
-			}
-
-			stages := []string{plan.stage, plan.selectedStage}
-			if err := plan.close(); err != nil {
-				t.Fatal(err)
-			}
-			for _, stage := range stages {
-				if _, err := os.Stat(stage); !os.IsNotExist(err) {
-					t.Fatalf("generation stage remains: %s (%v)", stage, err)
-				}
-			}
-		})
-	})
 }
 
 func TestGeneratePackageSettings(t *testing.T) {

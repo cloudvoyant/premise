@@ -11,9 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"reflect"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -196,14 +194,17 @@ func (Bun) WriteDependencies(manifest []byte, dependencies []core.Dependency) ([
 	return append(output, '\n'), err
 }
 
+func (Bun) ReleaseTools(string, core.Config) ([]string, error) { return nil, nil }
+func (Bun) PublishesFromGitTag() bool                          { return false }
+
 func (Bun) GenerationRootFiles() []string { return []string{"package.json", "bun.lock", "bun.lockb"} }
 
 func (Bun) PrepareGeneration(request core.PackageGenerationContext) ([]core.MergeEntry, error) {
-	client, selected, err := mergeBunWorkspaceConfig(request)
+	client, err := mergeBunWorkspaceConfig(request)
 	if err != nil || client == nil {
 		return nil, err
 	}
-	if err := includeBunWorkspaceProject(request, client, selected); err != nil {
+	if err := includeBunWorkspaceProject(request, client); err != nil {
 		return nil, err
 	}
 	if err := validateBunLocalDependencyPaths(request, "", client); err != nil {
@@ -219,33 +220,30 @@ func (Bun) PrepareGeneration(request core.PackageGenerationContext) ([]core.Merg
 
 // Private helpers ------------------------------------------------------------
 
-func mergeBunWorkspaceConfig(request core.PackageGenerationContext) (map[string]any, bool, error) {
+func mergeBunWorkspaceConfig(request core.PackageGenerationContext) (map[string]any, error) {
 	selectedData, err := os.ReadFile(filepath.Join(request.Stage, "package.json"))
-	selected := err == nil
-	if err != nil && !os.IsNotExist(err) {
-		return nil, false, err
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	project, err := parseBunPackageJSON(selectedData)
+	if err != nil {
+		return nil, fmt.Errorf("selected package.json: %w", err)
+	}
+	if err := validateBunLocalDependencyPaths(request, request.ProjectPath, project); err != nil {
+		return nil, err
 	}
 	shared := request.SharedFiles["package.json"]
-	if !selected && !shared.Present {
-		return nil, false, nil
-	}
-	if selected {
-		project, err := parseBunPackageJSON(selectedData)
-		if err != nil {
-			return nil, false, fmt.Errorf("selected package.json: %w", err)
-		}
-		if err := validateBunLocalDependencyPaths(request, request.ProjectPath, project); err != nil {
-			return nil, false, err
-		}
-	}
 	original := request.ClientFiles["package.json"]
 	client, err := parseBunPackageJSON(original.Data)
 	if err != nil {
-		return nil, false, fmt.Errorf("client package.json: %w", err)
+		return nil, fmt.Errorf("client package.json: %w", err)
 	}
 	incoming, err := parseBunPackageJSON(shared.Data)
 	if err != nil {
-		return nil, false, fmt.Errorf("shared package.json: %w", err)
+		return nil, fmt.Errorf("shared package.json: %w", err)
 	}
 	// Registry identity and registry-development membership are not client contributions.
 	for _, key := range []string{"name", "version", "private", "workspaces"} {
@@ -260,26 +258,27 @@ func mergeBunWorkspaceConfig(request core.PackageGenerationContext) (map[string]
 	}
 	clientData, err := json.Marshal(client)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	merged, err := core.MergeManifestDependencies(Bun{}, "package.json", shared.Data, clientData, request.ResolveConflict)
 	if err != nil {
-		return nil, false, err
-	}
-	client, err = parseBunPackageJSON(merged)
-	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	for _, section := range []string{"dependencies", "devDependencies", "optionalDependencies", "peerDependencies"} {
 		delete(incoming, section)
 	}
-	if err := mergeBunPackageSettings(client, incoming, "package.json", request.ResolveConflict); err != nil {
-		return nil, false, err
+	incomingData, err := json.Marshal(incoming)
+	if err != nil {
+		return nil, err
 	}
-	return client, selected, nil
+	output, err := core.MergeJSON("package.json", incomingData, merged, request.ResolveConflict)
+	if err != nil {
+		return nil, err
+	}
+	return parseBunPackageJSON(output)
 }
 
-func includeBunWorkspaceProject(request core.PackageGenerationContext, client map[string]any, selected bool) error {
+func includeBunWorkspaceProject(request core.PackageGenerationContext, client map[string]any) error {
 	patterns, err := readBunWorkspacePatterns(client)
 	if err != nil {
 		return err
@@ -307,7 +306,7 @@ func includeBunWorkspaceProject(request core.PackageGenerationContext, client ma
 			covered = true
 		}
 	}
-	if selected && !covered {
+	if !covered {
 		patterns = append(patterns, request.ProjectPath)
 		values := make([]any, len(patterns))
 		for i, pattern := range patterns {
@@ -525,51 +524,6 @@ func parseBunPackageJSON(data []byte) (map[string]any, error) {
 		return nil, err
 	}
 	return nil, fmt.Errorf("unexpected content after JSON object")
-}
-
-func mergeBunPackageSettings(client, incoming map[string]any, path string, resolver core.MergeConflictResolver) error {
-	keys := make([]string, 0, len(incoming))
-	for key := range incoming {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		next := incoming[key]
-		previous, exists := client[key]
-		if !exists {
-			client[key] = next
-			continue
-		}
-		if reflect.DeepEqual(previous, next) {
-			continue
-		}
-		left, leftMap := previous.(map[string]any)
-		right, rightMap := next.(map[string]any)
-		if leftMap && rightMap {
-			if err := mergeBunPackageSettings(left, right, path+"."+key, resolver); err != nil {
-				return err
-			}
-			continue
-		}
-		conflict := core.MergeConflict{Path: "package.json", Key: path + "." + key, Kind: "native value", Shared: fmt.Sprint(next), Selected: fmt.Sprint(previous)}
-		if resolver == nil {
-			return fmt.Errorf("merge conflict for %s requires a resolver", conflict.Key)
-		}
-		decision, err := resolver(conflict)
-		if err != nil {
-			return err
-		}
-		switch decision.Choice {
-		case core.MergeChoiceKeepShared:
-			client[key] = next
-		case core.MergeChoiceUseSelected:
-		case core.MergeChoiceAbort:
-			return fmt.Errorf("merge aborted for %s", conflict.Key)
-		default:
-			return fmt.Errorf("invalid merge choice %q for %s", decision.Choice, conflict.Key)
-		}
-	}
-	return nil
 }
 
 func readBunWorkspacePatterns(value map[string]any) ([]string, error) {

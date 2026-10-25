@@ -170,6 +170,43 @@ func TestGoProvider(t *testing.T) {
 
 func TestGoGeneration(t *testing.T) {
 	registerBuiltins(t)
+	t.Run("when the project has no Go module", func(t *testing.T) {
+		// Arrange
+		root, stage, registry := t.TempDir(), t.TempDir(), t.TempDir()
+		original := "module example.com/client\ngo 1.25.0\n"
+		writePackageFixtureFile(t, root, "go.mod", original)
+		writePackageFixtureFile(t, stage, "README.md", "generic project")
+		writePackageFixtureFile(t, registry, "go.mod", "module example.com/registry\ngo 1.25.0\n")
+
+		// Act
+		plan, err := core.BuildGeneratePlan(core.GenerateParameters{
+			PackageManagers:        []string{"go"},
+			RegistryRoot:           registry,
+			RegistryWorkspaceFiles: []string{"go.mod"},
+			ClientRepoRoot:         root,
+			TemplateRoot:           stage,
+			ProjectPath:            "libs/generic",
+			TemplateKind:           "lib",
+			ResolveConflict:        core.MergeDecisions{}.Resolve,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		discardGenerationPlan(t, plan, root, "libs/generic")
+
+		// Assert
+		t.Run("it leaves the existing module untouched without a native contribution", func(t *testing.T) {
+			for _, entry := range plan.Entries {
+				if entry.Path == "go.mod" || entry.Path == "go.sum" {
+					t.Fatalf("unexpected native output: %#v", entry)
+				}
+			}
+			data, err := os.ReadFile(filepath.Join(root, "go.mod"))
+			if err != nil || string(data) != original {
+				t.Fatalf("module changed: %s %v", data, err)
+			}
+		})
+	})
 	t.Run("when existing Go configuration defines multiple modules", func(t *testing.T) {
 		for _, path := range []string{"go.work", "libs/existing/go.mod"} {
 			t.Run("when existing configuration contains "+path, func(t *testing.T) {
@@ -183,7 +220,14 @@ func TestGoGeneration(t *testing.T) {
 				writePackageFixtureFile(t, stage, "go.mod", "module example.com/workspace/libs/new\ngo 1.25.0\n")
 
 				// Act
-				plan, err := core.BuildGeneratePlan(core.GenerateParameters{PackageManagers: []string{"go"}, ProjectPaths: []string{"libs/existing"}, ClientRepoRoot: root, TemplateRoot: stage, ProjectPath: "libs/new", TemplateKind: "lib"})
+				plan, err := core.BuildGeneratePlan(core.GenerateParameters{
+					PackageManagers: []string{"go"},
+					ProjectPaths:    []string{"libs/existing"},
+					ClientRepoRoot:  root,
+					TemplateRoot:    stage,
+					ProjectPath:     "libs/new",
+					TemplateKind:    "lib",
+				})
 
 				// Assert
 				t.Run("it rejects the layout without converting client files", func(t *testing.T) {
@@ -204,6 +248,41 @@ func TestGoGeneration(t *testing.T) {
 			})
 		}
 	})
+	t.Run("when generating a Bun project beside an unrelated Go workspace", func(t *testing.T) {
+		// Arrange
+		root, source := t.TempDir(), t.TempDir()
+		original := "go 1.25.0\nuse /outside/workspace\n"
+		writePackageFixtureFile(t, root, "go.work", original)
+		writePackageFixtureFile(t, source, "package.json", `{"name":"web"}`)
+
+		// Act
+		plan, err := core.BuildGeneratePlan(core.GenerateParameters{
+			PackageManagers: []string{"bun"},
+			ClientRepoRoot:  root,
+			TemplateRoot:    source,
+			ProjectPath:     "apps/web",
+			TemplateKind:    "app",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		discardGenerationPlan(t, plan, root, "apps/web")
+
+		// Assert
+		t.Run("it prepares Bun files without applying Go workspace rules", func(t *testing.T) {
+			if !strings.Contains(string(generationOutput(t, plan, "package.json")), "workspaces") {
+				t.Fatal("Bun workspace preparation was skipped")
+			}
+			data, err := os.ReadFile(filepath.Join(root, "go.work"))
+			if err != nil || string(data) != original {
+				t.Fatalf("unselected Go workspace changed: %q %v", data, err)
+			}
+			if _, err := os.Stat(filepath.Join(root, "go.mod")); !os.IsNotExist(err) {
+				t.Fatalf("unselected Go module was created: %v", err)
+			}
+		})
+	})
+
 }
 
 func TestGoDependencyManifests(t *testing.T) {
@@ -312,6 +391,55 @@ func TestGoDependencyManifests(t *testing.T) {
 
 }
 
+func TestGoReleaseConfiguration(t *testing.T) {
+	t.Run("when releasing the root Go CLI", func(t *testing.T) {
+		root := releaseConfigurationFixture(t, []string{"go"}, false)
+
+		config, err := core.GoReleaserConfig(root)
+
+		t.Run("it preserves the existing binary and archive names", func(t *testing.T) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{"project_name: workspace", "binary: workspace", "{{ .ProjectName }}-{{ .Tag }}-", "mode: keep-existing", "replace_existing_artifacts: true"} {
+				if !strings.Contains(string(config), want) {
+					t.Errorf("release configuration omits %q", want)
+				}
+			}
+		})
+	})
+	t.Run("when releasing a mixed Go Cargo and Bun workspace", func(t *testing.T) {
+		root := releaseConfigurationFixture(t, []string{"go", "cargo", "bun"}, false)
+
+		config, err := core.GoReleaserConfig(root)
+
+		t.Run("it combines the selected providers in one release", func(t *testing.T) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{"main: .", "builder: rust", "id: rust-app", "{{ .ProjectName }}-{{ .Tag }}-"} {
+				if !strings.Contains(string(config), want) {
+					t.Errorf("combined release omits %q", want)
+				}
+			}
+		})
+	})
+	t.Run("when releasing only libraries", func(t *testing.T) {
+		root := releaseConfigurationFixture(t, []string{"go", "cargo", "bun"}, true)
+
+		config, err := core.GoReleaserConfig(root)
+
+		t.Run("it creates a source release without executable builds", func(t *testing.T) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(config), "skip: true") || !strings.Contains(string(config), "disable: true") || strings.Contains(string(config), "binary:") {
+				t.Fatalf("expected a source-only release, got %s", config)
+			}
+		})
+	})
+}
+
 // Private helpers ------------------------------------------------------------
 
 func goPackageFixture(t *testing.T) string {
@@ -341,7 +469,24 @@ func goPackageFixture(t *testing.T) string {
 	manifest := core.NewManifest("shared")
 	manifest.Workspace.Kind = core.ProjectKindMonorepo
 	manifest.Workspace.PackageManagers = []string{"go"}
-	manifest.Workspace.Projects = []core.Project{{Name: "math", Path: "libs/math", Template: "test:math", Package: &core.PackageDeclaration{Public: boolPointer(true)}}, {Name: "cache", Path: "libs/cache", Template: "test:cache", Package: &core.PackageDeclaration{Public: boolPointer(false)}}}
+	manifest.Workspace.Projects = []core.Project{
+		{
+			Name:     "math",
+			Path:     "libs/math",
+			Template: "test:math",
+			Package: &core.PackageDeclaration{
+				Public: boolPointer(true),
+			},
+		},
+		{
+			Name:     "cache",
+			Path:     "libs/cache",
+			Template: "test:cache",
+			Package: &core.PackageDeclaration{
+				Public: boolPointer(false),
+			},
+		},
+	}
 	if err := core.SaveManifest(filepath.Join(root, core.ManifestFilename), manifest); err != nil {
 		t.Fatal(err)
 	}

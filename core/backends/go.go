@@ -20,10 +20,10 @@ import (
 
 type Go struct{}
 
-func (Go) ID() string                        { return "go" }
-func (Go) Ecosystem() string                 { return "go" }
-func (Go) SupportsPackages() bool            { return true }
-func (Go) PublishesRepositoryPackages() bool { return true }
+func (Go) ID() string                { return "go" }
+func (Go) Ecosystem() string         { return "go" }
+func (Go) SupportsPackages() bool    { return true }
+func (Go) PublishesFromGitTag() bool { return true }
 
 func (Go) GetPackageMetadata(root string, target core.Template) (core.PackageMetadata, bool, error) {
 	workspace, found, err := extensions.ReadGoModule(root)
@@ -223,9 +223,6 @@ func (Go) PrepareGeneration(request core.PackageGenerationContext) ([]core.Merge
 		return nil, err
 	}
 	if !found {
-		if request.SharedFiles["go.mod"].Present || request.SharedFiles["go.sum"].Present {
-			return nil, fmt.Errorf("Go root contributions require a selected Go template; omit registry-development module files from workspace_files")
-		}
 		return nil, nil
 	}
 	if err := validateGoWorkspaceLayout(request); err != nil {

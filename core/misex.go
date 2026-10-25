@@ -110,7 +110,7 @@ func MergeMiseConfigs(shared, selected MiseConfig, templateKind, registryIdentit
 		}
 		left, leftOK := shared.Root[key]
 		right, rightOK := selected.Root[key]
-		value, ok, err := mergeMiseValue(key, left, leftOK, right, rightOK, resolver)
+		value, ok, err := mergeDocumentValue("mise.toml", key, left, leftOK, right, rightOK, resolver)
 		if err != nil {
 			return MiseMergeResult{}, err
 		}
@@ -148,7 +148,7 @@ func MergeMiseConfigs(shared, selected MiseConfig, templateKind, registryIdentit
 	changes := make([]ToolChange, 0)
 	for name, selectedTool := range selected.Tools {
 		mergedTool, ok := config.Tools[name]
-		if !ok || anyEqual(selectedTool.Raw, mergedTool.Raw) {
+		if !ok || reflect.DeepEqual(selectedTool.Raw, mergedTool.Raw) {
 			continue
 		}
 		changes = append(changes, ToolChange{Name: name, From: cloneManifestValue(selectedTool.Raw), To: cloneManifestValue(mergedTool.Raw)})
@@ -390,12 +390,6 @@ func updateMiseTool(path, name string, value any) error {
 	return nil
 }
 
-// cloneManifestValue recursively copies the TOML value shapes used by Mise.
-
-func anyEqual(left, right any) bool {
-	return reflect.DeepEqual(left, right)
-}
-
 func composeMise(shared, selected []byte, templateKind, registryIdentity string, resolver MergeConflictResolver) (MiseMergeResult, error) {
 	sharedConfig, err := ExtractMiseConfig("shared", shared)
 	if err != nil {
@@ -534,7 +528,7 @@ func mergeMiseEnvironment(shared, selected MiseConfig, selectedIdentity string, 
 	for _, name := range names {
 		selectedValue := selectedEnvironment[name]
 		sharedValue, conflict := shared.Env[name]
-		if !conflict || anyEqual(sharedValue, selectedValue) {
+		if !conflict || reflect.DeepEqual(sharedValue, selectedValue) {
 			decisions[name] = MergeDecision{Choice: MergeChoiceUseSelected}
 			continue
 		}
@@ -587,70 +581,6 @@ func mergeMiseEnvironment(shared, selected MiseConfig, selectedIdentity string, 
 	return selectedRoot, output, nil
 }
 
-func mergeMiseValue(path string, left any, leftOK bool, right any, rightOK bool, resolver MergeConflictResolver) (any, bool, error) {
-	if !leftOK {
-		return cloneManifestValue(right), rightOK, nil
-	}
-	if !rightOK {
-		return cloneManifestValue(left), true, nil
-	}
-	if anyEqual(left, right) {
-		return cloneManifestValue(right), true, nil
-	}
-	leftMap, leftMapOK := left.(map[string]any)
-	rightMap, rightMapOK := right.(map[string]any)
-	if leftMapOK && rightMapOK {
-		output := make(map[string]any)
-		for _, key := range sortedUnionKeys(leftMap, rightMap) {
-			value, ok, err := mergeMiseValue(path+"."+key, leftMap[key], hasKey(leftMap, key), rightMap[key], hasKey(rightMap, key), resolver)
-			if err != nil {
-				return nil, false, err
-			}
-			if ok {
-				output[key] = value
-			}
-		}
-		return output, true, nil
-	}
-	leftList, leftListOK := anyList(left)
-	rightList, rightListOK := anyList(right)
-	if leftListOK && rightListOK {
-		output := make([]any, 0, len(leftList)+len(rightList))
-		for _, item := range append(leftList, rightList...) {
-			found := false
-			for _, existing := range output {
-				if anyEqual(existing, item) {
-					found = true
-					break
-				}
-			}
-			if !found {
-				output = append(output, cloneManifestValue(item))
-			}
-		}
-		return output, true, nil
-	}
-	value, err := resolveMiseScalar(path, left, right, false, resolver)
-	return value, true, err
-}
-
-func resolveMiseScalar(path string, shared, selected any, allowRename bool, resolver MergeConflictResolver) (any, error) {
-	decision, err := resolveConflict(resolver, MergeConflict{Path: "mise.toml", Key: path, Kind: "mise-value", Shared: fmt.Sprint(shared), Selected: fmt.Sprint(selected), AllowRename: allowRename})
-	if err != nil {
-		return nil, err
-	}
-	switch decision.Choice {
-	case MergeChoiceKeepShared:
-		return cloneManifestValue(shared), nil
-	case MergeChoiceUseSelected:
-		return cloneManifestValue(selected), nil
-	case MergeChoiceAbort:
-		return nil, fmt.Errorf("merge aborted for mise value %s", path)
-	default:
-		return nil, fmt.Errorf("invalid mise merge choice %q for %s", decision.Choice, path)
-	}
-}
-
 func rewriteEnvironmentReferences(value any, oldName, newName string) any {
 	switch typed := value.(type) {
 	case string:
@@ -681,37 +611,6 @@ func validShellIdentifier(value string) bool {
 	return matched
 }
 
-func anyList(value any) ([]any, bool) {
-	switch typed := value.(type) {
-	case []any:
-		return typed, true
-	case []string:
-		output := make([]any, len(typed))
-		for index, item := range typed {
-			output[index] = item
-		}
-		return output, true
-	default:
-		return nil, false
-	}
-}
-
-func sortedUnionKeys(left, right map[string]any) []string {
-	seen := make(map[string]struct{}, len(left)+len(right))
-	for key := range left {
-		seen[key] = struct{}{}
-	}
-	for key := range right {
-		seen[key] = struct{}{}
-	}
-	keys := make([]string, 0, len(seen))
-	for key := range seen {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
 func sortedUnionTypedKeys[T any](left, right map[string]T) []string {
 	seen := make(map[string]struct{}, len(left)+len(right))
 	for key := range left {
@@ -735,9 +634,4 @@ func sortedMapKeys(values map[string]any) []string {
 	}
 	sort.Strings(keys)
 	return keys
-}
-
-func hasKey(values map[string]any, key string) bool {
-	_, ok := values[key]
-	return ok
 }

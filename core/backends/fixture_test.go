@@ -115,3 +115,62 @@ func readPackageManifestFixture(t *testing.T, name string) []byte {
 	}
 	return data
 }
+
+func releaseConfigurationFixture(t *testing.T, managers []string, librariesOnly bool) string {
+	t.Helper()
+	registerBuiltins(t)
+	root := t.TempDir()
+	manifest := core.NewManifest("workspace")
+	manifest.Workspace.Kind = core.ProjectKindTemplateRegistry
+	manifest.TemplateRegistry = &core.TemplateRegistry{
+		WorkspaceFiles: []string{},
+		Templates:      []core.Template{},
+	}
+	manifest.Workspace.PackageManagers = managers
+	for _, manager := range managers {
+		switch manager {
+		case "go":
+			writePackageFixtureFile(t, root, "go.mod", "module example.com/repo\ngo 1.25.0\n")
+			if !librariesOnly {
+				writePackageFixtureFile(t, root, "main.go", "package main\nfunc main() {}\n")
+			}
+		case "cargo":
+			writePackageFixtureFile(t, root, "Cargo.toml", "[workspace]\n")
+			names := []string{"rust-lib"}
+			if !librariesOnly {
+				names = append(names, "rust-app", "rust-cli", "tauri-app")
+			}
+			for _, name := range names {
+				kind := "app"
+				if name == "rust-lib" {
+					kind = "lib"
+				}
+				relative := "templates/" + name
+				manifest.TemplateRegistry.Templates = append(manifest.TemplateRegistry.Templates, core.Template{
+					Name: name,
+					Kind: kind,
+					Path: relative,
+					Questions: []core.Question{
+						{
+							Prompt:   "Name:",
+							Type:     "string",
+							Populate: "name",
+						},
+					},
+				})
+				if name == "tauri-app" {
+					writePackageFixtureFile(t, root, relative+"/src-tauri/Cargo.toml", "[package]\nname = \"tauri-app\"\nversion = \"0.1.0\"\n")
+					continue
+				}
+				writePackageFixtureFile(t, root, relative+"/Cargo.toml", "[package]\nname = \""+name+"\"\nversion = \"0.1.0\"\n")
+			}
+		case "bun":
+			writePackageFixtureFile(t, root, "package.json", `{"name":"workspace","private":true}`)
+			writePackageFixtureFile(t, root, "bunfig.toml", "")
+		}
+	}
+	if err := core.SaveManifest(filepath.Join(root, core.ManifestFilename), manifest); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
