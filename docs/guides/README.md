@@ -3,8 +3,8 @@
 Start with the guide for your task:
 
 - [Creating and working with projects](projects.md): install Premise, generate apps and libraries, run tasks, and create templates.
-- [Using Premise with Go](go.md): generate applications and libraries, share dependencies, and consume a released package.
 - [Managing Premise monorepos](monorepos.md): organize projects, share tools, and run workspace tasks.
+- [Using Premise with Go](go.md): generate applications and libraries, share dependencies, and consume a released package.
 - [Creating a project with infrastructure](infrastructure.md): choose a Pulumi language, configure backends, and create previews.
 - [Managing secrets and application configuration](secrets-and-config.md): pull fnox values and create private local env files.
 - [Handling database migrations](migrations.md): define optional application tasks, query infrastructure, and handle failures.

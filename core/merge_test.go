@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -91,154 +92,127 @@ func TestDependencyVersionMerging(t *testing.T) {
 	}
 }
 
-func TestStructuredDocumentMerging(t *testing.T) {
-	for _, format := range []struct {
-		name    string
-		merge   func(string, []byte, []byte, MergeConflictResolver) ([]byte, error)
-		encode  func(any) ([]byte, error)
-		decode  func([]byte, any) error
-		invalid string
+func TestMergeJSON(t *testing.T) {
+	for _, scenario := range []struct {
+		name      string
+		shared    string
+		client    string
+		want      string
+		choice    MergeChoice
+		wantError string
 	}{
 		{
-			name:    "JSON",
-			merge:   MergeJSON,
-			encode:  json.Marshal,
-			decode:  json.Unmarshal,
-			invalid: `{"unfinished":`,
+			name: "when nested fields are disjoint or equal",
+			shared: `{
+  "settings": {"shared": true, "equal": "same"},
+  "items": ["shared", "common"]
+}`,
+			client: `{
+  "settings": {"client": true, "equal": "same"},
+  "items": ["common", "client"]
+}`,
+			want: `{
+  "settings": {"shared": true, "client": true, "equal": "same"},
+  "items": ["shared", "common", "client"]
+}`,
 		},
 		{
-			name:    "TOML",
-			merge:   MergeTOML,
-			encode:  toml.Marshal,
-			decode:  toml.Unmarshal,
-			invalid: "unfinished = [",
+			name:   "when the caller chooses the shared scalar",
+			shared: `{"settings": {"version": "2.0.0"}}`,
+			client: `{"settings": {"version": "1.0.0"}}`,
+			want:   `{"settings": {"version": "2.0.0"}}`,
+			choice: MergeChoiceKeepShared,
 		},
 		{
-			name:    "YAML",
-			merge:   MergeYAML,
-			encode:  yaml.Marshal,
-			decode:  yaml.Unmarshal,
-			invalid: "unfinished: [",
+			name:   "when the caller chooses the client scalar",
+			shared: `{"settings": {"version": "2.0.0"}}`,
+			client: `{"settings": {"version": "1.0.0"}}`,
+			want:   `{"settings": {"version": "1.0.0"}}`,
+			choice: MergeChoiceUseSelected,
+		},
+		{
+			name:      "when the caller aborts a scalar conflict",
+			shared:    `{"settings": {"version": "2.0.0"}}`,
+			client:    `{"settings": {"version": "1.0.0"}}`,
+			choice:    MergeChoiceAbort,
+			wantError: "merge aborted for manifest value settings.version",
+		},
+		{
+			name: "when the shared document is empty",
+			client: `{
+  "settings": {"client": true, "equal": "same"},
+  "items": ["common", "client"]
+}`,
+			want: `{
+  "settings": {"client": true, "equal": "same"},
+  "items": ["common", "client"]
+}`,
+		},
+		{
+			name: "when the client document is empty",
+			shared: `{
+  "settings": {"shared": true, "equal": "same"},
+  "items": ["shared", "common"]
+}`,
+			want: `{
+  "settings": {"shared": true, "equal": "same"},
+  "items": ["shared", "common"]
+}`,
+		},
+		{
+			name:      "when the shared document is malformed",
+			shared:    `{"unfinished":`,
+			wantError: "parse shared settings",
+		},
+		{
+			name:      "when the client contains null",
+			client:    `null`,
+			wantError: "parse client settings",
+		},
+		{
+			name:      "when the client contains an array",
+			client:    `[]`,
+			wantError: "parse client settings",
+		},
+		{
+			name:      "when the client contains multiple objects",
+			client:    `{} {}`,
+			wantError: "parse client settings",
 		},
 	} {
-		t.Run("when merging "+format.name+" settings", func(t *testing.T) {
-			t.Run("when fields are disjoint or equal", func(t *testing.T) {
-				// Arrange
-				shared, err := format.encode(map[string]any{
-					"settings": map[string]any{
-						"shared": true,
-						"equal":  "same",
-					},
-					"items": []string{"shared", "common"},
-				})
+		t.Run(scenario.name, func(t *testing.T) {
+			// Arrange
+			shared, client := []byte(scenario.shared), []byte(scenario.client)
+			decisions := MergeDecisions{"settings.version": {Choice: scenario.choice}}
+
+			// Act
+			merged, err := MergeJSON("settings", shared, client, decisions.Resolve)
+
+			// Assert
+			t.Run("it produces the expected JSON document or reports the conflict", func(t *testing.T) {
+				if scenario.wantError != "" {
+					if err == nil || !strings.Contains(err.Error(), scenario.wantError) {
+						t.Fatalf("error = %v, want %q", err, scenario.wantError)
+					}
+					return
+				}
 				if err != nil {
 					t.Fatal(err)
 				}
-				client, err := format.encode(map[string]any{
-					"settings": map[string]any{
-						"client": true,
-						"equal":  "same",
-					},
-					"items": []string{"common", "client"},
-				})
-				if err != nil {
+				var result, expected map[string]any
+				if err := json.Unmarshal(merged, &result); err != nil {
 					t.Fatal(err)
 				}
-
-				// Act
-				merged, err := format.merge("settings", shared, client, MergeDecisions{}.Resolve)
-
-				// Assert
-				t.Run("it combines nested fields and distinct array items without a decision", func(t *testing.T) {
-					if err != nil {
-						t.Fatal(err)
-					}
-					var result struct {
-						Settings map[string]any `json:"settings" toml:"settings" yaml:"settings"`
-						Items    []string       `json:"items" toml:"items" yaml:"items"`
-					}
-					if err := format.decode(merged, &result); err != nil {
-						t.Fatal(err)
-					}
-					if result.Settings["shared"] != true || result.Settings["client"] != true || result.Settings["equal"] != "same" || strings.Join(result.Items, ",") != "shared,common,client" {
-						t.Fatalf("merged settings = %#v", result)
-					}
-				})
-			})
-			for _, scenario := range []struct {
-				name   string
-				choice MergeChoice
-				want   string
-			}{
-				{
-					name:   "when the caller chooses the shared scalar",
-					choice: MergeChoiceKeepShared,
-					want:   "2.0.0",
-				},
-				{
-					name:   "when the caller chooses the client scalar",
-					choice: MergeChoiceUseSelected,
-					want:   "1.0.0",
-				},
-				{
-					name:   "when the caller aborts a scalar conflict",
-					choice: MergeChoiceAbort,
-				},
-			} {
-				t.Run(scenario.name, func(t *testing.T) {
-					// Arrange
-					shared, err := format.encode(map[string]any{"settings": map[string]any{"version": "2.0.0"}})
-					if err != nil {
-						t.Fatal(err)
-					}
-					client, err := format.encode(map[string]any{"settings": map[string]any{"version": "1.0.0"}})
-					if err != nil {
-						t.Fatal(err)
-					}
-
-					// Act
-					merged, err := format.merge("settings", shared, client, MergeDecisions{"settings.version": {Choice: scenario.choice}}.Resolve)
-
-					// Assert
-					t.Run("it applies the field decision without interpreting a setting as a dependency", func(t *testing.T) {
-						if scenario.choice == MergeChoiceAbort {
-							if err == nil || !strings.Contains(err.Error(), "settings.version") {
-								t.Fatalf("expected focused conflict, got %v", err)
-							}
-							return
-						}
-						if err != nil {
-							t.Fatal(err)
-						}
-						var result struct {
-							Settings map[string]string `json:"settings" toml:"settings" yaml:"settings"`
-						}
-						if err := format.decode(merged, &result); err != nil {
-							t.Fatal(err)
-						}
-						if result.Settings["version"] != scenario.want {
-							t.Fatalf("settings = %v, want %s", result.Settings, scenario.want)
-						}
-					})
-				})
-			}
-			t.Run("when a document is malformed", func(t *testing.T) {
-				// Arrange
-				invalid := []byte(format.invalid)
-
-				// Act
-				_, err := format.merge("settings", invalid, nil, MergeDecisions{}.Resolve)
-
-				// Assert
-				t.Run("it reports which input could not be parsed", func(t *testing.T) {
-					if err == nil || !strings.Contains(err.Error(), "parse shared settings") {
-						t.Fatalf("expected input parse error, got %v", err)
-					}
-				})
+				if err := json.Unmarshal([]byte(scenario.want), &expected); err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(result, expected) {
+					t.Fatalf("merged document:\n%s\nwant:\n%s", merged, scenario.want)
+				}
 			})
 		})
 	}
-	t.Run("when JSON contains an integer beyond float precision", func(t *testing.T) {
+	t.Run("when the document contains an integer beyond float precision", func(t *testing.T) {
 		// Arrange
 		shared := []byte(`{"integer":9007199254740993}`)
 
@@ -252,53 +226,289 @@ func TestStructuredDocumentMerging(t *testing.T) {
 			}
 		})
 	})
+}
+
+func TestMergeTOML(t *testing.T) {
 	for _, scenario := range []struct {
-		name  string
-		merge func(string, []byte, []byte, MergeConflictResolver) ([]byte, error)
-		input string
+		name      string
+		shared    string
+		client    string
+		want      string
+		choice    MergeChoice
+		wantError string
 	}{
 		{
-			name:  "when JSON contains null",
-			merge: MergeJSON,
-			input: "null",
+			name: "when nested fields are disjoint or equal",
+			shared: `items = ["shared", "common"]
+
+[settings]
+shared = true
+equal = "same"
+`,
+			client: `items = ["common", "client"]
+
+[settings]
+client = true
+equal = "same"
+`,
+			want: `items = ["shared", "common", "client"]
+
+[settings]
+shared = true
+client = true
+equal = "same"
+`,
 		},
 		{
-			name:  "when JSON contains an array",
-			merge: MergeJSON,
-			input: "[]",
+			name: "when the caller chooses the shared scalar",
+			shared: `[settings]
+version = "2.0.0"
+`,
+			client: `[settings]
+version = "1.0.0"
+`,
+			want: `[settings]
+version = "2.0.0"
+`,
+			choice: MergeChoiceKeepShared,
 		},
 		{
-			name:  "when JSON has multiple objects",
-			merge: MergeJSON,
-			input: "{} {}",
+			name: "when the caller chooses the client scalar",
+			shared: `[settings]
+version = "2.0.0"
+`,
+			client: `[settings]
+version = "1.0.0"
+`,
+			want: `[settings]
+version = "1.0.0"
+`,
+			choice: MergeChoiceUseSelected,
 		},
 		{
-			name:  "when YAML contains null",
-			merge: MergeYAML,
-			input: "null",
+			name: "when the caller aborts a scalar conflict",
+			shared: `[settings]
+version = "2.0.0"
+`,
+			client: `[settings]
+version = "1.0.0"
+`,
+			choice:    MergeChoiceAbort,
+			wantError: "merge aborted for manifest value settings.version",
 		},
 		{
-			name:  "when YAML contains an array",
-			merge: MergeYAML,
-			input: "[]",
+			name: "when the shared document is empty",
+			client: `items = ["common", "client"]
+
+[settings]
+client = true
+equal = "same"
+`,
+			want: `items = ["common", "client"]
+
+[settings]
+client = true
+equal = "same"
+`,
 		},
 		{
-			name:  "when YAML has multiple documents",
-			merge: MergeYAML,
-			input: "a: b\n---\nc: d\n",
+			name: "when the client document is empty",
+			shared: `items = ["shared", "common"]
+
+[settings]
+shared = true
+equal = "same"
+`,
+			want: `items = ["shared", "common"]
+
+[settings]
+shared = true
+equal = "same"
+`,
+		},
+		{
+			name:      "when the shared document is malformed",
+			shared:    `unfinished = [`,
+			wantError: "parse shared settings",
 		},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			// Arrange
-			input := []byte(scenario.input)
+			shared, client := []byte(scenario.shared), []byte(scenario.client)
+			decisions := MergeDecisions{"settings.version": {Choice: scenario.choice}}
 
 			// Act
-			_, err := scenario.merge("settings", nil, input, MergeDecisions{}.Resolve)
+			merged, err := MergeTOML("settings", shared, client, decisions.Resolve)
 
 			// Assert
-			t.Run("it rejects input that is not one object document", func(t *testing.T) {
-				if err == nil || !strings.Contains(err.Error(), "parse client settings") {
-					t.Fatalf("expected client parse error, got %v", err)
+			t.Run("it produces the expected TOML document or reports the conflict", func(t *testing.T) {
+				if scenario.wantError != "" {
+					if err == nil || !strings.Contains(err.Error(), scenario.wantError) {
+						t.Fatalf("error = %v, want %q", err, scenario.wantError)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				var result, expected map[string]any
+				if err := toml.Unmarshal(merged, &result); err != nil {
+					t.Fatal(err)
+				}
+				if err := toml.Unmarshal([]byte(scenario.want), &expected); err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(result, expected) {
+					t.Fatalf("merged document:\n%s\nwant:\n%s", merged, scenario.want)
+				}
+			})
+		})
+	}
+}
+
+func TestMergeYAML(t *testing.T) {
+	for _, scenario := range []struct {
+		name      string
+		shared    string
+		client    string
+		want      string
+		choice    MergeChoice
+		wantError string
+	}{
+		{
+			name: "when nested fields are disjoint or equal",
+			shared: `settings:
+  shared: true
+  equal: same
+items: [shared, common]
+`,
+			client: `settings:
+  client: true
+  equal: same
+items: [common, client]
+`,
+			want: `settings:
+  shared: true
+  client: true
+  equal: same
+items: [shared, common, client]
+`,
+		},
+		{
+			name: "when the caller chooses the shared scalar",
+			shared: `settings:
+  version: "2.0.0"
+`,
+			client: `settings:
+  version: "1.0.0"
+`,
+			want: `settings:
+  version: "2.0.0"
+`,
+			choice: MergeChoiceKeepShared,
+		},
+		{
+			name: "when the caller chooses the client scalar",
+			shared: `settings:
+  version: "2.0.0"
+`,
+			client: `settings:
+  version: "1.0.0"
+`,
+			want: `settings:
+  version: "1.0.0"
+`,
+			choice: MergeChoiceUseSelected,
+		},
+		{
+			name: "when the caller aborts a scalar conflict",
+			shared: `settings:
+  version: "2.0.0"
+`,
+			client: `settings:
+  version: "1.0.0"
+`,
+			choice:    MergeChoiceAbort,
+			wantError: "merge aborted for manifest value settings.version",
+		},
+		{
+			name: "when the shared document is empty",
+			client: `settings:
+  client: true
+  equal: same
+items: [common, client]
+`,
+			want: `settings:
+  client: true
+  equal: same
+items: [common, client]
+`,
+		},
+		{
+			name: "when the client document is empty",
+			shared: `settings:
+  shared: true
+  equal: same
+items: [shared, common]
+`,
+			want: `settings:
+  shared: true
+  equal: same
+items: [shared, common]
+`,
+		},
+		{
+			name:      "when the shared document is malformed",
+			shared:    `unfinished: [`,
+			wantError: "parse shared settings",
+		},
+		{
+			name:      "when the client contains null",
+			client:    `null`,
+			wantError: "parse client settings",
+		},
+		{
+			name:      "when the client contains an array",
+			client:    `[]`,
+			wantError: "parse client settings",
+		},
+		{
+			name: "when the client contains multiple documents",
+			client: `a: b
+---
+c: d
+`,
+			wantError: "parse client settings",
+		},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			// Arrange
+			shared, client := []byte(scenario.shared), []byte(scenario.client)
+			decisions := MergeDecisions{"settings.version": {Choice: scenario.choice}}
+
+			// Act
+			merged, err := MergeYAML("settings", shared, client, decisions.Resolve)
+
+			// Assert
+			t.Run("it produces the expected YAML document or reports the conflict", func(t *testing.T) {
+				if scenario.wantError != "" {
+					if err == nil || !strings.Contains(err.Error(), scenario.wantError) {
+						t.Fatalf("error = %v, want %q", err, scenario.wantError)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				var result, expected map[string]any
+				if err := yaml.Unmarshal(merged, &result); err != nil {
+					t.Fatal(err)
+				}
+				if err := yaml.Unmarshal([]byte(scenario.want), &expected); err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(result, expected) {
+					t.Fatalf("merged document:\n%s\nwant:\n%s", merged, scenario.want)
 				}
 			})
 		})
