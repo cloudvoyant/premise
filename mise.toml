@@ -16,6 +16,7 @@ shfmt = "latest"
 watchexec = "latest"
 fnox = "1.39.0"
 actionlint = "1.7.12"
+"go:github.com/fzipp/gocyclo/cmd/gocyclo" = "0.6.0"
 
 [tasks.install]
 description = "Install the premise CLI"
@@ -97,6 +98,7 @@ exit "$status"
 description = "Run Go and shell static analysis"
 run = '''
 go vet ./...
+gocyclo -over 30 -ignore '_test\.go$' core/backends core/merge.go core/misex.go core/generate.go
 shellcheck install.sh
 '''
 
@@ -110,6 +112,7 @@ run = '''
 gofmt -w .
 shfmt -w install.sh
 go vet ./...
+gocyclo -over 30 -ignore '_test\.go$' core/backends core/merge.go core/misex.go core/generate.go
 shellcheck install.sh
 '''
 

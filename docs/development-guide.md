@@ -118,3 +118,7 @@ pm version rc --identifier <id>     # MAJOR.MINOR.PATCH-rc.<id>
 ## Infrastructure command tests
 
 Run `mise run e2e:infra` separately on demand with a dedicated GCP project and an existing GCS state backend. The [static GCS fixture](../e2e/testdata/pulumi/README.md) uses `pm ci` flows across environments. Infra apply creates a bucket. Deployment uploads a static page. A fake migration writes a marker. The same fixture tests automatic rollback and cleanup. Infrastructure validation does not run in CI.
+
+## Complexity checks
+
+`mise run lint` and `mise run lint:fix` enforce a maximum cyclomatic complexity of 30 per function in package-manager backends, dependency merging, Mise composition, and generation. Test files are excluded. The check uses Gocyclo 0.6.0 installed through Mise and fails when a function exceeds the limit. Other modules retain their existing Go vet and ShellCheck checks.
