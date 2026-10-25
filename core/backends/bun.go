@@ -206,7 +206,7 @@ func (Bun) PrepareGeneration(request core.PackageGenerationContext) ([]core.Merg
 	if err != nil || client == nil {
 		return nil, err
 	}
-	if err := includeBunWorkspaceProject(request, client); err != nil {
+	if err := ensureProjectIsInBunWorkspace(request, client); err != nil {
 		return nil, err
 	}
 	if err := validateBunLocalDependencyPaths(request, "", client); err != nil {
@@ -280,7 +280,7 @@ func mergeBunWorkspaceConfig(request core.PackageGenerationContext) (map[string]
 	return parseBunPackageJSON(output)
 }
 
-func includeBunWorkspaceProject(request core.PackageGenerationContext, client map[string]any) error {
+func ensureProjectIsInBunWorkspace(request core.PackageGenerationContext, client map[string]any) error {
 	patterns, err := readBunWorkspacePatterns(client)
 	if err != nil {
 		return err

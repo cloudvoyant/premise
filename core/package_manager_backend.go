@@ -19,10 +19,7 @@ import (
 // manager-specific release operations selected by premise.yaml. Core owns
 // release sequencing; implementations own package-format behavior.
 type PackageManagerBackend interface {
-	// ParseDependencies and WriteDependencies translate native manifests to and
-	// from the common dependency model. Writers retain unrelated client settings.
-	ParseDependencies(manifest []byte) ([]Dependency, error)
-	WriteDependencies(manifest []byte, dependencies []Dependency) ([]byte, error)
+	// Identity and capabilities.
 
 	// ID returns the package manager name used in workspace.package_managers.
 	ID() string
@@ -31,11 +28,32 @@ type PackageManagerBackend interface {
 	// pnpm both use "npm"; Go and Cargo use distinct ecosystem keys.
 	Ecosystem() string
 
+	// SupportsPackages reports whether the manager handles language packages.
+	SupportsPackages() bool
+
+	// Package metadata.
+
 	// GetPackageMetadata reads one template's direct native package, when present.
 	GetPackageMetadata(root string, template Template) (PackageMetadata, bool, error)
 
 	// ValidatePackage validates one template's native package metadata.
 	ValidatePackage(root string, template Template) error
+
+	// Manifest composition and workspace generation.
+
+	// ParseDependencies and WriteDependencies translate native manifests to and
+	// from the common dependency model. Writers retain unrelated client settings.
+	ParseDependencies(manifest []byte) ([]Dependency, error)
+	WriteDependencies(manifest []byte, dependencies []Dependency) ([]byte, error)
+
+	// ManagedWorkspaceFiles declares exclusive native roots, including lock outputs.
+	// A backend with no native workspace files returns an empty list.
+	ManagedWorkspaceFiles() []string
+
+	// PrepareGeneration returns native contents, or no entries for a non-native project.
+	PrepareGeneration(PackageGenerationContext) ([]MergeEntry, error)
+
+	// Publication checks.
 
 	// WillPublishOk preflights one package without mutation or publication.
 	WillPublishOk(context.Context, string, Template, string, string) (bool, error)
@@ -44,32 +62,25 @@ type PackageManagerBackend interface {
 	// credentials without mutating files or publishing packages.
 	PreflightPublication(context.Context, string, string, string) error
 
+	// PublishesFromGitTag reports whether the tag itself distributes packages.
+	// Core must complete native publication checks before creating that tag.
+	PublishesFromGitTag() bool
+
+	// Release artifacts and package publication.
+
+	// ReleaseTools lists extra build tools; no extra tools means an empty list.
+	ReleaseTools(string, Config) ([]string, error)
+
 	// CreateGoReleaserConfig returns YAML with builds and/or archives lists,
 	// or an empty string when this manager has no downloadable artifacts.
 	CreateGoReleaserConfig(root string, manifest Config) (string, error)
-
-	// SupportsPackages reports whether the manager handles language packages.
-	SupportsPackages() bool
-
-	// PublishPackages publishes all eligible packages in the workspace.
-	PublishPackages(context.Context, string, string, string, io.Writer, io.Writer) error
 
 	// ReleaseWorkspace prepares and returns the directory used by GoReleaser.
 	// The boolean result requests serial artifact builds.
 	ReleaseWorkspace(context.Context, string, io.Writer, io.Writer) (string, bool, error)
 
-	// ManagedWorkspaceFiles declares exclusive native roots, including lock outputs.
-	// A backend with no native workspace files returns an empty list.
-	ManagedWorkspaceFiles() []string
-	// PrepareGeneration returns native contents, or no entries for a non-native project.
-	PrepareGeneration(PackageGenerationContext) ([]MergeEntry, error)
-
-	// ReleaseTools lists extra build tools; no extra tools means an empty list.
-	ReleaseTools(string, Config) ([]string, error)
-
-	// PublishesFromGitTag reports whether the tag itself distributes packages.
-	// Core must complete native publication checks before creating that tag.
-	PublishesFromGitTag() bool
+	// PublishPackages publishes all eligible packages in the workspace.
+	PublishPackages(context.Context, string, string, string, io.Writer, io.Writer) error
 }
 
 // Dependency is the manifest-independent form consumed by the merge module.
