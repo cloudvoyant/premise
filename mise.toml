@@ -103,7 +103,7 @@ shellcheck install.sh
 '''
 
 [tasks."publish:rc"]
-description = "Opt-in RC publication for Go (no-op; Go supports prerelease installs through commit hashes)"
+description = "Report Git-tag publication for Go source"
 run = 'echo "Skipping RC publish: Go supports prerelease installs through commit hashes."'
 
 [tasks."lint:fix"]

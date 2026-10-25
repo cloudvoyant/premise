@@ -93,7 +93,11 @@ go mod tidy
 
 ## Publishing
 
-Stable releases are owned by the release phase of `pm ci flow on-merge`, which delegates to the `pm release` implementation after validation. Merges to `main` run `.github/workflows/on-merge.yml`, which invokes that complete flow. Premise uses the svu Go SDK to calculate the version. Before it pushes a new stable tag, it builds a GoReleaser snapshot without publication credentials. A failed build leaves no new tag. It then creates and pushes the missing stable tag and publishes the release. A rerun at a tag already at HEAD skips this snapshot and resumes publication. Release candidates are not applicable to Go (prerelease installs resolve through commit hashes), so `mise run publish:rc` only echoes its skip message.
+Commit and merge workflows finish checks before publication. The release job calls `pm release` to create or reuse the shared tag and publish the GitHub release. Before creating a stable tag, Premise builds a GoReleaser snapshot without publication credentials. A failed build leaves no new tag. If the tag already points at HEAD, a rerun resumes publication.
+
+A feature push with `[publish-rc]` requests a GitHub prerelease after checks pass. Go libraries use repository tags for stable and prerelease versions. The root `publish:rc` task does not upload Go packages to a separate registry.
+
+When a template adds manifest fields, use a Premise action that can read those fields. For tandem PRs, publish a compatible core RC and pin dependent workflows to that released tag. Test generated client workflows as well as registry workflows before merging.
 
 A library installed directly from Git can use `workspace.package_managers: []`. An omitted list has the same meaning. Premise publishes the version tag and GitHub release without a language backend, compiled assets, registry credentials, or a custom publication hook. The package phase reports a successful skip. See [Libraries installed from Git](modules/ci.md#libraries-installed-from-git) for a Lua example.
 
