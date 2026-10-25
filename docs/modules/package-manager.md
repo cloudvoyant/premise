@@ -2,48 +2,107 @@
 
 ## Purpose
 
-The package-manager module defines how selected package ecosystems expose metadata, validate packages, contribute artifacts, and publish language packages. Core owns the contract and orchestration; `core/backends` contains built-in Go, Cargo, and Bun implementations.
+Package-manager backends translate native manifests and commands into one contract. Go, Cargo, and Bun share the repository version and release flow.
 
 ## Design
 
-### API
-
-| API | Use |
-| --- | --- |
-| `PackageManagerBackend.ID()` | Return the value accepted by `workspace.package_managers`. |
-| `PackageManagerBackend.Ecosystem()` | Return the incompatibility key, such as `npm`, `cargo`, or `go`. |
-| `GetPackageMetadata(root, template)` | Parse one native package specification into `PackageMetadata`. |
-| `ValidatePackage(root, template)` | Perform static package validation. |
-| `WillPublishOk(ctx, root, template, version, task)` | Preflight one package without publication. |
-| `CreateGoReleaserConfig(root, manifest)` | Contribute GoReleaser `builds` and `archives`. |
-| `SupportsPackages()` | Report whether the manager publishes a language registry package. |
-| `PublishPackages(ctx, root, version, task, ...)` | Preflight and publish eligible packages. |
-| `ReleaseWorkspace(ctx, root, ...)` | Prepare the workspace used for artifact builds. |
-| `RegisterPackageManagerBackend(backend)` | Register an implementation before invoking release APIs. |
-| `PackageMetadata` | Carry manager-neutral package name, version, path, registry, visibility, and publication capability. |
-
 ### Usage
 
-```go
-if err := core.RegisterPackageManagerBackend(myBackend); err != nil {
-    return err
-}
-```
+Select backends in `premise.yaml`:
 
 ```yaml
 workspace:
-  package_managers:
-    - go
-    - cargo
-    - bun
+  package_managers: [go, cargo, bun]
 ```
 
-The CLI registers built-ins in its composition root. Library clients register their own implementations explicitly; backends never self-register through `init`.
+The CLI registers built-ins. Library clients call `core.RegisterPackageManagerBackend(backend)` before generation or release.
+
+### Components
+
+```mermaid
+flowchart LR
+    Client["CLI or library client"] --> Core["Generate, release, and CI"]
+    Core --> Contract["PackageManagerBackend"]
+    Contract --> Go["Go"]
+    Contract --> Cargo["Cargo"]
+    Contract --> Bun["Bun"]
+    Contract --> Merge["Merge: shared dependency policy"]
+```
+
+| Component      | Responsibility                                                             |
+| -------------- | -------------------------------------------------------------------------- |
+| Backend        | Parse and write native syntax; prepare membership; run native commands.    |
+| Merge          | Combine dependency lists and resolve conflicts.                            |
+| Generate       | Stage the candidate, run checks, capture outputs, and apply with rollback. |
+| Release and CI | Choose the version and sequence checks, publication, and deployment.       |
+
+```mermaid
+flowchart LR
+    Inputs["Shared and client manifests"] --> Parse["Backend: ParseDependencies"]
+    Parse --> Dependencies["MergeDependencies"]
+    Dependencies --> Write["Backend: WriteDependencies"]
+    Write --> Candidate["Generate: validate candidate"]
+    Candidate --> Apply["Apply files with rollback"]
+```
+
+### Core types and API
+
+| Type | Contents |
+| --- | --- |
+| `PackageManagerBackend` | One interface for parsing, generation, metadata, and release hooks. |
+| `Dependency` | Name, scope, version, native options, and indirect flag. |
+| `PackageGenerationContext` | Staged project, original client files, declared shared files, project paths, and conflict resolver. |
+| `PackageMetadata` | Name, version, path, registry, visibility, and publication capability. |
+
+| Backend methods | Role |
+| --- | --- |
+| `ID`, `Ecosystem`, `SupportsPackages` | Identify the backend, ecosystem compatibility, and package support. |
+| `GetPackageMetadata`, `ValidatePackage` | Read and validate native package details. |
+| `ParseDependencies`, `WriteDependencies` | Translate native manifests to and from the common dependency model. |
+| `ManagedWorkspaceFiles`, `PrepareGeneration` | Declare native root ownership and prepare contents. No selected native manifest means no native contribution. |
+| `WillPublishOk`, `PreflightPublication`, `PublishesFromGitTag` | Check package and workspace publication requirements, including checks required before tagging. |
+| `ReleaseTools`, `CreateGoReleaserConfig`, `ReleaseWorkspace` | Supply tools, artifacts, and the build directory. |
+| `PublishPackages` | Publish eligible packages with the shared version. |
 
 ## Maintainer notes
 
-The package manager list in `premise.yaml` is the source of release policy. A manager runs only when it is listed. File presence does not select a manager.
+### Native roots
 
-The module keeps package-manager contracts separate from built-in backends. This lets library users register their own backends and keeps core independent of the built-in implementations.
+| Backend | Roots | Project layout |
+| --- | --- | --- |
+| Go | `go.mod`, `go.sum` | One root module; packages under `apps/` and `libs/`; shared dependencies. |
+| Cargo | `Cargo.toml`, `Cargo.lock` | Root workspace; project crates retain their own manifests. |
+| Bun | `package.json`, `bun.lock`, `bun.lockb` | Root workspace; projects retain their own manifests. |
 
-Before publication, the release process checks manager selection, artifact configuration, tasks, and credentials. If a check fails, no tag or package is published. Fix the cause and run the release again.
+Backend preparation preserves client identity and settings. Registry identity and membership do not replace them. Native install tasks regenerate locks and Go checksums inside the candidate. Go removes the selected project's nested module files; it rejects existing independent modules rather than converting them.
+
+```mermaid
+flowchart LR
+    Root["Go root module"] --> App["apps/cli"]
+    Root --> Lib["libs/example"]
+    Tag["Shared repository tag: v4.0.0"] --> Root
+    Root --> Import["example.com/repo/v4/libs/example"]
+```
+
+Go's `package.public: false` skips project publication tasks. Source still belongs to the root module. `package.main` and `package.binary` select application entry points and executable names.
+
+### Release boundary
+
+```mermaid
+flowchart LR
+    Checks["Root and project checks"] --> Preflight["Git-distributed package preflight"]
+    Preflight --> Tag["Shared tag and GitHub release"]
+    Tag --> Packages["Registry publication and package tasks"]
+    Packages --> Deploy["Existing deployment flow"]
+```
+
+Go source is available at the shared tag. Cargo and Bun upload to their registries afterward. Core owns this ordering; backends supply native checks and tasks.
+
+| Where to look                     | Responsibility                           |
+| --------------------------------- | ---------------------------------------- |
+| `core/backends/{go,cargo,bun}.go` | Native behavior and serialization.       |
+| `core/merge.go`                   | Shared merge policy.                     |
+| `core/generate.go`                | Candidate staging, checks, and rollback. |
+| `core/release.go`, `core/ci.go`   | Release and CI sequencing.               |
+
+See [Merge](merge.md), [Generate](generate.md), [Release](release.md), and the [Go guide](../guides/go.md).

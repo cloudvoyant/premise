@@ -45,8 +45,9 @@ type Config struct {
 }
 
 type TemplateRegistry struct {
-	WorkspaceFiles []string   `yaml:"workspace_files"`
-	Templates      []Template `yaml:"templates"`
+	WorkspaceFiles     []string   `yaml:"workspace_files"`
+	WorkspaceInitFiles []string   `yaml:"workspace_init_files,omitempty"`
+	Templates          []Template `yaml:"templates"`
 }
 
 type Workspace struct {
@@ -73,6 +74,14 @@ type PlatformDeclaration struct {
 	ReleasePlatforms []string `yaml:"release_platforms,omitempty"`
 }
 
+// PackageDeclaration holds project settings absent from a native package manifest.
+// All projects still use the repository release version.
+type PackageDeclaration struct {
+	Public *bool  `yaml:"public,omitempty"`
+	Main   string `yaml:"main,omitempty"`
+	Binary string `yaml:"binary,omitempty"`
+}
+
 type Project struct {
 	Name     string              `yaml:"name"`
 	Template string              `yaml:"template"`
@@ -80,6 +89,7 @@ type Project struct {
 	Path     string              `yaml:"path"`
 	CI       PlatformDeclaration `yaml:"ci,omitempty"`
 	Answers  map[string]string   `yaml:"answers,omitempty"`
+	Package  *PackageDeclaration `yaml:"package,omitempty"`
 }
 
 type Template struct {
@@ -90,6 +100,7 @@ type Template struct {
 	CI            PlatformDeclaration `yaml:"ci,omitempty"`
 	Questions     []Question          `yaml:"questions"`
 	Substitutions map[string]string   `yaml:"substitutions,omitempty"`
+	Package       *PackageDeclaration `yaml:"package,omitempty"`
 }
 
 type Question struct {
@@ -139,6 +150,11 @@ type DeploymentApplication struct {
 var validPlatforms = map[string]struct{}{"linux": {}, "macos": {}, "windows": {}}
 
 // Public API -----------------------------------------------------------------
+
+// IsPublic treats an omitted setting as public.
+func (declaration *PackageDeclaration) IsPublic() bool {
+	return declaration == nil || declaration.Public == nil || *declaration.Public
+}
 
 func NewManifest(name string) Config {
 	return Config{
@@ -383,16 +399,32 @@ func (manifest Config) Validate() error {
 		if manifest.TemplateRegistry.WorkspaceFiles == nil {
 			return errors.New("template_registry.workspace_files is required; use [] when no workspace files are shared")
 		}
-		seenPatterns := make(map[string]struct{}, len(manifest.TemplateRegistry.WorkspaceFiles))
-		for index, pattern := range manifest.TemplateRegistry.WorkspaceFiles {
-			if err := validateWorkspaceFilePattern(pattern); err != nil {
-				return fmt.Errorf("template_registry.workspace_files[%d]: %w", index, err)
+		for _, files := range []struct {
+			field    string
+			patterns []string
+		}{
+			{
+				field:    "workspace_files",
+				patterns: manifest.TemplateRegistry.WorkspaceFiles,
+			},
+			{
+				field:    "workspace_init_files",
+				patterns: manifest.TemplateRegistry.WorkspaceInitFiles,
+			},
+		} {
+			field, patterns := files.field, files.patterns
+			seenPatterns := make(map[string]struct{}, len(patterns))
+			for index, pattern := range patterns {
+				if err := validateWorkspaceFilePattern(pattern); err != nil {
+					return fmt.Errorf("template_registry.%s[%d]: %w", field, index, err)
+				}
+				if _, duplicate := seenPatterns[pattern]; duplicate {
+					return fmt.Errorf("template_registry.%s contains duplicate pattern %q", field, pattern)
+				}
+				seenPatterns[pattern] = struct{}{}
 			}
-			if _, duplicate := seenPatterns[pattern]; duplicate {
-				return fmt.Errorf("template_registry.workspace_files contains duplicate pattern %q", pattern)
-			}
-			seenPatterns[pattern] = struct{}{}
 		}
+
 		templates = manifest.TemplateRegistry.Templates
 	}
 
@@ -401,6 +433,9 @@ func (manifest Config) Validate() error {
 	for index, template := range templates {
 		if err := ValidateTemplateName(template.Name); err != nil {
 			return fmt.Errorf("template_registry.templates[%d].name: %w", index, err)
+		}
+		if err := validatePackageDeclaration(template.Package); err != nil {
+			return fmt.Errorf("template %s package: %w", template.Name, err)
 		}
 		if _, exists := templateNames[template.Name]; exists {
 			return fmt.Errorf("duplicate template name %q", template.Name)
@@ -470,6 +505,9 @@ func (manifest Config) Validate() error {
 		if project.Path == "" || filepath.IsAbs(project.Path) || escapesRoot(project.Path) {
 			return fmt.Errorf("workspace.projects[%d].path must be a relative path inside the workspace", index)
 		}
+		if err := validatePackageDeclaration(project.Package); err != nil {
+			return fmt.Errorf("project %s package: %w", project.Name, err)
+		}
 		if _, exists := projectNames[project.Name]; exists {
 			return fmt.Errorf("duplicate project name %q", project.Name)
 		}
@@ -528,7 +566,7 @@ func (manifest Config) PublicationTargets() []Template {
 			} else if strings.HasPrefix(filepath.ToSlash(project.Path), "libs/") {
 				kind = "lib"
 			}
-			targets = append(targets, Template{Name: project.Name, Kind: kind, Path: project.Path, Version: project.Version})
+			targets = append(targets, Template{Name: project.Name, Kind: kind, Path: project.Path, Version: project.Version, Package: project.Package})
 		}
 	}
 	sort.SliceStable(targets, func(i, j int) bool {
@@ -620,6 +658,21 @@ func ResolveSubstitutions(template Template, answers map[string]string) (map[str
 }
 
 // Private helpers ------------------------------------------------------------
+
+func validatePackageDeclaration(declaration *PackageDeclaration) error {
+	if declaration == nil {
+		return nil
+	}
+	if declaration.Main != "" && !filepath.IsLocal(declaration.Main) {
+		return fmt.Errorf("main must be inside its project")
+	}
+	if declaration.Binary != "" {
+		if err := ValidateProjectName(declaration.Binary); err != nil {
+			return fmt.Errorf("binary: %w", err)
+		}
+	}
+	return nil
+}
 
 func preflightWorkspace(root string, assets []WorkflowAsset) error {
 	for _, path := range []string{

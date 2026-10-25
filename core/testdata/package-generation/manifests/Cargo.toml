@@ -1,0 +1,25 @@
+# Client settings must survive dependency changes.
+[package]
+name = "client-owned"
+version = "7.0.0"
+edition = "2024"
+
+[dependencies]
+tool = "1.2.0"
+unchanged = { version = "1.0.0", features = ["derive"], default-features = false }
+local = { path = "../helper" }
+
+[dev-dependencies]
+tool = "9.0.0"
+
+[workspace.dependencies]
+shared = "1.0.0"
+
+[target.'cfg(unix)'.build-dependencies]
+compiler = { version = "1.0.0", optional = true }
+
+[package.metadata.client]
+owner = "client"
+
+[profile.release]
+lto = true

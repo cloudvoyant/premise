@@ -2,18 +2,24 @@ package backends
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/cloudvoyant/premise/core"
 )
 
-// Public API -----------------------------------------------------------------
+// Fixtures -------------------------------------------------------------------
+
+type unpublishedNPMTransport struct{ fallback http.RoundTripper }
+
+// Tests ----------------------------------------------------------------------
 
 func TestBunPluginSelectsRegistryPackagesIndependentlyOfVisibility(t *testing.T) {
 	root := t.TempDir()
@@ -375,6 +381,458 @@ esac
 	}
 }
 
+func TestBunGeneration(t *testing.T) {
+	registerBuiltins(t)
+	t.Run("when the project has no package.json", func(t *testing.T) {
+		for _, existing := range []bool{false, true} {
+			name := "when the workspace has no npm project"
+			if existing {
+				name = "when the workspace already has npm projects"
+			}
+			t.Run(name, func(t *testing.T) {
+				// Arrange
+				root, stage, registry := t.TempDir(), t.TempDir(), t.TempDir()
+				original := `{"name":"client","dependencies":{"tool":"1.2.0"}}`
+				if existing {
+					writePackageFixtureFile(t, root, "package.json", original)
+				}
+				writePackageFixtureFile(t, stage, "README.md", "generic project")
+				writePackageFixtureFile(t, registry, "package.json", `{"dependencies":{"tool":"2.0.0"}}`)
+
+				// Act
+				plan, err := core.BuildGeneratePlan(core.GenerateParameters{
+					PackageManagers:        []string{"bun"},
+					RegistryRoot:           registry,
+					RegistryWorkspaceFiles: []string{"package.json"},
+					ClientRepoRoot:         root,
+					TemplateRoot:           stage,
+					ProjectPath:            "apps/tool",
+					TemplateKind:           "app",
+					ResolveConflict:        core.MergeDecisions{}.Resolve,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				discardGenerationPlan(t, plan, root, "apps/tool")
+
+				// Assert
+				t.Run("it leaves npm roots alone because there is nothing native to merge", func(t *testing.T) {
+					for _, entry := range plan.Entries {
+						if entry.Path == "package.json" || entry.Path == "bun.lock" || entry.Path == "bun.lockb" {
+							t.Fatalf("unexpected native output: %#v", entry)
+						}
+					}
+					data, readErr := os.ReadFile(filepath.Join(root, "package.json"))
+					if existing {
+						if readErr != nil || string(data) != original {
+							t.Fatalf("client changed: %s %v", data, readErr)
+						}
+					} else if !os.IsNotExist(readErr) {
+						t.Fatalf("unexpected npm root: %s %v", data, readErr)
+					}
+				})
+			})
+		}
+	})
+	t.Run("when the project is the first npm project in the workspace", func(t *testing.T) {
+		// Arrange
+		root, stage, registry := t.TempDir(), t.TempDir(), t.TempDir()
+		writePackageFixtureFile(t, stage, "package.json", `{"name":"app","dependencies":{"project-only":"1.0.0"}}`)
+		writePackageFixtureFile(t, registry, "package.json", `{"name":"registry","workspaces":["templates/*"],"devDependencies":{"tool":"1.2.0"}}`)
+
+		// Act
+		plan, err := core.BuildGeneratePlan(core.GenerateParameters{
+			WorkspaceName:          "client",
+			PackageManagers:        []string{"bun"},
+			RegistryRoot:           registry,
+			RegistryWorkspaceFiles: []string{"package.json"},
+			ClientRepoRoot:         root,
+			TemplateRoot:           stage,
+			ProjectPath:            "apps/tool",
+			TemplateKind:           "app",
+			ResolveConflict:        core.MergeDecisions{}.Resolve,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		discardGenerationPlan(t, plan, root, "apps/tool")
+
+		// Assert
+		t.Run("it creates client workspace membership and merges root tooling only", func(t *testing.T) {
+			var output map[string]any
+			data := generationOutput(t, plan, "package.json")
+			if err := json.Unmarshal(data, &output); err != nil {
+				t.Fatal(err)
+			}
+			if output["name"] != "client" || !strings.Contains(string(data), "apps/*") || !strings.Contains(string(data), "libs/*") || !strings.Contains(string(data), "1.2.0") {
+				t.Fatalf("unexpected new root: %s", data)
+			}
+			if strings.Contains(string(data), "project-only") || strings.Contains(string(data), "templates/*") {
+				t.Fatalf("registry or project identity leaked: %s", data)
+			}
+			if _, err := os.Stat(filepath.Join(root, "package.json")); !os.IsNotExist(err) {
+				t.Fatalf("root published during planning: %v", err)
+			}
+		})
+	})
+	t.Run("when the project and workspace both have package.json", func(t *testing.T) {
+		t.Run("when the registry adds only new dependencies and settings", func(t *testing.T) {
+			// Arrange
+			root, stage, registry := t.TempDir(), t.TempDir(), t.TempDir()
+			original, err := os.ReadFile("../testdata/package-generation/package.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			writePackageFixtureFile(t, root, "package.json", string(original))
+			writePackageFixtureFile(t, registry, "package.json", `{"name":"registry-only","private":true,"workspaces":["templates/*"],"scripts":{"shared":"echo shared"},"devDependencies":{"new-tool":"^3.0.0"}}`)
+			writePackageFixtureFile(t, stage, "package.json", `{"name":"tool","dependencies":{"project-only":"1.0.0"}}`)
+
+			// Act
+			plan, err := core.BuildGeneratePlan(core.GenerateParameters{
+				WorkspaceName:          "client",
+				PackageManagers:        []string{"bun"},
+				RegistryRoot:           registry,
+				RegistryWorkspaceFiles: []string{"package.json"},
+				ClientRepoRoot:         root,
+				TemplateRoot:           stage,
+				ProjectPath:            "apps/tool",
+				TemplateKind:           "app",
+				ResolveConflict:        core.MergeDecisions{}.Resolve,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			discardGenerationPlan(t, plan, root, "apps/tool")
+
+			// Assert
+			t.Run("it merges disjoint keys and preserves client identity and unknown fields", func(t *testing.T) {
+				var result map[string]any
+				if err := json.Unmarshal(generationOutput(t, plan, "package.json"), &result); err != nil {
+					t.Fatal(err)
+				}
+				if result["name"] != "client-owned-root" || result["private"] != false || result["version"] != "7.0.0" || result["clientMetadata"] == nil {
+					t.Fatalf("client identity lost: %#v", result)
+				}
+				output := string(generationOutput(t, plan, "package.json"))
+				for _, expected := range []string{"existing-tool", "new-tool", "nohoist", "apps/tool", "echo client", "echo shared"} {
+					if !strings.Contains(output, expected) {
+						t.Fatalf("missing %q in %s", expected, output)
+					}
+				}
+				if strings.Contains(output, "templates/") || strings.Contains(output, "project-only") {
+					t.Fatalf("registry membership or project dependencies leaked into root: %s", output)
+				}
+				count := 0
+				for _, entry := range plan.Entries {
+					if entry.Path == "package.json" {
+						count++
+					}
+				}
+				if count != 1 {
+					t.Fatalf("native root was merged more than once: %#v", plan.Entries)
+				}
+			})
+		})
+		t.Run("when dependency ranges conflict", func(t *testing.T) {
+			// Arrange
+			root, stage, registry := t.TempDir(), t.TempDir(), t.TempDir()
+			writePackageFixtureFile(t, root, "package.json", `{"name":"client","devDependencies":{"tool":"^1"}}`)
+			writePackageFixtureFile(t, registry, "package.json", `{"devDependencies":{"tool":"^2"}}`)
+			writePackageFixtureFile(t, stage, "package.json", `{"name":"app"}`)
+
+			_, err := core.BuildGeneratePlan(core.GenerateParameters{
+				PackageManagers:        []string{"bun"},
+				RegistryRoot:           registry,
+				RegistryWorkspaceFiles: []string{"package.json"},
+				ClientRepoRoot:         root,
+				TemplateRoot:           stage,
+				ProjectPath:            "apps/tool",
+				TemplateKind:           "app",
+				ResolveConflict:        core.MergeDecisions{}.Resolve,
+			})
+
+			// Assert
+			t.Run("it reports a focused dependency conflict instead of replacing the root", func(t *testing.T) {
+				if err == nil || !strings.Contains(err.Error(), "devDependencies.tool") {
+					t.Fatalf("expected focused conflict: %v", err)
+				}
+				original, err := os.ReadFile(filepath.Join(root, "package.json"))
+				if err != nil || !strings.Contains(string(original), `"tool":"^1"`) {
+					t.Fatal("aborted merge changed the client")
+				}
+			})
+		})
+	})
+
+	t.Run("when the project and workspace already have npm dependencies", func(t *testing.T) {
+		for _, scenario := range []struct {
+			name        string
+			incoming    string
+			wantVersion string
+			wantError   bool
+		}{
+			{
+				name:        "when there are no incoming dependencies",
+				wantVersion: "1.2.0",
+			},
+			{
+				name:        "when both versions match",
+				incoming:    "1.2.0",
+				wantVersion: "1.2.0",
+			},
+			{
+				name:        "when the incoming minor version is newer",
+				incoming:    "1.3.0",
+				wantVersion: "1.3.0",
+			},
+			{
+				name:        "when the incoming patch version is newer",
+				incoming:    "1.2.1",
+				wantVersion: "1.2.1",
+			},
+			{
+				name:        "when the client minor version is newer",
+				incoming:    "1.1.0",
+				wantVersion: "1.2.0",
+			},
+			{
+				name:      "when the incoming major version is higher",
+				incoming:  "2.0.0",
+				wantError: true,
+			},
+			{
+				name:      "when the incoming major version is lower",
+				incoming:  "0.9.0",
+				wantError: true,
+			},
+		} {
+			t.Run(scenario.name, func(t *testing.T) {
+				// Arrange
+				root, stage, registry := t.TempDir(), t.TempDir(), t.TempDir()
+				original := `{"name":"client","devDependencies":{"tool":"1.2.0"}}`
+				shared := `{}`
+				if scenario.incoming != "" {
+					shared = `{"devDependencies":{"tool":"` + scenario.incoming + `"}}`
+				}
+				writePackageFixtureFile(t, root, "package.json", original)
+				writePackageFixtureFile(t, registry, "package.json", shared)
+				writePackageFixtureFile(t, stage, "package.json", `{"name":"app"}`)
+
+				// Act
+				plan, err := core.BuildGeneratePlan(core.GenerateParameters{
+					PackageManagers:        []string{"bun"},
+					RegistryRoot:           registry,
+					RegistryWorkspaceFiles: []string{"package.json"},
+					ClientRepoRoot:         root,
+					TemplateRoot:           stage,
+					ProjectPath:            "apps/tool",
+					TemplateKind:           "app",
+					ResolveConflict:        core.MergeDecisions{}.Resolve,
+				})
+				if plan != nil {
+					discardGenerationPlan(t, plan, root, "apps/tool")
+				}
+
+				// Assert
+				t.Run("it retains compatible dependencies and rejects major changes without changing the client", func(t *testing.T) {
+					if scenario.wantError {
+						if err == nil || !strings.Contains(err.Error(), "incompatible major versions") {
+							t.Fatalf("expected major-version conflict, got %v", err)
+						}
+					} else {
+						if err != nil {
+							t.Fatal(err)
+						}
+						var output struct {
+							DevDependencies map[string]string `json:"devDependencies"`
+						}
+						if err := json.Unmarshal(generationOutput(t, plan, "package.json"), &output); err != nil {
+							t.Fatal(err)
+						}
+						if output.DevDependencies["tool"] != scenario.wantVersion {
+							t.Fatalf("dependencies = %v, want tool %s", output.DevDependencies, scenario.wantVersion)
+						}
+					}
+					unchanged, readErr := os.ReadFile(filepath.Join(root, "package.json"))
+					if readErr != nil || string(unchanged) != original {
+						t.Fatalf("client changed: %s %v", unchanged, readErr)
+					}
+				})
+			})
+		}
+	})
+
+	t.Run("when existing npm settings conflict", func(t *testing.T) {
+		// Arrange
+		root, stage, registry := t.TempDir(), t.TempDir(), t.TempDir()
+		writePackageFixtureFile(t, root, "package.json", `{"name":"client","scripts":{"build":"client build"},"files":["common","client"]}`)
+		writePackageFixtureFile(t, registry, "package.json", `{"scripts":{"build":"shared build"},"files":["shared","common"]}`)
+		writePackageFixtureFile(t, stage, "package.json", `{"name":"app"}`)
+
+		// Act
+		plan, err := core.BuildGeneratePlan(core.GenerateParameters{
+			PackageManagers:        []string{"bun"},
+			RegistryRoot:           registry,
+			RegistryWorkspaceFiles: []string{"package.json"},
+			ClientRepoRoot:         root,
+			TemplateRoot:           stage,
+			ProjectPath:            "apps/tool",
+			TemplateKind:           "app",
+			ResolveConflict:        core.MergeDecisions{"scripts.build": {Choice: core.MergeChoiceUseSelected}}.Resolve,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		discardGenerationPlan(t, plan, root, "apps/tool")
+
+		// Assert
+		t.Run("it uses the common document policy for settings and the caller's field decision", func(t *testing.T) {
+			var output struct {
+				Scripts map[string]string `json:"scripts"`
+				Files   []string          `json:"files"`
+			}
+			if err := json.Unmarshal(generationOutput(t, plan, "package.json"), &output); err != nil {
+				t.Fatal(err)
+			}
+			if output.Scripts["build"] != "client build" || strings.Join(output.Files, ",") != "shared,common,client" {
+				t.Fatalf("unexpected merged settings: %#v", output)
+			}
+		})
+	})
+
+	t.Run("when the native root excludes the selected project", func(t *testing.T) {
+		// Arrange
+		root, stage := t.TempDir(), t.TempDir()
+		writePackageFixtureFile(t, root, "package.json", `{"workspaces":["apps/*","!apps/tool"]}`)
+		writePackageFixtureFile(t, stage, "package.json", `{"name":"tool"}`)
+
+		// Act
+		plan, err := core.BuildGeneratePlan(core.GenerateParameters{
+			PackageManagers: []string{"bun"},
+			ClientRepoRoot:  root,
+			TemplateRoot:    stage,
+			ProjectPath:     "apps/tool",
+			TemplateKind:    "app",
+		})
+
+		// Assert
+		t.Run("it rejects membership before publication", func(t *testing.T) {
+			if plan != nil {
+				discardGenerationPlan(t, plan, root, "apps/tool")
+			}
+			if err == nil || !strings.Contains(err.Error(), "excludes") {
+				t.Fatalf("expected native exclusion error, got %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(root, "apps/tool")); !os.IsNotExist(err) {
+				t.Fatalf("destination exists: %v", err)
+			}
+		})
+	})
+}
+
+func TestBunDependencyManifests(t *testing.T) {
+	t.Run("when parsing and regenerating package.json", func(t *testing.T) {
+		// Arrange
+		manifest := readPackageManifestFixture(t, "package.json")
+
+		// Act
+		dependencies, err := (Bun{}).ParseDependencies(manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		regenerated, err := (Bun{}).WriteDependencies(manifest, dependencies)
+
+		// Assert
+		t.Run("it keeps runtime and development dependencies in separate scopes", func(t *testing.T) {
+			versions := map[string]string{}
+			for _, dependency := range dependencies {
+				versions[strings.Join(dependency.Scope, ".")+"."+dependency.Name] = dependency.Version
+			}
+			want := map[string]string{"dependencies.tool": "1.2.0", "dependencies.unchanged": "1.0.0", "devDependencies.tool": "9.0.0"}
+			if !reflect.DeepEqual(versions, want) {
+				t.Fatalf("parsed dependencies = %#v", versions)
+			}
+		})
+		t.Run("it regenerates native dependency sections and preserves client settings", func(t *testing.T) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			var original, roundTrip map[string]any
+			if err := json.Unmarshal(manifest, &original); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(regenerated, &roundTrip); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(original, roundTrip) {
+				t.Fatalf("native round trip lost fields:\n%s", regenerated)
+			}
+		})
+	})
+
+	for _, scenario := range []struct {
+		name, incoming, dependency, wantVersion, wantError string
+		choice                                             core.MergeChoice
+	}{
+		{name: "when the registry adds a dependency", incoming: `{"dependencies":{"added":"1.0.0"}}`, dependency: "added", wantVersion: "1.0.0"},
+		{name: "when both manifests select the same version", incoming: `{"dependencies":{"tool":"1.2.0"}}`, dependency: "tool", wantVersion: "1.2.0"},
+		{name: "when the registry selects a newer compatible version", incoming: `{"dependencies":{"tool":"1.3.0"}}`, dependency: "tool", wantVersion: "1.3.0"},
+		{name: "when the client already selects a newer version", incoming: `{"dependencies":{"tool":"1.1.0"}}`, dependency: "tool", wantVersion: "1.2.0"},
+		{name: "when the manifests select different majors", incoming: `{"dependencies":{"tool":"2.0.0"}}`, wantError: "incompatible major versions"},
+		{name: "when a version range needs an explicit choice", incoming: `{"dependencies":{"tool":"^1.4.0"}}`, dependency: "tool", wantVersion: "^1.4.0", choice: core.MergeChoiceKeepShared},
+		{name: "when a local path needs an explicit choice", incoming: `{"dependencies":{"tool":"file:../helper"}}`, dependency: "tool", wantVersion: "1.2.0", choice: core.MergeChoiceUseSelected},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			// Arrange
+			client := readPackageManifestFixture(t, "package.json")
+			decisions := core.MergeDecisions{"dependencies.tool": {Choice: scenario.choice}}
+
+			// Act
+			output, err := core.MergeManifestDependencies(Bun{}, "package.json", []byte(scenario.incoming), client, decisions.Resolve)
+
+			// Assert
+			if scenario.wantError != "" {
+				t.Run("it reports the dependency conflict and leaves the source unchanged", func(t *testing.T) {
+					if err == nil || !strings.Contains(err.Error(), scenario.wantError) || output != nil || !bytes.Equal(client, readPackageManifestFixture(t, "package.json")) {
+						t.Fatalf("merge error = %v, output = %s", err, output)
+					}
+				})
+				return
+			}
+			t.Run("it writes merged dependencies while preserving scopes and client identity", func(t *testing.T) {
+				if err != nil {
+					t.Fatal(err)
+				}
+				var pkg map[string]any
+				if err := json.Unmarshal(output, &pkg); err != nil {
+					t.Fatal(err)
+				}
+				runtime := pkg["dependencies"].(map[string]any)
+				development := pkg["devDependencies"].(map[string]any)
+				if runtime[scenario.dependency] != scenario.wantVersion || development["tool"] != "9.0.0" || pkg["name"] != "client-owned" || pkg["clientMetadata"] == nil || pkg["scripts"] == nil {
+					t.Fatalf("wrong merged package:\n%s", output)
+				}
+			})
+		})
+	}
+	t.Run("when an incoming package.json has invalid dependency syntax", func(t *testing.T) {
+		// Arrange
+		client := readPackageManifestFixture(t, "package.json")
+		incoming := []byte("{\"dependencies\":{\"tool\":42}}")
+
+		// Act
+		output, err := core.MergeManifestDependencies(Bun{}, "package.json", incoming, client, core.MergeDecisions{}.Resolve)
+
+		// Assert
+		t.Run("it rejects parsing before producing a merged manifest", func(t *testing.T) {
+			if err == nil || !strings.Contains(err.Error(), "parse shared") || output != nil || !bytes.Equal(client, readPackageManifestFixture(t, "package.json")) {
+				t.Fatalf("invalid dependency syntax was accepted: %s, %v", output, err)
+			}
+		})
+	})
+
+}
+
 // Private helpers ------------------------------------------------------------
 
 func appendBunTemplate(registry *TemplateRegistry, template Template) *TemplateRegistry {
@@ -384,8 +842,6 @@ func appendBunTemplate(registry *TemplateRegistry, template Template) *TemplateR
 	registry.Templates = append(registry.Templates, template)
 	return registry
 }
-
-type unpublishedNPMTransport struct{ fallback http.RoundTripper }
 
 func (transport unpublishedNPMTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	if request.URL.Hostname() == "registry.npmjs.org" {

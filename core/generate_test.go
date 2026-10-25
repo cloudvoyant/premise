@@ -8,13 +8,115 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
 
-// -----------------------------------------------------------------------------
-// Generate API
-// -----------------------------------------------------------------------------
+// Fixtures -------------------------------------------------------------------
+
+type generationTestProvider struct {
+	testPackageManager
+}
+
+type workspaceGenerationProvider struct {
+	testPackageManager
+	prepare func(PackageGenerationContext) ([]MergeEntry, error)
+	paths   []string
+}
+
+type fixedQuestionnaire map[string]string
+
+// Tests ----------------------------------------------------------------------
+
+func TestGenerateProviderIntegration(t *testing.T) {
+	t.Run("when a selected provider prepares workspace files", func(t *testing.T) {
+		provider := generationTestProvider{testPackageManager: testPackageManager{id: "future"}}
+		useTestPackageManagers(t, provider)
+		root, source := t.TempDir(), t.TempDir()
+		if err := os.WriteFile(filepath.Join(source, "README.md"), []byte("project\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		plan, err := BuildGeneratePlan(GenerateParameters{PackageManagers: []string{"future"}, ClientRepoRoot: root, TemplateRoot: source, ProjectPath: "libs/example", TemplateKind: "lib"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = plan.close() })
+		if err := prepareWorkspaceCandidate(plan, t.TempDir(), true); err != nil {
+			t.Fatal(err)
+		}
+
+		t.Run("it stages the files without changing the workspace", func(t *testing.T) {
+			if len(plan.Entries) != 1 || plan.Entries[0].Path != "future.lock" {
+				t.Fatalf("selected provider was bypassed: %v", plan.Entries)
+			}
+			if _, err := os.Stat(filepath.Join(root, "future.lock")); !os.IsNotExist(err) {
+				t.Fatal("planning modified the workspace")
+			}
+
+			stages := []string{plan.stage, plan.selectedStage}
+			if err := plan.close(); err != nil {
+				t.Fatal(err)
+			}
+			for _, stage := range stages {
+				if _, err := os.Stat(stage); !os.IsNotExist(err) {
+					t.Fatalf("generation stage remains: %s (%v)", stage, err)
+				}
+			}
+		})
+	})
+
+}
+
+func TestGeneratePackageSettings(t *testing.T) {
+	t.Run("when a template declares package settings", func(t *testing.T) {
+		for _, public := range []string{"true", "false"} {
+			t.Run("when public is "+public, func(t *testing.T) {
+				installMiseTestShim(t, false)
+				template := templateFixture("premise-configurable-lib", "lib")
+				template.Questions = append(template.Questions, Question{Prompt: "API:", Type: "select", Populate: "package.public", Choices: []string{"true", "false"}})
+				template.Substitutions = map[string]string{"premise-configurable-lib": "name"}
+				template.Package = &PackageDeclaration{Main: "cmd/tool", Binary: "tool-premise-configurable-lib"}
+				registry := writeRegistryFixture(t, template)
+				restore := overrideResolveRepository(map[string]string{"cloudvoyant/package-fixture": registry})
+				t.Cleanup(restore)
+				root := filepath.Join(t.TempDir(), "workspace")
+				if _, err := InitializeWorkspace(root, "[tasks.build]\nrun = 'echo ok'\n"); err != nil {
+					t.Fatal(err)
+				}
+
+				err := Generate(t.Context(), root, "cloudvoyant/package-fixture:premise-configurable-lib", fixedGenerateOptions(fixedQuestionnaire{"name": "math", "package.public": public}), io.Discard)
+
+				t.Run("it records substituted settings in premise.yaml", func(t *testing.T) {
+					if err != nil {
+						t.Fatal(err)
+					}
+					manifest, err := LoadManifest(filepath.Join(root, ManifestFilename))
+					if err != nil {
+						t.Fatal(err)
+					}
+					declaration := manifest.Workspace.Projects[0].Package
+					if declaration == nil || declaration.Public == nil {
+						t.Fatal("the public answer was not recorded")
+					}
+					if declaration.IsPublic() != (public == "true") {
+						t.Fatalf("public = %v, want %s", *declaration.Public, public)
+					}
+					if declaration.Binary != "tool-math" || declaration.Main != "cmd/tool" {
+						t.Fatalf("executable settings were not resolved: %+v", declaration)
+					}
+					if manifest.PublicationTargets()[0].Package != declaration {
+						t.Fatal("publication targets lost the project settings")
+					}
+					if template.Package.Public != nil {
+						t.Fatal("generation changed the source template declaration")
+					}
+				})
+			})
+		}
+	})
+}
 
 func TestGenerateRecordsQualifiedSelector(t *testing.T) {
 	installMiseTestShim(t, false)
@@ -167,6 +269,7 @@ func TestGenerateCandidateFailureLeavesDestinationAndManifestUntouched(t *testin
 
 func TestGenerateProjectRegistrationFailureRemovesCommittedDestination(t *testing.T) {
 	installMiseTestShim(t, false)
+	useTestPackageManagers(t, generationTestProvider{testPackageManager: testPackageManager{id: "future"}})
 	registry := writeRegistryFixture(t, templateFixture("app", "app"))
 	writeTestFile(t, filepath.Join(registry, ".shared-config"), "shared\n", 0o640)
 	setRegistryWorkspaceFiles(t, registry, ".shared-config")
@@ -179,6 +282,8 @@ func TestGenerateProjectRegistrationFailureRemovesCommittedDestination(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
+	manifest.Workspace.PackageManagers = []string{"future"}
+	writeTestFile(t, filepath.Join(workspace, "future.lock"), "original native\n", 0640)
 	manifest.Workspace.Projects = append(manifest.Workspace.Projects, Project{Name: "orders", Template: "old:app", Path: "apps/orders"})
 	if err := SaveManifest(manifestPath, manifest); err != nil {
 		t.Fatal(err)
@@ -198,6 +303,14 @@ func TestGenerateProjectRegistrationFailureRemovesCommittedDestination(t *testin
 	if _, err := os.Stat(filepath.Join(workspace, ".shared-config")); !os.IsNotExist(err) {
 		t.Fatalf("shared workspace file exists after registration failure: %v", err)
 	}
+	native, nativeErr := os.ReadFile(filepath.Join(workspace, "future.lock"))
+	if nativeErr != nil || string(native) != "original native\n" {
+		t.Fatalf("native output was not restored: %q %v", native, nativeErr)
+	}
+	info, statErr := os.Stat(filepath.Join(workspace, "future.lock"))
+	if statErr != nil || info.Mode().Perm() != 0640 {
+		t.Fatalf("native output mode was not restored: %v %v", info, statErr)
+	}
 	after, err := os.ReadFile(manifestPath)
 	if err != nil {
 		t.Fatal(err)
@@ -206,10 +319,6 @@ func TestGenerateProjectRegistrationFailureRemovesCommittedDestination(t *testin
 		t.Fatalf("manifest changed after registration failure:\n%s", after)
 	}
 }
-
-// -----------------------------------------------------------------------------
-// Plan construction
-// -----------------------------------------------------------------------------
 
 func TestBuildGeneratePlanSortsAndResolvesFocusedConflicts(t *testing.T) {
 	root := t.TempDir()
@@ -553,10 +662,6 @@ func TestBuildGeneratePlanRejectsDestinationInsideSource(t *testing.T) {
 	}
 }
 
-// -----------------------------------------------------------------------------
-// Plan execution and cleanup
-// -----------------------------------------------------------------------------
-
 func TestApplyGeneratePlanCreatesDestinationAndCleansStages(t *testing.T) {
 	installMiseTestShim(t, false)
 	root := t.TempDir()
@@ -641,10 +746,6 @@ func TestBuildGeneratePlanCleansStagesWhenConflictResolutionFails(t *testing.T) 
 		t.Fatalf("destination exists after failed build: %v", err)
 	}
 }
-
-// -----------------------------------------------------------------------------
-// Dependency and candidate validation
-// -----------------------------------------------------------------------------
 
 func TestGeneratePlanCandidateDiscardsSuccessOutputAndStopsAfterFailure(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -765,11 +866,332 @@ func TestWorkspaceCandidateProjectValidationIncludesRootMiseConfig(t *testing.T)
 	}
 }
 
-// -----------------------------------------------------------------------------
-// Test helpers
-// -----------------------------------------------------------------------------
+func TestGenerateWorkspace(t *testing.T) {
+	t.Run("when providers claim the same native root", func(t *testing.T) {
+		useTestPackageManagers(t,
+			workspaceGenerationProvider{testPackageManager: testPackageManager{id: "first"}},
+			workspaceGenerationProvider{testPackageManager: testPackageManager{id: "second"}},
+		)
+		root, source := t.TempDir(), t.TempDir()
+		writeTestFile(t, filepath.Join(source, "README.md"), "selected\n", 0644)
 
-type fixedQuestionnaire map[string]string
+		plan, err := BuildGeneratePlan(GenerateParameters{PackageManagers: []string{"first", "second"}, ClientRepoRoot: root, TemplateRoot: source, ProjectPath: "libs/new", TemplateKind: "lib"})
+		if plan != nil {
+			t.Cleanup(func() { _ = plan.close() })
+		}
+
+		t.Run("it rejects ownership before changing live files", func(t *testing.T) {
+			if err == nil || !strings.Contains(err.Error(), "owned") {
+				t.Fatalf("expected ownership error, got %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(root, "libs/new")); !os.IsNotExist(err) {
+				t.Fatalf("destination exists: %v", err)
+			}
+		})
+	})
+
+	t.Run("when native preparation makes no root edits", func(t *testing.T) {
+		for _, failure := range []bool{false, true} {
+			scenario := "when contract validation succeeds"
+			outcome := "it validates existing source and publishes native outputs"
+			if failure {
+				scenario = "when contract validation fails"
+				outcome = "it discards native outputs after contract failure"
+			}
+			t.Run(scenario, func(t *testing.T) {
+				useTestPackageManagers(t, workspaceGenerationProvider{testPackageManager: testPackageManager{id: "future"}})
+				root, source := t.TempDir(), t.TempDir()
+				writeTestFile(t, filepath.Join(root, "mise.toml"), "monorepo_root = true\n[tasks.install]\nrun = 'true'\n", 0644)
+				writeTestFile(t, filepath.Join(root, "shared/helper.txt"), "existing source\n", 0644)
+				writeTestFile(t, filepath.Join(root, "libs/bin/mise.toml"), "[tasks.install]\nrun = 'true'\n", 0644)
+				writeTestFile(t, filepath.Join(root, ".cargo/config.toml"), "[net]\noffline = true\n", 0644)
+				writeTestFile(t, filepath.Join(root, "future.lock"), "original\n", 0640)
+				writeTestFile(t, filepath.Join(source, "mise.toml"), "[tasks.install]\nrun = 'true'\n", 0644)
+				script, err := os.ReadFile("testdata/package-generation/mise.sh")
+				if err != nil {
+					t.Fatal(err)
+				}
+				bin := t.TempDir()
+				writeTestFile(t, filepath.Join(bin, "mise"), string(script), 0755)
+				t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+				liveRoot, err := filepath.EvalSymlinks(root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("LIVE_WORKSPACE", liveRoot)
+				t.Setenv("FAIL_BUILD", "")
+				if failure {
+					t.Setenv("FAIL_BUILD", "1")
+				}
+				plan, err := BuildGeneratePlan(GenerateParameters{PackageManagers: []string{"future"}, ClientRepoRoot: root, TemplateRoot: source, ProjectPath: "libs/new", TemplateKind: "lib"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = plan.close() })
+
+				stages := []string{plan.stage, plan.selectedStage}
+
+				err = ApplyGeneratePlan(t.Context(), plan, io.Discard)
+
+				t.Run(outcome, func(t *testing.T) {
+					if failure {
+						if err == nil || !strings.Contains(err.Error(), "controlled candidate build failure") && !strings.Contains(err.Error(), "task build failed") {
+							t.Fatalf("expected build failure, got %v", err)
+						}
+						if _, err := os.Stat(filepath.Join(root, "libs/new")); !os.IsNotExist(err) {
+							t.Fatalf("destination exists: %v", err)
+						}
+					} else if err != nil {
+						t.Fatal(err)
+					}
+					data, err := os.ReadFile(filepath.Join(root, "future.lock"))
+					if err != nil {
+						t.Fatal(err)
+					}
+					want := "validated dependency output\n"
+					if failure {
+						want = "original\n"
+					}
+					if string(data) != want {
+						t.Fatalf("native output = %q, want %q", data, want)
+					}
+					info, err := os.Stat(filepath.Join(root, "future.lock"))
+					if err != nil || info.Mode().Perm() != 0640 {
+						t.Fatalf("native output mode was not preserved: %v, %v", info, err)
+					}
+					for _, stage := range stages {
+						if _, err := os.Stat(stage); !os.IsNotExist(err) {
+							t.Fatalf("generation stage remains after execution: %s (%v)", stage, err)
+						}
+					}
+				})
+			})
+		}
+	})
+	t.Run("when the incoming registry has no package manager", func(t *testing.T) {
+		installMiseTestShim(t, false)
+		provider := workspaceGenerationProvider{testPackageManager: testPackageManager{id: "future"}, prepare: func(request PackageGenerationContext) ([]MergeEntry, error) {
+			return []MergeEntry{{Path: "future.lock", Output: PathValue{Present: true, Kind: "file", Data: []byte(request.WorkspaceName)}}}, nil
+		}}
+		useTestPackageManagers(t, provider)
+		root := filepath.Join(t.TempDir(), "client")
+		manifestPath, err := InitializeWorkspace(root, "monorepo_root = true\n")
+		if err != nil {
+			t.Fatal(err)
+		}
+		manifest, err := LoadManifest(manifestPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		manifest.Workspace.PackageManagers = []string{"future"}
+		if err := SaveManifest(manifestPath, manifest); err != nil {
+			t.Fatal(err)
+		}
+		registry := writeRegistryFixture(t, templateFixture("generic", "lib"))
+
+		err = Generate(t.Context(), root, registry+":generic", fixedGenerateOptions(fixedQuestionnaire{"name": "notes"}), io.Discard)
+
+		t.Run("it prepares already configured native roots using client identity", func(t *testing.T) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			output, err := os.ReadFile(filepath.Join(root, "future.lock"))
+			if err != nil || string(output) != "client" {
+				t.Fatalf("existing provider was omitted or used registry identity: %q %v", output, err)
+			}
+		})
+	})
+
+	t.Run("when a provider claims an unsafe root path", func(t *testing.T) {
+		for _, path := range []string{"", "../outside", "nested/lock", ".git", "mise.toml"} {
+			t.Run("when the path is "+strconv.Quote(path), func(t *testing.T) {
+				useTestPackageManagers(t, workspaceGenerationProvider{testPackageManager: testPackageManager{id: "future"}, paths: []string{path}})
+				root, source := t.TempDir(), t.TempDir()
+				writeTestFile(t, filepath.Join(source, "README.md"), "selected", 0644)
+
+				plan, err := BuildGeneratePlan(GenerateParameters{PackageManagers: []string{"future"}, ClientRepoRoot: root, TemplateRoot: source, ProjectPath: "libs/new", TemplateKind: "lib"})
+				if plan != nil {
+					t.Cleanup(func() { _ = plan.close() })
+				}
+
+				t.Run("it rejects the claim and removes staging files", func(t *testing.T) {
+					if err == nil || !strings.Contains(err.Error(), "invalid native root path") {
+						t.Fatalf("unsafe claim accepted: %v", err)
+					}
+					stages, err := filepath.Glob(filepath.Join(root, "libs/.premise-stage-*"))
+					if err != nil || len(stages) != 0 {
+						t.Fatalf("stages remain after failed planning: %v %v", stages, err)
+					}
+				})
+			})
+		}
+	})
+
+	t.Run("when a provider returns duplicate or unclaimed outputs", func(t *testing.T) {
+		for _, path := range []string{"future.lock", "../outside", "unknown.lock"} {
+			t.Run("when the path is "+strconv.Quote(path), func(t *testing.T) {
+				provider := workspaceGenerationProvider{testPackageManager: testPackageManager{id: "future"}, prepare: func(PackageGenerationContext) ([]MergeEntry, error) {
+					entry := MergeEntry{Path: path, Output: PathValue{Present: true, Kind: "file", Data: []byte("native")}}
+					return []MergeEntry{entry, entry}, nil
+				}}
+				useTestPackageManagers(t, provider)
+				root, source := t.TempDir(), t.TempDir()
+				writeTestFile(t, filepath.Join(source, "README.md"), "selected", 0644)
+
+				plan, err := BuildGeneratePlan(GenerateParameters{PackageManagers: []string{"future"}, ClientRepoRoot: root, TemplateRoot: source, ProjectPath: "libs/new", TemplateKind: "lib"})
+				if plan != nil {
+					t.Cleanup(func() { _ = plan.close() })
+				}
+
+				t.Run("it rejects the outputs without creating a project", func(t *testing.T) {
+					if err == nil {
+						t.Fatal("invalid provider outputs accepted")
+					}
+					if _, err := os.Stat(filepath.Join(root, "libs/new")); !os.IsNotExist(err) {
+						t.Fatalf("destination exists: %v", err)
+					}
+				})
+			})
+		}
+	})
+
+}
+
+func TestGenerateWorkspaceInitialization(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		name := "when the first project needs workspace quality rules"
+		if existing {
+			name = "when the workspace already has custom quality rules"
+		}
+		t.Run(name, func(t *testing.T) {
+			// Arrange
+			installMiseTestShim(t, false)
+			temporary := t.TempDir()
+			t.Setenv("TMPDIR", temporary)
+			root := filepath.Join(t.TempDir(), "client")
+			if _, err := InitializeWorkspace(root, "monorepo_root = true\n"); err != nil {
+				t.Fatal(err)
+			}
+			registry := writeRegistryFixture(t, templateFixture("example", "lib"))
+			writeTestFile(t, filepath.Join(registry, ".quality.yml"), "complexity: 30\n", 0644)
+			writeTestFile(t, filepath.Join(registry, "mise.toml"), "[tools]\ngo = '1.25.0'\n", 0644)
+			manifestPath := filepath.Join(registry, ManifestFilename)
+			manifest, err := LoadManifest(manifestPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			manifest.TemplateRegistry.WorkspaceFiles = []string{"mise.toml"}
+			manifest.TemplateRegistry.WorkspaceInitFiles = []string{".quality.yml"}
+			if err := SaveManifest(manifestPath, manifest); err != nil {
+				t.Fatal(err)
+			}
+			original := "# Client rules\ncomplexity: 20\n"
+			if existing {
+				writeTestFile(t, filepath.Join(root, ".quality.yml"), original, 0600)
+			}
+
+			// Act
+			err = Generate(t.Context(), root, registry+":example", fixedGenerateOptions(fixedQuestionnaire{"name": "first"}), io.Discard)
+
+			// Assert
+			t.Run("it copies missing defaults and preserves existing contents and permissions", func(t *testing.T) {
+				if err != nil {
+					t.Fatal(err)
+				}
+				data, err := os.ReadFile(filepath.Join(root, ".quality.yml"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				want, mode := "complexity: 30\n", os.FileMode(0644)
+				if existing {
+					want, mode = original, 0600
+				}
+				if string(data) != want {
+					t.Fatalf("quality rules = %q, want %q", data, want)
+				}
+				info, err := os.Stat(filepath.Join(root, ".quality.yml"))
+				if err != nil || info.Mode().Perm() != mode {
+					t.Fatalf("quality mode = %v, %v", info, err)
+				}
+			})
+
+			// Arrange
+			writeTestFile(t, filepath.Join(root, ".quality.yml"), original, 0600)
+			writeTestFile(t, filepath.Join(registry, ".quality.yml"), "complexity: 50\n", 0644)
+			writeTestFile(t, filepath.Join(registry, "mise.toml"), "[tools]\ngo = '1.25.1'\n", 0644)
+
+			// Act
+			err = Generate(t.Context(), root, registry+":example", fixedGenerateOptions(fixedQuestionnaire{"name": "second"}), io.Discard)
+
+			// Assert
+			t.Run("it merges later tool dependencies without replacing workspace rules", func(t *testing.T) {
+				if err != nil {
+					t.Fatal(err)
+				}
+				data, err := os.ReadFile(filepath.Join(root, ".quality.yml"))
+				if err != nil || string(data) != original {
+					t.Fatalf("client quality rules changed: %q, %v", data, err)
+				}
+				configuration, err := os.ReadFile(filepath.Join(root, "mise.toml"))
+				if err != nil || !strings.Contains(string(configuration), "1.25.1") {
+					t.Fatalf("dependency was not merged: %s, %v", configuration, err)
+				}
+				stages, err := filepath.Glob(filepath.Join(root, "libs", ".premise-stage-*"))
+				if err != nil || len(stages) != 0 {
+					t.Fatalf("project stages remain: %v, %v", stages, err)
+				}
+				entries, err := os.ReadDir(temporary)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, entry := range entries {
+					if strings.HasPrefix(entry.Name(), "premise-") {
+						t.Fatalf("temporary stage remains: %s", entry.Name())
+					}
+				}
+			})
+		})
+	}
+	t.Run("when a file is declared for initialization and merging", func(t *testing.T) {
+		// Arrange
+		root, source, registry := t.TempDir(), t.TempDir(), t.TempDir()
+		writeTestFile(t, filepath.Join(source, "README.md"), "project", 0644)
+		writeTestFile(t, filepath.Join(registry, ".quality.yml"), "complexity: 30\n", 0644)
+
+		// Act
+		plan, err := BuildGeneratePlan(GenerateParameters{
+
+			ClientRepoRoot: root,
+
+			TemplateRoot: source,
+
+			RegistryRoot: registry,
+
+			RegistryWorkspaceFiles: []string{".quality.yml"},
+
+			RegistryWorkspaceInitFiles: []string{".quality.yml"},
+
+			ProjectPath: "libs/new",
+
+			TemplateKind: "lib",
+		})
+		if plan != nil {
+			t.Cleanup(func() { _ = plan.close() })
+		}
+
+		// Assert
+		t.Run("it rejects ambiguous ownership before writing files", func(t *testing.T) {
+			if err == nil || !strings.Contains(err.Error(), "both initialization and merging") {
+				t.Fatalf("expected declaration conflict, got %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(root, ".quality.yml")); !os.IsNotExist(err) {
+				t.Fatalf("quality rules published: %v", err)
+			}
+		})
+	})
+}
+
+// Private helpers ------------------------------------------------------------
 
 func (answers fixedQuestionnaire) Ask(_ []Question) (map[string]string, error) {
 	response := make(map[string]string, len(answers))
@@ -890,4 +1312,24 @@ func installMiseTestShim(t *testing.T, fail bool) string {
 	t.Setenv("MISE_LOG", log)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return log
+}
+
+func (provider generationTestProvider) PrepareGeneration(request PackageGenerationContext) ([]MergeEntry, error) {
+	return []MergeEntry{{Path: "future.lock", Selected: PathValue{Kind: "file", Mode: 0644}, Output: PathValue{Present: true, Kind: "file", Mode: 0644, Data: []byte("dependencies\n")}}}, nil
+}
+
+func (generationTestProvider) ManagedWorkspaceFiles() []string { return []string{"future.lock"} }
+
+func (provider workspaceGenerationProvider) ManagedWorkspaceFiles() []string {
+	if provider.paths != nil {
+		return provider.paths
+	}
+	return []string{"future.lock"}
+}
+
+func (provider workspaceGenerationProvider) PrepareGeneration(request PackageGenerationContext) ([]MergeEntry, error) {
+	if provider.prepare != nil {
+		return provider.prepare(request)
+	}
+	return nil, nil
 }

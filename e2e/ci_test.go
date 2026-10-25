@@ -1,6 +1,7 @@
 package e2e_test
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -204,6 +205,84 @@ func TestCI(t *testing.T) {
 			})
 		}
 	})
+}
+
+// TestCIActionPublication runs the repository's real Mise publication task.
+func TestCIActionPublication(t *testing.T) {
+	for _, scenario := range []struct {
+		context  string
+		version  string
+		existing string
+		failure  string
+		want     string
+		fails    bool
+	}{
+		{
+			context:  "when a stable release advances an existing major tag",
+			version:  "v0.6.0",
+			existing: "true",
+			want:     "api --method PATCH repos/cloudvoyant/premise/git/refs/tags/v0 -f sha=0123456789012345678901234567890123456789 -F force=true",
+		},
+		{
+			context:  "when the first release creates a new major tag",
+			version:  "v1.0.0",
+			existing: "false",
+			want:     "api --method POST repos/cloudvoyant/premise/git/refs -f ref=refs/tags/v1 -f sha=0123456789012345678901234567890123456789",
+		},
+		{
+			context: "when an RC attempts to update a major tag",
+			version: "v0.6.0-rc.1",
+			fails:   true,
+		},
+		{
+			context: "when the release tag cannot be read",
+			version: "v0.6.0",
+			failure: "release",
+			fails:   true,
+		},
+		{
+			context:  "when updating the remote major tag fails",
+			version:  "v0.6.0",
+			existing: "true",
+			failure:  "update",
+			want:     "api --method PATCH repos/cloudvoyant/premise/git/refs/tags/v0",
+			fails:    true,
+		},
+	} {
+		t.Run(scenario.context, func(t *testing.T) {
+			// Arrange
+			workspace := t.TempDir()
+			copyFixture(t, filepath.Join(repositoryRoot(t), "e2e", "testdata", "action-publication"), workspace)
+			calls := filepath.Join(workspace, "calls")
+			t.Setenv("PATH", workspace+string(os.PathListSeparator)+os.Getenv("PATH"))
+			t.Setenv("RELEASE_VERSION", scenario.version)
+			t.Setenv("PREMISE_TEST_GH_CALLS", calls)
+			t.Setenv("PREMISE_TEST_MAJOR_EXISTS", scenario.existing)
+			t.Setenv("PREMISE_TEST_GH_FAILURE", scenario.failure)
+
+			// Act
+			if scenario.fails {
+				commandFailure(t, repositoryRoot(t), "mise", "run", "publish:update-action-tags")
+			} else {
+				runCommand(t, repositoryRoot(t), "mise", "run", "publish:update-action-tags")
+			}
+
+			// Assert
+			t.Run("it updates only the stable major reference and reports failures", func(t *testing.T) {
+				if strings.Contains(scenario.version, "-rc.") {
+					assertAbsent(t, calls)
+				} else if scenario.want != "" {
+					assertFileContains(t, calls, scenario.want)
+				} else if strings.Contains(readFile(t, calls), "--method") {
+					t.Fatal("major tag changed after release lookup failed")
+				}
+				if err := os.RemoveAll(workspace); err != nil {
+					t.Fatal(err)
+				}
+				assertAbsent(t, workspace)
+			})
+		})
+	}
 }
 
 // Private helpers ------------------------------------------------------------

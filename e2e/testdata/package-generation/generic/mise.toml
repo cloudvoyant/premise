@@ -1,0 +1,33 @@
+
+[tasks."install"]
+run = "test -f ../../libs/go-helper/message.go"
+
+[tasks."build"]
+run = "test -f ../../libs/go-helper/message.go"
+
+[tasks."clean"]
+run = "test -f ../../libs/go-helper/message.go"
+
+[tasks."test"]
+run = "test -f ../../libs/go-helper/message.go"
+
+[tasks."lint"]
+run = "test -f ../../libs/go-helper/message.go"
+
+[tasks."lint:fix"]
+run = "test -f ../../libs/go-helper/message.go"
+
+[tasks."format"]
+run = "test -f ../../libs/go-helper/message.go"
+
+[tasks."format:check"]
+run = "test -f ../../libs/go-helper/message.go"
+
+[tasks."env-pull"]
+run = "test -f ../../libs/go-helper/message.go"
+
+[tasks."publish:rc"]
+run = "test -f ../../libs/go-helper/message.go"
+
+[tasks."publish"]
+run = "test -f ../../libs/go-helper/message.go"

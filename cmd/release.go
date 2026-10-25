@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	core "github.com/cloudvoyant/premise/core"
-	"github.com/cloudvoyant/premise/core/backends"
 	"github.com/spf13/cobra"
 )
 
@@ -29,9 +28,6 @@ func ReleaseCommand() *cobra.Command {
 			}
 			if dryRun && buildOnly {
 				return fmt.Errorf("--dry-run and --build cannot be used together")
-			}
-			if err := backends.RegisterPackageManagers(); err != nil {
-				return err
 			}
 			if dryRun {
 				var plan core.ReleasePlan
@@ -65,9 +61,6 @@ func ReleasePublishCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := backends.RegisterPackageManagers(); err != nil {
-				return err
-			}
 			groups, err := core.ExpectedReleaseGroups(root)
 			if err != nil {
 				return err
@@ -91,9 +84,6 @@ func ReleasePackagesCommand() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			root, _, err := core.FindManifest(currentDirectory())
 			if err != nil {
-				return err
-			}
-			if err := backends.RegisterPackageManagers(); err != nil {
 				return err
 			}
 			_, err = core.PublishReleasePackages(cmd.Context(), root, channel, expectedVersion, cmd.OutOrStdout(), cmd.ErrOrStderr())

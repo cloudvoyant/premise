@@ -376,3 +376,63 @@ func TestMergeMiseConfigsAsksForIncomparableToolSelectors(t *testing.T) {
 		t.Fatalf("node = %#v", result.Config.Tools["node"])
 	}
 }
+
+func TestMiseDependencyManifestMerging(t *testing.T) {
+	for _, scenario := range []struct {
+		name, incoming, tool, wantVersion, wantError string
+		choice                                       MergeChoice
+	}{
+		{name: "when shared tools add a dependency", incoming: "[tools]\nbun='1.2.0'", tool: "bun", wantVersion: "1.2.0"},
+		{name: "when shared tools select the same version", incoming: "[tools]\nnode='22.0.0'", tool: "node", wantVersion: "22.0.0"},
+		{name: "when shared tools select a newer minor", incoming: "[tools]\nnode='22.1.0'", tool: "node", wantVersion: "22.1.0"},
+		{name: "when shared tools select a different major", incoming: "[tools]\nnode='24.0.0'", wantError: "incompatible major versions"},
+		{name: "when an opaque selector needs a decision", incoming: "[tools]\nnode='lts'", tool: "node", wantVersion: "lts", choice: MergeChoiceKeepShared},
+		{name: "when structured tool options need a decision", incoming: "[tools]\nrust={version='1.89.0',components='rustfmt,clippy'}", tool: "rust", wantVersion: "1.89.0", choice: MergeChoiceKeepShared},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			// Arrange
+			client, err := ExtractMiseConfig("client", []byte("[tools]\nnode='22.0.0'\nrust={version='1.88.0',components='rustfmt'}\npython=['3.11','3.12']\n[env]\nCLIENT='yes'\n[tasks.test]\nrun='client test'\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			incoming, err := ExtractMiseConfig("registry", []byte(scenario.incoming))
+			if err != nil {
+				t.Fatal(err)
+			}
+			decisions := MergeDecisions{"tools." + scenario.tool: {Choice: scenario.choice}}
+
+			// Act: Mise parses native tools into the same Dependency structs,
+			// uses MergeDependencies, then regenerates its native tools table.
+			merged, err := MergeMiseConfigs(incoming, client, "lib", "registry", decisions.Resolve)
+
+			// Assert
+			if scenario.wantError != "" {
+				t.Run("it reports the same major-version conflict as package backends", func(t *testing.T) {
+					if err == nil || !strings.Contains(err.Error(), scenario.wantError) {
+						t.Fatalf("merge error = %v", err)
+					}
+				})
+				return
+			}
+			t.Run("it regenerates tools without losing tasks, environment, or native options", func(t *testing.T) {
+				if err != nil {
+					t.Fatal(err)
+				}
+				reparsed, err := ExtractMiseConfig("merged", merged.Bytes)
+				if err != nil {
+					t.Fatal(err)
+				}
+				version := reparsed.Tools[scenario.tool].Selector
+				if options, ok := reparsed.Tools[scenario.tool].Raw.(map[string]any); ok {
+					version, _ = options["version"].(string)
+					if options["components"] != "rustfmt,clippy" {
+						t.Fatalf("structured tool options were lost: %#v", options)
+					}
+				}
+				if version != scenario.wantVersion || reparsed.Env["CLIENT"] != "yes" || !reflect.DeepEqual(reparsed.Tasks["test"].Run, []string{"client test"}) || !reflect.DeepEqual(reparsed.Tools["python"].Raw, []any{"3.11", "3.12"}) {
+					t.Fatalf("wrong merged Mise config:\n%s", merged.Bytes)
+				}
+			})
+		})
+	}
+}

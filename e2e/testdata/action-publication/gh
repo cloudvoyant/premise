@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "$PREMISE_TEST_GH_CALLS"
+case "$*" in
+  "api repos/cloudvoyant/premise/git/ref/tags/$RELEASE_VERSION --jq .object.sha")
+    [ "${PREMISE_TEST_GH_FAILURE:-}" != release ] || exit 1
+    printf '%s\n' 0123456789012345678901234567890123456789
+    ;;
+  "api repos/cloudvoyant/premise/git/ref/tags/${RELEASE_VERSION%%.*} --silent")
+    [ "$PREMISE_TEST_MAJOR_EXISTS" = true ]
+    ;;
+  "api --method "*)
+    [ "${PREMISE_TEST_GH_FAILURE:-}" != update ]
+    ;;
+  *) exit 2 ;;
+esac

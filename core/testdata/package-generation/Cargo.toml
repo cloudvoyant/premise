@@ -1,0 +1,26 @@
+# Client root identity stays here.
+[package]
+name = "client-root"
+version = "0.9.0"
+edition = "2021"
+
+[workspace]
+# Preserve this comment and existing workspace policy.
+members = [
+    "libs/existing", # This array is the only field rewritten.
+]
+resolver = "2"
+default-members = ["libs/existing"]
+exclude = ["experiments/*"]
+
+[workspace.package]
+license = "MIT"
+
+[workspace.dependencies]
+existing = { path = "libs/existing" }
+
+[profile.release]
+lto = true # Keep profile comments.
+
+[workspace.metadata.client]
+owner = "platform"

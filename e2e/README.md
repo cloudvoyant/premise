@@ -28,6 +28,24 @@ mise exec -- go test ./e2e -run '^TestScaffold$/when_creating_a_lib' -v
 PREMISE_TEST_FNOX=1 mise exec -- go test ./e2e -run '^TestSecrets$/when_running_Mise_tasks' -v
 ```
 
+## Native package-manager generation
+
+`TestScaffold` uses real CLI generation and Mise tasks for dependency-free Go, Cargo, and Bun apps with local sibling libraries. The fixtures pin Go 1.25.14, Rust 1.88.0, and Bun 1.4.2. Mise installs those tools from the generated configurations. These scenarios need no registry credentials, cloud resources, or external publication. Native checks are not silently skipped.
+
+```sh
+mise exec -- go test ./e2e -run '^TestScaffold$/when_generating_native_workspaces/when_generating_a_go_workspace' -count=1 -v
+mise exec -- go test ./e2e -run '^TestScaffold$/when_generating_native_workspaces/when_generating_a_cargo_workspace' -count=1 -v
+mise exec -- go test ./e2e -run '^TestScaffold$/when_generating_native_workspaces/when_generating_a_bun_workspace' -count=1 -v
+mise exec -- go test ./e2e -run '^TestScaffold$/when_combining_native_workspaces/when_adding_bun_then_cargo_to_Go' -count=1 -v
+mise exec -- go test ./e2e -run '^TestScaffold$/when_combining_native_workspaces/when_adding_cargo_then_bun_to_Go' -count=1 -v
+mise exec -- go test ./e2e -run '^TestScaffold$/when_extending_an_existing_standalone_Cargo_workspace' -count=1 -v
+mise exec -- go test ./e2e -run '^TestScaffold$/when_native_generation_inputs_conflict' -count=1 -v
+```
+
+The mixed scenarios retain existing Go source, add both registry orders, and generate a language-neutral project. They verify root membership, sibling resolution, retained client identity, and published native lockfiles before live dependency installation. Root `pm install` does not require a root task when only project install contracts exist.
+
+The existing registry-contribution scenario uses public `core.Generate` with real native tools because it supplies deterministic conflict decisions. The CLI matrix covers ordinary generation separately. Its old success-only shim and exact process-count assertions are removed; controlled failure doubles remain for rollback tests.
+
 ## Live infrastructure tests
 
 Set the credentials, dedicated project, and existing state backend described in the [GCS fixture](testdata/pulumi/README.md), then run:

@@ -16,6 +16,7 @@ shfmt = "latest"
 watchexec = "latest"
 fnox = "1.39.0"
 actionlint = "1.7.12"
+"go:github.com/fzipp/gocyclo/cmd/gocyclo" = "0.6.0"
 
 [tasks.install]
 description = "Install the premise CLI"
@@ -97,12 +98,31 @@ exit "$status"
 description = "Run Go and shell static analysis"
 run = '''
 go vet ./...
+gocyclo -over 30 -ignore '_test\.go$' core/backends core/merge.go core/misex.go core/generate.go
 shellcheck install.sh
 '''
 
+[tasks."publish:update-action-tags"]
+description = "Move the major action tag to the published stable release"
+shell = "bash -c"
+run = '''
+set -euo pipefail
+if [[ ! "$RELEASE_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "publish:update-action-tags requires a stable RELEASE_VERSION such as v0.6.0" >&2
+  exit 1
+fi
+major="${RELEASE_VERSION%%.*}"
+target=$(gh api "repos/cloudvoyant/premise/git/ref/tags/$RELEASE_VERSION" --jq '.object.sha')
+if gh api "repos/cloudvoyant/premise/git/ref/tags/$major" --silent; then
+  gh api --method PATCH "repos/cloudvoyant/premise/git/refs/tags/$major" -f sha="$target" -F force=true
+else
+  gh api --method POST repos/cloudvoyant/premise/git/refs -f ref="refs/tags/$major" -f sha="$target"
+fi
+'''
+
 [tasks."publish:rc"]
-description = "Opt-in RC publication for Go (no-op; Go supports prerelease installs through commit hashes)"
-run = 'echo "Skipping RC publish: Go supports prerelease installs through commit hashes."'
+description = "Report Git-tag publication for Go source"
+run = 'echo "Go source uses the shared repository RC tag; no registry upload is needed."'
 
 [tasks."lint:fix"]
 description = "Apply safe formatting fixes, then run static analysis"
@@ -110,6 +130,7 @@ run = '''
 gofmt -w .
 shfmt -w install.sh
 go vet ./...
+gocyclo -over 30 -ignore '_test\.go$' core/backends core/merge.go core/misex.go core/generate.go
 shellcheck install.sh
 '''
 

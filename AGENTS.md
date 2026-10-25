@@ -13,6 +13,7 @@
 
 # Organization
 
+- Prefer keeping related behavior in the existing module or backend, with one matching `_test.go` file. Avoid adding files for a few functions unless it improves organization and semantic clarity. Put file-scoped helpers at the bottom; use a dedicated utility file when the utilities form a coherent shared responsibility.
 - Keep infra setup and querying in `core/infra.go`, app deploy and rollback in `core/deploy.go`, and CI sequencing in `core/ci.go`.
 - Put provider interfaces and implementations in `core/providers`. Keep provider behavior independent of the CI runner; put runner identity exchange and output formatting in CI adapters.
 - Put new external-tool wrappers in `core/extensions`. Move existing wrappers in a separate follow-up.
@@ -27,6 +28,7 @@
 - Follow `core/template.go`. Exported functions and methods go under `// Public API -----------------------------------------------------------------`.
 - Put unexported functions, helper types, and methods on unexported types at the bottom under `// Private helpers ------------------------------------------------------------`.
 - Keep documentation with each declaration. Avoid comments that repeat its name and description.
+- Put each field of a multi-field struct declaration or literal on its own line.
 
 ## Cobra
 

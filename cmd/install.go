@@ -18,7 +18,7 @@ func InstallCommand() *cobra.Command {
 		Use:     "install",
 		Aliases: []string{"i"},
 		Short:   "Install workspace tools",
-		Long:    "Installs mise tools declared by the workspace and its generated projects.",
+		Long:    "Installs workspace tools and dependencies from the workspace root, then runs project install tasks.",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cwd, err := os.Getwd()
@@ -27,7 +27,7 @@ func InstallCommand() *cobra.Command {
 			}
 			workspaceRoot, _, err := core.FindManifest(cwd)
 			if errors.Is(err, core.ErrNotPremiseProject) {
-				return errors.New("Not a premise project. Run pm init to initialize a premise project.")
+				return fmt.Errorf("Not a premise project. Run pm init to initialize a premise project.")
 			}
 			if err != nil {
 				return err
@@ -53,8 +53,18 @@ func InstallCommand() *cobra.Command {
 			if err := core.InstallDevTools(cmd.Context(), workspaceRoot, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
 				return err
 			}
-			if err := core.RunRootTask(cmd.Context(), workspaceRoot, "install", nil, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
+			data, err := os.ReadFile(miseConfig)
+			if err != nil {
 				return err
+			}
+			config, err := core.ExtractMiseConfig("workspace", data)
+			if err != nil {
+				return err
+			}
+			if _, declared := config.Tasks["install"]; declared {
+				if err := core.RunRootTask(cmd.Context(), workspaceRoot, "install", nil, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
+					return err
+				}
 			}
 			if !hasProjectConfigs {
 				return nil

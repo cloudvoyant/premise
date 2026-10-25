@@ -8,6 +8,8 @@ import (
 	"testing"
 )
 
+// Tests ----------------------------------------------------------------------
+
 func TestInitializeWorkspaceWorkflowCollisionDoesNotWriteScaffold(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "workspace")
 	if err := os.MkdirAll(filepath.Join(root, ".github", "workflows"), 0o755); err != nil {
@@ -83,6 +85,58 @@ func TestTemplateRegistryRequiresExplicitWorkspaceFiles(t *testing.T) {
 	manifest.TemplateRegistry.WorkspaceFiles = []string{"mise.toml", "mise.toml"}
 	if err := manifest.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate pattern") {
 		t.Fatalf("duplicate workspace_files error = %v", err)
+	}
+}
+
+func TestTemplateRegistryWorkspaceInitialization(t *testing.T) {
+	for _, scenario := range []struct {
+		name      string
+		files     []string
+		wantError string
+	}{
+		{name: "when no initialization files are declared"},
+		{
+			name:  "when quality files are declared",
+			files: []string{".golangci.yml", ".editorconfig"},
+		},
+		{
+			name:      "when an initialization path escapes the root",
+			files:     []string{"../rules.yml"},
+			wantError: "workspace_init_files",
+		},
+		{
+			name:      "when initialization patterns repeat",
+			files:     []string{".golangci.yml", ".golangci.yml"},
+			wantError: "duplicate pattern",
+		},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			// Arrange
+			manifest := NewManifest("registry")
+			manifest.Workspace.Kind = ProjectKindTemplateRegistry
+			manifest.TemplateRegistry = &TemplateRegistry{
+
+				WorkspaceFiles: []string{},
+
+				WorkspaceInitFiles: scenario.files,
+
+				Templates: []Template{},
+			}
+
+			// Act
+			err := manifest.Validate()
+
+			// Assert
+			t.Run("it accepts optional safe defaults and rejects invalid declarations", func(t *testing.T) {
+				if scenario.wantError != "" {
+					if err == nil || !strings.Contains(err.Error(), scenario.wantError) {
+						t.Fatalf("error = %v, want %q", err, scenario.wantError)
+					}
+				} else if err != nil {
+					t.Fatal(err)
+				}
+			})
+		})
 	}
 }
 
@@ -212,4 +266,61 @@ func TestTemplateRegistryWorkspaceFilePatternsStayAtRoot(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestProjectPackageSettings(t *testing.T) {
+	t.Run("when recording invalid package settings", func(t *testing.T) {
+		for _, scenario := range []struct {
+			name        string
+			declaration PackageDeclaration
+			want        string
+		}{
+			{"a main package outside its project", PackageDeclaration{Main: "../other"}, "main must be"},
+			{"a binary name containing a path", PackageDeclaration{Binary: "path/tool"}, "binary:"},
+		} {
+			t.Run("when "+scenario.name, func(t *testing.T) {
+				root := t.TempDir()
+				manifest := NewManifest("workspace")
+				manifest.Workspace.Projects = []Project{{Name: "math", Path: "libs/math", Template: "test:math", Package: &scenario.declaration}}
+				path := filepath.Join(root, ManifestFilename)
+
+				err := SaveManifest(path, manifest)
+
+				t.Run("it rejects the manifest", func(t *testing.T) {
+					if err == nil || !strings.Contains(err.Error(), scenario.want) {
+						t.Fatalf("invalid package settings accepted: %v", err)
+					}
+				})
+			})
+		}
+	})
+}
+
+func TestPackagePublicFlag(t *testing.T) {
+	t.Run("when public is not a boolean", func(t *testing.T) {
+		root := t.TempDir()
+		public := true
+		manifest := NewManifest("workspace")
+		manifest.Workspace.Projects = []Project{{Name: "math", Path: "libs/math", Template: "test:math", Package: &PackageDeclaration{Public: &public}}}
+		path := filepath.Join(root, ManifestFilename)
+		if err := SaveManifest(path, manifest); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		invalid := strings.Replace(string(data), "public: true", "public: maybe", 1)
+		if err := os.WriteFile(path, []byte(invalid), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = LoadManifest(path)
+
+		t.Run("it rejects the manifest", func(t *testing.T) {
+			if err == nil || !strings.Contains(err.Error(), "bool") {
+				t.Fatalf("invalid public flag accepted: %v", err)
+			}
+		})
+	})
 }

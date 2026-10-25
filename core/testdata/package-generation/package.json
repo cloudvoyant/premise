@@ -1,0 +1,22 @@
+{
+  "name": "client-owned-root",
+  "private": false,
+  "version": "7.0.0",
+  "workspaces": {
+    "packages": [
+      "libs/*"
+    ],
+    "nohoist": [
+      "kept"
+    ]
+  },
+  "scripts": {
+    "client": "echo client"
+  },
+  "devDependencies": {
+    "existing-tool": "^2.0.0"
+  },
+  "clientMetadata": {
+    "owner": "platform"
+  }
+}

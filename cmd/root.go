@@ -2,6 +2,8 @@
 package cmd
 
 import (
+	"fmt"
+	"github.com/cloudvoyant/premise/core/backends"
 	"os"
 
 	core "github.com/cloudvoyant/premise/core"
@@ -20,6 +22,10 @@ projects converged on their templates, and runs lifecycle tasks in CI.`,
 
 // Execute runs the root command.
 func Execute(miseTemplate string, assets ...core.WorkflowAsset) {
+	if err := backends.RegisterPackageManagers(); err != nil {
+		fmt.Fprintln(rootCmd.ErrOrStderr(), err)
+		os.Exit(1)
+	}
 	scaffold := core.WorkspaceScaffold{
 		MiseTemplate:   miseTemplate,
 		WorkflowAssets: assets,

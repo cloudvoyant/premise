@@ -1,0 +1,80 @@
+[tools]
+go = "1.25.14"
+
+[env]
+GOWORK = "off"
+
+[tasks."install"]
+run = '''
+go mod download
+'''
+
+[tasks."build"]
+run = '''
+go build ./...
+'''
+
+[tasks."test"]
+run = '''
+go test ./...
+'''
+
+[tasks."lint"]
+run = '''
+go vet ./...
+'''
+
+[tasks."lint:fix"]
+run = '''
+go fmt ./...
+'''
+
+[tasks."format"]
+run = '''
+gofmt -w .
+'''
+
+[tasks."format:check"]
+run = '''
+test -z "$(gofmt -l .)"
+'''
+
+[tasks."clean"]
+run = '''
+rm -rf dist
+'''
+
+[tasks."env-pull"]
+run = '''
+echo no secrets
+'''
+
+[tasks."publish:rc"]
+run = '''
+echo local fixture has no registry
+'''
+
+[tasks."publish"]
+run = '''
+echo local fixture has no registry
+'''
+
+[tasks."run"]
+run = '''
+go run .
+'''
+
+[tasks."dev"]
+run = '''
+go run .
+'''
+
+[tasks."deploy"]
+run = '''
+go run .
+'''
+
+[tasks."e2e"]
+run = '''
+go run .
+'''

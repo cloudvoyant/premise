@@ -1,7 +1,9 @@
 package backends
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -9,11 +11,14 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/cloudvoyant/premise/core"
 )
+
+// Public API -----------------------------------------------------------------
 
 // Bun implements npm-compatible package publication through the Bun CLI.
 type Bun struct{}
@@ -134,6 +139,189 @@ func (Bun) ReleaseWorkspace(_ context.Context, root string, _, _ io.Writer) (str
 
 // CreateGoReleaserConfig returns no artifacts because Bun publishes registry packages.
 func (Bun) CreateGoReleaserConfig(_ string, _ core.Config) (string, error) { return "", nil }
+
+// ParseDependencies reads npm dependency sections into the common merge model.
+func (Bun) ParseDependencies(manifest []byte) ([]core.Dependency, error) {
+	pkg, err := parseBunPackageJSON(manifest)
+	if err != nil {
+		return nil, err
+	}
+	var dependencies []core.Dependency
+	for _, section := range []string{"dependencies", "devDependencies", "optionalDependencies", "peerDependencies"} {
+		raw, present := pkg[section]
+		if !present {
+			continue
+		}
+		values, ok := raw.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("package.json.%s must be an object", section)
+		}
+		for name, value := range values {
+			version, ok := value.(string)
+			if !ok {
+				return nil, fmt.Errorf("package.json.%s.%s must be a string", section, name)
+			}
+			dependencies = append(dependencies, core.Dependency{Name: name, Scope: []string{section}, Version: version})
+		}
+	}
+	return dependencies, nil
+}
+
+// WriteDependencies replaces dependency sections while retaining client identity,
+// scripts, workspaces, and other package.json fields.
+func (Bun) WriteDependencies(manifest []byte, dependencies []core.Dependency) ([]byte, error) {
+	pkg, err := parseBunPackageJSON(manifest)
+	if err != nil {
+		return nil, err
+	}
+	for _, section := range []string{"dependencies", "devDependencies", "optionalDependencies", "peerDependencies"} {
+		if _, exists := pkg[section]; exists {
+			pkg[section] = map[string]any{}
+		}
+	}
+	for _, dependency := range dependencies {
+		if len(dependency.Scope) != 1 || !slices.Contains([]string{"dependencies", "devDependencies", "optionalDependencies", "peerDependencies"}, dependency.Scope[0]) || dependency.Options != nil {
+			return nil, fmt.Errorf("invalid npm dependency %s", dependency.Name)
+		}
+		section, ok := pkg[dependency.Scope[0]].(map[string]any)
+		if !ok {
+			section = map[string]any{}
+			pkg[dependency.Scope[0]] = section
+		}
+		section[dependency.Name] = dependency.Version
+	}
+	output, err := json.MarshalIndent(pkg, "", "  ")
+	return append(output, '\n'), err
+}
+
+func (Bun) ReleaseTools(string, core.Config) ([]string, error) { return nil, nil }
+func (Bun) PublishesFromGitTag() bool                          { return false }
+
+func (Bun) ManagedWorkspaceFiles() []string {
+	return []string{"package.json", "bun.lock", "bun.lockb"}
+}
+
+func (Bun) PrepareGeneration(request core.PackageGenerationContext) ([]core.MergeEntry, error) {
+	client, err := mergeBunWorkspaceConfig(request)
+	if err != nil || client == nil {
+		return nil, err
+	}
+	if err := ensureProjectIsInBunWorkspace(request, client); err != nil {
+		return nil, err
+	}
+	if err := validateBunLocalDependencyPaths(request, "", client); err != nil {
+		return nil, err
+	}
+	output, err := json.MarshalIndent(client, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	entries := []core.MergeEntry{request.RootEntry("package.json", append(output, '\n'))}
+	return request.ResetLocks(entries, "bun.lock", "bun.lockb")
+}
+
+// Private helpers ------------------------------------------------------------
+
+func mergeBunWorkspaceConfig(request core.PackageGenerationContext) (map[string]any, error) {
+	selectedData, err := os.ReadFile(filepath.Join(request.Stage, "package.json"))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	project, err := parseBunPackageJSON(selectedData)
+	if err != nil {
+		return nil, fmt.Errorf("selected package.json: %w", err)
+	}
+	if err := validateBunLocalDependencyPaths(request, request.ProjectPath, project); err != nil {
+		return nil, err
+	}
+	shared := request.SharedFiles["package.json"]
+	original := request.ClientFiles["package.json"]
+	client, err := parseBunPackageJSON(original.Data)
+	if err != nil {
+		return nil, fmt.Errorf("client package.json: %w", err)
+	}
+	incoming, err := parseBunPackageJSON(shared.Data)
+	if err != nil {
+		return nil, fmt.Errorf("shared package.json: %w", err)
+	}
+	// Registry identity and registry-development membership are not client contributions.
+	for _, key := range []string{"name", "version", "private", "workspaces"} {
+		delete(incoming, key)
+	}
+	if !original.Present {
+		name := request.WorkspaceName
+		if name == "" {
+			name = filepath.Base(request.WorkspaceRoot)
+		}
+		client = map[string]any{"name": name, "private": true, "workspaces": []any{"apps/*", "libs/*"}}
+	}
+	clientData, err := json.Marshal(client)
+	if err != nil {
+		return nil, err
+	}
+	merged, err := core.MergeManifestDependencies(Bun{}, "package.json", shared.Data, clientData, request.ResolveConflict)
+	if err != nil {
+		return nil, err
+	}
+	for _, section := range []string{"dependencies", "devDependencies", "optionalDependencies", "peerDependencies"} {
+		delete(incoming, section)
+	}
+	incomingData, err := json.Marshal(incoming)
+	if err != nil {
+		return nil, err
+	}
+	output, err := core.MergeJSON("package.json", incomingData, merged, request.ResolveConflict)
+	if err != nil {
+		return nil, err
+	}
+	return parseBunPackageJSON(output)
+}
+
+func ensureProjectIsInBunWorkspace(request core.PackageGenerationContext, client map[string]any) error {
+	patterns, err := readBunWorkspacePatterns(client)
+	if err != nil {
+		return err
+	}
+	explicit := slices.Contains(patterns, request.ProjectPath) || slices.Contains(patterns, "./"+request.ProjectPath)
+	covered := false
+	for _, pattern := range patterns {
+		negative := strings.HasPrefix(pattern, "!")
+		raw := strings.TrimPrefix(pattern, "!")
+		if err := request.ValidateLocalPath("", raw); err != nil {
+			return err
+		}
+		matches, err := request.MatchesProject(raw)
+		if err != nil {
+			return err
+		}
+		// Bun's dir/** exclusion also removes dir itself.
+		if negative && strings.HasSuffix(raw, "/**") && strings.TrimSuffix(raw, "/**") == request.ProjectPath {
+			matches = true
+		}
+		if matches {
+			if negative && !explicit {
+				return fmt.Errorf("package.json.workspaces excludes generated project %s with %q", request.ProjectPath, pattern)
+			}
+			covered = true
+		}
+	}
+	if !covered {
+		patterns = append(patterns, request.ProjectPath)
+		values := make([]any, len(patterns))
+		for i, pattern := range patterns {
+			values[i] = pattern
+		}
+		if object, ok := client["workspaces"].(map[string]any); ok {
+			object["packages"] = values
+		} else {
+			client["workspaces"] = values
+		}
+	}
+	return nil
+}
 
 func bunPackageRegistry(pkg core.BunPackage) (*url.URL, error) {
 	if pkg.Private {
@@ -316,4 +504,74 @@ func writeBunCredentials(scope, token string) (string, error) {
 		return "", fmt.Errorf("write npm credentials: %w", err)
 	}
 	return path, nil
+}
+
+func parseBunPackageJSON(data []byte) (map[string]any, error) {
+	if len(data) == 0 {
+		return map[string]any{}, nil
+	}
+	var value map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	if value == nil {
+		return nil, fmt.Errorf("expected a JSON object")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err == io.EOF {
+		return value, nil
+	} else if err != nil {
+		return nil, err
+	}
+	return nil, fmt.Errorf("unexpected content after JSON object")
+}
+
+func readBunWorkspacePatterns(value map[string]any) ([]string, error) {
+	raw, exists := value["workspaces"]
+	if !exists {
+		return nil, nil
+	}
+	if object, ok := raw.(map[string]any); ok {
+		raw = object["packages"]
+	}
+	entries, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("package.json.workspaces must be an array or an object with a packages array")
+	}
+	patterns := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		pattern, ok := entry.(string)
+		if !ok || pattern == "" {
+			return nil, fmt.Errorf("package.json.workspaces entries must be nonempty strings")
+		}
+		patterns = append(patterns, pattern)
+	}
+	return patterns, nil
+}
+
+func validateBunLocalDependencyPaths(request core.PackageGenerationContext, base string, pkg map[string]any) error {
+	for _, field := range []string{"dependencies", "devDependencies", "optionalDependencies"} {
+		dependencies, _ := pkg[field].(map[string]any)
+		for _, raw := range dependencies {
+			value, ok := raw.(string)
+			if !ok {
+				continue
+			}
+			for _, prefix := range []string{"file:", "link:", "workspace:"} {
+				if !strings.HasPrefix(value, prefix) {
+					continue
+				}
+				path := strings.TrimPrefix(value, prefix)
+				if prefix == "workspace:" && !strings.HasPrefix(path, ".") && !filepath.IsAbs(path) {
+					continue
+				}
+				if err := request.ValidateLocalPath(base, path); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
 }
