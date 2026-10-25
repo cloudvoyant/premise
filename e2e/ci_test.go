@@ -262,9 +262,9 @@ func TestCIActionPublication(t *testing.T) {
 
 			// Act
 			if scenario.fails {
-				commandFailure(t, repositoryRoot(t), "mise", "run", "publish:action")
+				commandFailure(t, repositoryRoot(t), "mise", "run", "publish:update-action-tags")
 			} else {
-				runCommand(t, repositoryRoot(t), "mise", "run", "publish:action")
+				runCommand(t, repositoryRoot(t), "mise", "run", "publish:update-action-tags")
 			}
 
 			// Assert

@@ -102,12 +102,12 @@ gocyclo -over 30 -ignore '_test\.go$' core/backends core/merge.go core/misex.go 
 shellcheck install.sh
 '''
 
-[tasks."publish:action"]
+[tasks."publish:update-action-tags"]
 description = "Move the major action tag to the published stable release"
 run = '''
 set -euo pipefail
 if [[ ! "$RELEASE_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "publish:action requires a stable RELEASE_VERSION such as v0.6.0" >&2
+  echo "publish:update-action-tags requires a stable RELEASE_VERSION such as v0.6.0" >&2
   exit 1
 fi
 major="${RELEASE_VERSION%%.*}"

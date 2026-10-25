@@ -97,7 +97,7 @@ Commit and merge workflows finish checks before publication. The release job cal
 
 A feature push with `[publish-rc]` requests a GitHub prerelease after checks pass. Go libraries use repository tags for stable and prerelease versions. The root `publish:rc` task does not upload Go packages to a separate registry.
 
-Generated workflows use `cloudvoyant/premise@v0`. After a successful stable GitHub release, CI runs `mise run publish:action` with `RELEASE_VERSION`. This task moves the major action tag to the released commit. Version tags remain fixed. RC publication does not move the major tag.
+Generated workflows use `cloudvoyant/premise@v0`. After a successful stable GitHub release, CI runs `mise run publish:update-action-tags` with `RELEASE_VERSION`. This task moves the major action tag to the released commit. Version tags remain fixed. RC publication does not move the major tag.
 
 When a template adds manifest fields, use a Premise action that can read those fields. For tandem validation, pin the dependent registry workflow to a compatible released RC. Generated client workflows retain the stable major reference and need the core stable release before use. Test generated client workflows as well as registry workflows before merging.
 

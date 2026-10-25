@@ -179,7 +179,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ needs.plan.outputs.version }}
-        run: mise run publish:action
+        run: mise run publish:update-action-tags
 
   publish-packages:
     needs: publish-release
