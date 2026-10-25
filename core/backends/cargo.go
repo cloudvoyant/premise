@@ -7,9 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -148,6 +151,98 @@ func (Cargo) CreateGoReleaserConfig(root string, manifest core.Config) (string, 
 	return cargoReleaseBuilds(root, manifest)
 }
 
+// ParseDependencies reads normal, workspace, and target-specific Cargo tables.
+// Version requirements and native settings remain separate in the common model.
+func (Cargo) ParseDependencies(manifest []byte) ([]core.Dependency, error) {
+	var document map[string]any
+	if err := toml.Unmarshal(manifest, &document); err != nil {
+		return nil, err
+	}
+	tables, err := cargoDependencyTables(document)
+	if err != nil {
+		return nil, err
+	}
+	var dependencies []core.Dependency
+	for _, table := range tables {
+		for name, raw := range table.values {
+			dependency := core.Dependency{Name: name, Scope: table.scope}
+			switch value := raw.(type) {
+			case string:
+				dependency.Version = value
+			case map[string]any:
+				options := maps.Clone(value)
+				dependency.Options = options
+				if version, present := value["version"]; present {
+					var valid bool
+					dependency.Version, valid = version.(string)
+					if !valid {
+						return nil, fmt.Errorf("Cargo dependency %s version must be a string", name)
+					}
+					delete(options, "version")
+				}
+			default:
+				return nil, fmt.Errorf("Cargo dependency %s must be a version or table", name)
+			}
+			dependencies = append(dependencies, dependency)
+		}
+	}
+	sort.Slice(dependencies, func(i, j int) bool {
+		return strings.Join(dependencies[i].Scope, ".")+"."+dependencies[i].Name < strings.Join(dependencies[j].Scope, ".")+"."+dependencies[j].Name
+	})
+	return dependencies, nil
+}
+
+// WriteDependencies replaces Cargo dependency tables and retains all other values.
+// An unchanged dependency list returns the original bytes, including comments.
+func (Cargo) WriteDependencies(manifest []byte, dependencies []core.Dependency) ([]byte, error) {
+	existing, err := (Cargo{}).ParseDependencies(manifest)
+	if err != nil {
+		return nil, err
+	}
+	if len(existing) == 0 && len(dependencies) == 0 || reflect.DeepEqual(existing, dependencies) {
+		return append([]byte(nil), manifest...), nil
+	}
+	document := map[string]any{}
+	if err := toml.Unmarshal(manifest, &document); err != nil {
+		return nil, err
+	}
+	tables, err := cargoDependencyTables(document)
+	if err != nil {
+		return nil, err
+	}
+	for _, table := range tables {
+		clear(table.values)
+	}
+	for _, dependency := range dependencies {
+		if !validCargoDependencyScope(dependency.Scope) {
+			return nil, fmt.Errorf("invalid Cargo dependency scope %v", dependency.Scope)
+		}
+		table := document
+		for _, key := range dependency.Scope {
+			next, ok := table[key].(map[string]any)
+			if !ok {
+				next = map[string]any{}
+				table[key] = next
+			}
+			table = next
+		}
+		if dependency.Options == nil {
+			table[dependency.Name] = dependency.Version
+			continue
+		}
+		nativeOptions, ok := dependency.Options.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("invalid Cargo dependency options for %s", dependency.Name)
+		}
+		options := maps.Clone(nativeOptions)
+		if dependency.Version != "" {
+			options["version"] = dependency.Version
+		}
+		table[dependency.Name] = options
+	}
+	return toml.Marshal(document)
+}
+
 func (Cargo) GenerationRootFiles() []string { return []string{"Cargo.toml", "Cargo.lock"} }
 
 func (Cargo) PrepareGeneration(request core.PackageGenerationContext) ([]core.MergeEntry, error) {
@@ -155,21 +250,18 @@ func (Cargo) PrepareGeneration(request core.PackageGenerationContext) ([]core.Me
 	if err != nil || !found {
 		return nil, err
 	}
-	if request.SharedFiles["Cargo.toml"].Present {
-		return nil, fmt.Errorf("registry workspace_files must not include Cargo.toml: Cargo prepares client membership; keep crate dependencies in the selected template")
-	}
-	members, covered, err := cargoGenerationMembership(request)
+	members, covered, err := collectCargoWorkspaceMembers(request)
 	if err != nil {
 		return nil, err
 	}
-	if covered {
-		return request.ResetLocks(nil, "Cargo.lock")
-	}
-	members = append(members, filepath.ToSlash(request.ProjectPath))
 	original := request.ClientFiles["Cargo.toml"]
-	output, err := cargoGenerationMembers(original.Data, members)
-	if err != nil {
-		return nil, err
+	output := original.Data
+	if !covered {
+		members = append(members, filepath.ToSlash(request.ProjectPath))
+		output, err = writeCargoWorkspaceMembers(original.Data, members)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if !original.Present {
 		resolver := "2"
@@ -179,14 +271,68 @@ func (Cargo) PrepareGeneration(request core.PackageGenerationContext) ([]core.Me
 		}
 		output = append(output, []byte("resolver = \""+resolver+"\"\n")...)
 	}
+	output, err = core.MergeManifestDependencies(Cargo{}, "Cargo.toml", request.SharedFiles["Cargo.toml"].Data, output, request.ResolveConflict)
+	if err != nil {
+		return nil, err
+	}
 	var verified map[string]any
 	if err := toml.Unmarshal(output, &verified); err != nil {
 		return nil, fmt.Errorf("cannot extend Cargo workspace without changing its layout: %w", err)
+	}
+	if err := validateCargoGenerationManifest(request, "", verified); err != nil {
+		return nil, err
 	}
 	return request.ResetLocks([]core.MergeEntry{request.RootEntry("Cargo.toml", output)}, "Cargo.lock")
 }
 
 // Private helpers ------------------------------------------------------------
+
+type cargoDependencyTable struct {
+	scope  []string
+	values map[string]any
+}
+
+func cargoDependencyTables(document map[string]any) ([]cargoDependencyTable, error) {
+	var scopes [][]string
+	for _, section := range []string{"dependencies", "dev-dependencies", "build-dependencies"} {
+		scopes = append(scopes, []string{section})
+	}
+	scopes = append(scopes, []string{"workspace", "dependencies"})
+	if targets, ok := document["target"].(map[string]any); ok {
+		for target := range targets {
+			for _, section := range []string{"dependencies", "dev-dependencies", "build-dependencies"} {
+				scopes = append(scopes, []string{"target", target, section})
+			}
+		}
+	}
+	var tables []cargoDependencyTable
+	for _, scope := range scopes {
+		table := document
+		for _, key := range scope[:len(scope)-1] {
+			table, _ = table[key].(map[string]any)
+		}
+		key := scope[len(scope)-1]
+		if raw, present := table[key]; present {
+			values, ok := raw.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("Cargo %s must be a table", strings.Join(scope, "."))
+			}
+			tables = append(tables, cargoDependencyTable{scope: scope, values: values})
+		}
+	}
+	return tables, nil
+}
+
+func validCargoDependencyScope(scope []string) bool {
+	if len(scope) == 0 {
+		return false
+	}
+	section := scope[len(scope)-1]
+	if section != "dependencies" && section != "dev-dependencies" && section != "build-dependencies" {
+		return false
+	}
+	return len(scope) == 1 || len(scope) == 2 && scope[0] == "workspace" && section == "dependencies" || len(scope) == 3 && scope[0] == "target"
+}
 
 func readCargoGenerationCrate(request core.PackageGenerationContext, base, directory string) (map[string]any, bool, error) {
 	data, err := os.ReadFile(filepath.Join(directory, "Cargo.toml"))
@@ -212,7 +358,7 @@ func readCargoGenerationCrate(request core.PackageGenerationContext, base, direc
 	return crate, true, nil
 }
 
-func cargoGenerationMembership(request core.PackageGenerationContext) ([]string, bool, error) {
+func collectCargoWorkspaceMembers(request core.PackageGenerationContext) ([]string, bool, error) {
 	var client struct {
 		Workspace *struct {
 			Members []string `toml:"members"`
@@ -260,12 +406,12 @@ func cargoGenerationMembership(request core.PackageGenerationContext) ([]string,
 		}
 	}
 	if client.Workspace == nil {
-		return existingCargoGenerationMembers(request)
+		return readExistingCargoWorkspaceMembers(request)
 	}
 	return members, false, nil
 }
 
-func existingCargoGenerationMembers(request core.PackageGenerationContext) ([]string, bool, error) {
+func readExistingCargoWorkspaceMembers(request core.PackageGenerationContext) ([]string, bool, error) {
 	members := []string{}
 	for _, path := range request.ProjectPaths {
 		if err := request.ValidateLocalPath("", path); err != nil {
@@ -586,7 +732,7 @@ func cargoResourceExists(ctx context.Context, client *http.Client, resourceURL, 
 }
 
 // Replace only workspace.members, leaving every other source byte untouched.
-func cargoGenerationMembers(data []byte, members []string) ([]byte, error) {
+func writeCargoWorkspaceMembers(data []byte, members []string) ([]byte, error) {
 	encoded, err := json.Marshal(members)
 	if err != nil {
 		return nil, err
@@ -599,7 +745,7 @@ func cargoGenerationMembers(data []byte, members []string) ([]byte, error) {
 		expression := parser.Expression()
 		switch expression.Kind {
 		case unstable.Table, unstable.ArrayTable:
-			section = cargoGenerationKey(expression)
+			section = cargoTOMLKey(expression)
 			if section == "workspace" && expression.Kind == unstable.Table {
 				first := expression.Child()
 				start := int(first.Raw.Offset + first.Raw.Length)
@@ -610,7 +756,7 @@ func cargoGenerationMembers(data []byte, members []string) ([]byte, error) {
 				}
 			}
 		case unstable.KeyValue:
-			key := cargoGenerationKey(expression)
+			key := cargoTOMLKey(expression)
 			if section != "" {
 				key = section + "." + key
 			}
@@ -678,7 +824,7 @@ func cargoGenerationMembers(data []byte, members []string) ([]byte, error) {
 	return append(output, line...), nil
 }
 
-func cargoGenerationKey(node *unstable.Node) string {
+func cargoTOMLKey(node *unstable.Node) string {
 	keys := node.Key()
 	var parts []string
 	for keys.Next() {

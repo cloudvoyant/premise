@@ -2,8 +2,13 @@ package core
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io/fs"
+	"maps"
+	"reflect"
+	"slices"
+	"sort"
 	"strings"
 
 	"charm.land/huh/v2"
@@ -85,40 +90,140 @@ type MergeEntry struct {
 	Strategy MergeStrategy
 }
 
-// MergeDependencyVersion keeps the newer compatible version. Different majors
-// fail; selectors that cannot be compared use the normal conflict resolver.
-func MergeDependencyVersion(conflict MergeConflict, resolver MergeConflictResolver) (string, error) {
-	if conflict.Shared == conflict.Selected {
-		return conflict.Selected, nil
-	}
-	left, leftErr := semver.NewVersion(conflict.Shared)
-	right, rightErr := semver.NewVersion(conflict.Selected)
-	if leftErr == nil && rightErr == nil {
-		if left.Major() != right.Major() {
-			return "", fmt.Errorf("%s has incompatible major versions %s and %s", conflict.Key, conflict.Shared, conflict.Selected)
-		}
-		if left.GreaterThan(right) {
-			return conflict.Shared, nil
-		}
-		return conflict.Selected, nil
-	}
-	decision, err := resolveConflict(resolver, conflict)
+// MergeManifestDependencies runs the same parse, merge, and write sequence for
+// every native manifest. The selected manifest supplies unrelated settings.
+func MergeManifestDependencies(backend PackageManagerDependencies, path string, shared, selected []byte, resolver MergeConflictResolver) ([]byte, error) {
+	incoming, err := backend.ParseDependencies(shared)
 	if err != nil {
-		return "", err
+		return nil, fmt.Errorf("parse shared %s dependencies: %w", path, err)
 	}
-	switch decision.Choice {
-	case MergeChoiceKeepShared:
-		return conflict.Shared, nil
-	case MergeChoiceUseSelected:
-		return conflict.Selected, nil
-	case MergeChoiceAbort:
-		return "", fmt.Errorf("merge aborted for %s", conflict.Key)
-	default:
-		return "", fmt.Errorf("invalid merge choice %q for %s", decision.Choice, conflict.Key)
+	existing, err := backend.ParseDependencies(selected)
+	if err != nil {
+		return nil, fmt.Errorf("parse client %s dependencies: %w", path, err)
 	}
+	merged, err := MergeDependencies(path, incoming, existing, resolver)
+	if err != nil {
+		return nil, fmt.Errorf("merge %s dependencies: %w", path, err)
+	}
+	return backend.WriteDependencies(selected, merged)
+}
+
+// MergeDependencies combines dependency lists by scope and name. One-sided
+// dependencies are copied, compatible versions are upgraded, and native option
+// conflicts require a decision. Direct requirements remain direct.
+func MergeDependencies(path string, shared, selected []Dependency, resolver MergeConflictResolver) ([]Dependency, error) {
+	output := map[string]Dependency{}
+	for _, dependencies := range [][]Dependency{selected, shared} {
+		dependencies = append([]Dependency(nil), dependencies...)
+		slices.SortFunc(dependencies, func(left, right Dependency) int {
+			return strings.Compare(dependencyIdentity(left), dependencyIdentity(right))
+		})
+		seen := map[string]bool{}
+		for _, dependency := range dependencies {
+			key := dependencyIdentity(dependency)
+			if dependency.Name == "" || seen[key] {
+				return nil, fmt.Errorf("%s has an empty or duplicate dependency %q", path, dependency.Name)
+			}
+			seen[key] = true
+			dependency.Scope = append([]string(nil), dependency.Scope...)
+			dependency.Options = cloneManifestValue(dependency.Options)
+			previous, found := output[key]
+			if !found {
+				output[key] = dependency
+				continue
+			}
+			merged, err := mergeDependency(path, dependency, previous, resolver)
+			if err != nil {
+				return nil, err
+			}
+			output[key] = merged
+		}
+	}
+	keys := make([]string, 0, len(output))
+	for key := range output {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	merged := make([]Dependency, 0, len(keys))
+	for _, key := range keys {
+		merged = append(merged, output[key])
+	}
+	return merged, nil
 }
 
 // Private helpers ------------------------------------------------------------
+
+func cloneManifestValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		cloned := maps.Clone(typed)
+		for key, item := range cloned {
+			cloned[key] = cloneManifestValue(item)
+		}
+		return cloned
+	case []any:
+		cloned := slices.Clone(typed)
+		for index, item := range cloned {
+			cloned[index] = cloneManifestValue(item)
+		}
+		return cloned
+	case []string:
+		return slices.Clone(typed)
+	default:
+		return typed
+	}
+}
+
+func dependencyIdentity(dependency Dependency) string {
+	identity, _ := json.Marshal(append(append([]string(nil), dependency.Scope...), dependency.Name))
+	return string(identity)
+}
+
+func mergeDependency(path string, shared, selected Dependency, resolver MergeConflictResolver) (Dependency, error) {
+	conflict := MergeConflict{
+		Path:     path,
+		Key:      strings.Join(append(append([]string(nil), shared.Scope...), shared.Name), "."),
+		Kind:     "dependency",
+		Shared:   shared.Version,
+		Selected: selected.Version,
+	}
+	if reflect.DeepEqual(shared.Options, selected.Options) {
+		selected.Indirect = shared.Indirect && selected.Indirect
+		shared.Indirect = selected.Indirect
+		if shared.Version == selected.Version {
+			return selected, nil
+		}
+		left, leftErr := semver.NewVersion(shared.Version)
+		right, rightErr := semver.NewVersion(selected.Version)
+		if leftErr == nil && rightErr == nil {
+			if left.Major() != right.Major() {
+				return Dependency{}, fmt.Errorf("%s has incompatible major versions %s and %s", conflict.Key, shared.Version, selected.Version)
+			}
+			if left.GreaterThan(right) {
+				selected.Version = shared.Version
+			}
+			return selected, nil
+		}
+	} else {
+		conflict.Kind = "dependency settings"
+		conflict.Shared = fmt.Sprintf("%s %v", shared.Version, shared.Options)
+		conflict.Selected = fmt.Sprintf("%s %v", selected.Version, selected.Options)
+	}
+	decision, err := resolveConflict(resolver, conflict)
+	if err != nil {
+		return Dependency{}, err
+	}
+	switch decision.Choice {
+	case MergeChoiceKeepShared:
+		return shared, nil
+	case MergeChoiceUseSelected:
+		return selected, nil
+	case MergeChoiceAbort:
+		return Dependency{}, fmt.Errorf("merge aborted for %s", conflict.Key)
+	default:
+		return Dependency{}, fmt.Errorf("invalid dependency merge choice %q", decision.Choice)
+	}
+}
 
 func mergeTierOneMise(entry *MergeEntry, shared, selected PathValue, kind, identity string, resolver MergeConflictResolver) (MiseMergeResult, error) {
 	result, err := composeMise(shared.Data, selected.Data, kind, identity, resolver)

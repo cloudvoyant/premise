@@ -171,6 +171,50 @@ func (Go) ReleaseTools(root string, manifest core.Config) ([]string, error) {
 	return []string{"go@" + selected}, nil
 }
 
+// ParseDependencies reads module requirements without interpreting release policy.
+func (Go) ParseDependencies(manifest []byte) ([]core.Dependency, error) {
+	file, err := modfile.Parse("go.mod", manifest, nil)
+	if err != nil {
+		return nil, err
+	}
+	dependencies := make([]core.Dependency, 0, len(file.Require))
+	for _, requirement := range file.Require {
+		dependencies = append(dependencies, core.Dependency{
+			Name:     requirement.Mod.Path,
+			Scope:    []string{"require"},
+			Version:  requirement.Mod.Version,
+			Indirect: requirement.Indirect,
+		})
+	}
+	return dependencies, nil
+}
+
+// WriteDependencies replaces requirements through Go's native manifest writer.
+// Module identity, Go version, replacements, exclusions, and comments stay local.
+func (Go) WriteDependencies(manifest []byte, dependencies []core.Dependency) ([]byte, error) {
+	file, err := modfile.Parse("go.mod", manifest, nil)
+	if err != nil {
+		return nil, err
+	}
+	requirements := make([]*modfile.Require, 0, len(dependencies))
+	for _, dependency := range dependencies {
+		if len(dependency.Scope) != 1 || dependency.Scope[0] != "require" || dependency.Options != nil {
+			return nil, fmt.Errorf("invalid Go requirement %s", dependency.Name)
+		}
+		if err := module.Check(dependency.Name, dependency.Version); err != nil {
+			return nil, err
+		}
+		requirements = append(requirements, &modfile.Require{
+			Mod:      module.Version{Path: dependency.Name, Version: dependency.Version},
+			Indirect: dependency.Indirect,
+		})
+	}
+	file.SetRequire(requirements)
+	file.SortBlocks()
+	file.Cleanup()
+	return file.Format()
+}
+
 func (Go) GenerationRootFiles() []string { return []string{"go.mod", "go.sum"} }
 
 func (Go) PrepareGeneration(request core.PackageGenerationContext) ([]core.MergeEntry, error) {
@@ -187,11 +231,7 @@ func (Go) PrepareGeneration(request core.PackageGenerationContext) ([]core.Merge
 	if err := validateGoGenerationLayout(request); err != nil {
 		return nil, err
 	}
-	merged, err := mergeGoWorkspaceModule(request, source)
-	if err != nil {
-		return nil, err
-	}
-	data, err := merged.Format()
+	data, err := buildGoWorkspaceModule(request, source)
 	if err != nil {
 		return nil, err
 	}
@@ -355,7 +395,7 @@ func validateGoGenerationLayout(request core.PackageGenerationContext) error {
 	return nil
 }
 
-func mergeGoWorkspaceModule(request core.PackageGenerationContext, source extensions.GoModule) (*modfile.File, error) {
+func buildGoWorkspaceModule(request core.PackageGenerationContext, source extensions.GoModule) ([]byte, error) {
 	suffix := "/" + filepath.ToSlash(request.ProjectPath)
 	if !strings.HasSuffix(source.Path, suffix) {
 		return nil, fmt.Errorf("template module %s must end with its project path %s", source.Path, suffix)
@@ -404,17 +444,11 @@ func mergeGoWorkspaceModule(request core.PackageGenerationContext, source extens
 		if len(contribution.Replace) > 0 {
 			return nil, fmt.Errorf("shared go.mod must not contain replace directives; configure replacements in the client workspace")
 		}
-		if err := mergeGoRequirements(merged, contribution, request.ResolveConflict); err != nil {
-			return nil, err
-		}
 		if contribution.Go != nil && version.Compare("go"+contribution.Go.Version, "go"+merged.Go.Version) > 0 {
 			if err := merged.AddGoStmt(contribution.Go.Version); err != nil {
 				return nil, err
 			}
 		}
-	}
-	if err := mergeGoRequirements(merged, source.File, request.ResolveConflict); err != nil {
-		return nil, err
 	}
 	if len(source.File.Replace) > 0 {
 		return nil, fmt.Errorf("template go.mod must not contain replace directives; configure replacements in the workspace root")
@@ -426,42 +460,19 @@ func mergeGoWorkspaceModule(request core.PackageGenerationContext, source extens
 			}
 		}
 	}
-	merged.SortBlocks()
-	merged.Cleanup()
-	return merged, nil
-}
-
-func mergeGoRequirements(merged, source *modfile.File, resolver core.MergeConflictResolver) error {
-	requirements := map[string]*modfile.Require{}
-	for _, requirement := range merged.Require {
-		copy := *requirement
-		requirements[copy.Mod.Path] = &copy
+	data, err := merged.Format()
+	if err != nil {
+		return nil, err
 	}
-	for _, requirement := range source.Require {
-		current, exists := requirements[requirement.Mod.Path]
-		if !exists {
-			copy := *requirement
-			requirements[copy.Mod.Path] = &copy
-			continue
-		}
-		conflict := core.MergeConflict{
-			Path:     "go.mod",
-			Key:      "require." + requirement.Mod.Path,
-			Kind:     "dependency",
-			Shared:   requirement.Mod.Version,
-			Selected: current.Mod.Version,
-		}
-		selected, err := core.MergeDependencyVersion(conflict, resolver)
+	if shared := request.SharedFiles["go.mod"]; shared.Present {
+		data, err = core.MergeManifestDependencies(Go{}, "go.mod", shared.Data, data, request.ResolveConflict)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		current.Mod.Version = selected
-		current.Indirect = current.Indirect && requirement.Indirect
 	}
-	combined := make([]*modfile.Require, 0, len(requirements))
-	for _, requirement := range requirements {
-		combined = append(combined, requirement)
+	sourceData, err := source.File.Format()
+	if err != nil {
+		return nil, err
 	}
-	merged.SetRequire(combined)
-	return nil
+	return core.MergeManifestDependencies(Go{}, "go.mod", sourceData, data, request.ResolveConflict)
 }

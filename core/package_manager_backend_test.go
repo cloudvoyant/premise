@@ -135,6 +135,11 @@ func useTestPackageManagers(t *testing.T, plugins ...PackageManagerBackend) {
 	}
 }
 
+func (p testPackageManager) ParseDependencies([]byte) ([]Dependency, error) { return nil, nil }
+func (p testPackageManager) WriteDependencies(manifest []byte, _ []Dependency) ([]byte, error) {
+	return append([]byte(nil), manifest...), nil
+}
+
 func (p testPackageManager) ID() string { return p.id }
 func (p testPackageManager) Ecosystem() string {
 	if p.ecosystem != "" {

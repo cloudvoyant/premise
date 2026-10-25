@@ -1,13 +1,16 @@
 package backends
 
 import (
+	"bytes"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/cloudvoyant/premise/core"
+	"golang.org/x/mod/modfile"
 )
 
 // Tests ----------------------------------------------------------------------
@@ -201,6 +204,112 @@ func TestGoGeneration(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestGoDependencyManifests(t *testing.T) {
+	t.Run("when parsing and regenerating a Go module", func(t *testing.T) {
+		// Arrange
+		manifest := readPackageManifestFixture(t, "go.mod")
+
+		// Act
+		dependencies, err := (Go{}).ParseDependencies(manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		regenerated, err := (Go{}).WriteDependencies(manifest, dependencies)
+
+		// Assert
+		t.Run("it represents requirements and indirect flags with common dependencies", func(t *testing.T) {
+			want := []core.Dependency{
+				{Name: "example.com/shared", Scope: []string{"require"}, Version: "v1.2.0", Indirect: true},
+				{Name: "example.com/unchanged", Scope: []string{"require"}, Version: "v1.0.0"},
+			}
+			if !reflect.DeepEqual(dependencies, want) {
+				t.Fatalf("dependencies = %#v, want %#v", dependencies, want)
+			}
+		})
+		t.Run("it regenerates requirements without losing module settings or comments", func(t *testing.T) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			reparsed, err := (Go{}).ParseDependencies(regenerated)
+			if err != nil || !reflect.DeepEqual(reparsed, dependencies) {
+				t.Fatalf("round trip changed dependencies: %#v, %v", reparsed, err)
+			}
+			for _, want := range []string{"// Client module settings", "module example.com/client", "go 1.25.0", "replace example.com/local => ./libs/local", "exclude example.com/blocked v1.0.0"} {
+				if !strings.Contains(string(regenerated), want) {
+					t.Fatalf("regenerated module lost %q", want)
+				}
+			}
+		})
+	})
+
+	for _, scenario := range []struct {
+		name, incoming, dependency, wantVersion, wantError string
+	}{
+		{"when the incoming module adds a dependency", "require example.com/added v1.0.0", "example.com/added", "v1.0.0", ""},
+		{"when both modules require the same version", "require example.com/shared v1.2.0", "example.com/shared", "v1.2.0", ""},
+		{"when the incoming module requires a newer minor", "require example.com/shared v1.3.0", "example.com/shared", "v1.3.0", ""},
+		{"when the client already requires a newer version", "require example.com/shared v1.1.0", "example.com/shared", "v1.2.0", ""},
+		{"when the modules require different majors", "require example.com/shared v2.0.0+incompatible", "", "", "incompatible major versions"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			// Arrange
+			client := readPackageManifestFixture(t, "go.mod")
+			incoming := []byte("module example.com/template\ngo 1.25.0\n" + scenario.incoming + "\n")
+
+			// Act: the public merge flow parses both manifests, merges the common
+			// dependency lists, and asks the Go backend to write the client module.
+			output, err := core.MergeManifestDependencies(Go{}, "go.mod", incoming, client, core.MergeDecisions{}.Resolve)
+
+			// Assert
+			if scenario.wantError != "" {
+				t.Run("it rejects the conflict without changing either source", func(t *testing.T) {
+					if err == nil || !strings.Contains(err.Error(), scenario.wantError) {
+						t.Fatalf("error = %v, want %q", err, scenario.wantError)
+					}
+					if !bytes.Equal(client, readPackageManifestFixture(t, "go.mod")) || output != nil {
+						t.Fatal("failed merge changed the source or returned a manifest")
+					}
+				})
+				return
+			}
+			t.Run("it writes the merged requirements into a valid client module", func(t *testing.T) {
+				if err != nil {
+					t.Fatal(err)
+				}
+				file, err := modfile.Parse("go.mod", output, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				found := false
+				for _, requirement := range file.Require {
+					if requirement.Mod.Path == scenario.dependency {
+						found = requirement.Mod.Version == scenario.wantVersion && !requirement.Indirect
+					}
+				}
+				if !found || file.Module.Mod.Path != "example.com/client" || len(file.Replace) != 1 || len(file.Exclude) != 1 {
+					t.Fatalf("wrong merged module:\n%s", output)
+				}
+			})
+		})
+	}
+	t.Run("when an incoming go.mod has invalid dependency syntax", func(t *testing.T) {
+		// Arrange
+		client := readPackageManifestFixture(t, "go.mod")
+		incoming := []byte("require ( not a module")
+
+		// Act
+		output, err := core.MergeManifestDependencies(Go{}, "go.mod", incoming, client, core.MergeDecisions{}.Resolve)
+
+		// Assert
+		t.Run("it rejects parsing before producing a merged manifest", func(t *testing.T) {
+			if err == nil || !strings.Contains(err.Error(), "parse shared") || output != nil || !bytes.Equal(client, readPackageManifestFixture(t, "go.mod")) {
+				t.Fatalf("invalid dependency syntax was accepted: %s, %v", output, err)
+			}
+		})
+	})
+
 }
 
 // Private helpers ------------------------------------------------------------

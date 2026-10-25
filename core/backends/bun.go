@@ -142,14 +142,68 @@ func (Bun) ReleaseWorkspace(_ context.Context, root string, _, _ io.Writer) (str
 // CreateGoReleaserConfig returns no artifacts because Bun publishes registry packages.
 func (Bun) CreateGoReleaserConfig(_ string, _ core.Config) (string, error) { return "", nil }
 
+// ParseDependencies reads npm dependency sections into the common merge model.
+func (Bun) ParseDependencies(manifest []byte) ([]core.Dependency, error) {
+	pkg, err := parseBunPackageJSON(manifest)
+	if err != nil {
+		return nil, err
+	}
+	var dependencies []core.Dependency
+	for _, section := range []string{"dependencies", "devDependencies", "optionalDependencies", "peerDependencies"} {
+		raw, present := pkg[section]
+		if !present {
+			continue
+		}
+		values, ok := raw.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("package.json.%s must be an object", section)
+		}
+		for name, value := range values {
+			version, ok := value.(string)
+			if !ok {
+				return nil, fmt.Errorf("package.json.%s.%s must be a string", section, name)
+			}
+			dependencies = append(dependencies, core.Dependency{Name: name, Scope: []string{section}, Version: version})
+		}
+	}
+	return dependencies, nil
+}
+
+// WriteDependencies replaces dependency sections while retaining client identity,
+// scripts, workspaces, and other package.json fields.
+func (Bun) WriteDependencies(manifest []byte, dependencies []core.Dependency) ([]byte, error) {
+	pkg, err := parseBunPackageJSON(manifest)
+	if err != nil {
+		return nil, err
+	}
+	for _, section := range []string{"dependencies", "devDependencies", "optionalDependencies", "peerDependencies"} {
+		if _, exists := pkg[section]; exists {
+			pkg[section] = map[string]any{}
+		}
+	}
+	for _, dependency := range dependencies {
+		if len(dependency.Scope) != 1 || !slices.Contains([]string{"dependencies", "devDependencies", "optionalDependencies", "peerDependencies"}, dependency.Scope[0]) || dependency.Options != nil {
+			return nil, fmt.Errorf("invalid npm dependency %s", dependency.Name)
+		}
+		section, ok := pkg[dependency.Scope[0]].(map[string]any)
+		if !ok {
+			section = map[string]any{}
+			pkg[dependency.Scope[0]] = section
+		}
+		section[dependency.Name] = dependency.Version
+	}
+	output, err := json.MarshalIndent(pkg, "", "  ")
+	return append(output, '\n'), err
+}
+
 func (Bun) GenerationRootFiles() []string { return []string{"package.json", "bun.lock", "bun.lockb"} }
 
 func (Bun) PrepareGeneration(request core.PackageGenerationContext) ([]core.MergeEntry, error) {
-	client, selected, err := bunGenerationRoot(request)
+	client, selected, err := mergeBunWorkspaceConfig(request)
 	if err != nil || client == nil {
 		return nil, err
 	}
-	if err := bunGenerationMembership(request, client, selected); err != nil {
+	if err := includeBunWorkspaceProject(request, client, selected); err != nil {
 		return nil, err
 	}
 	if err := validateBunGenerationPaths(request, "", client); err != nil {
@@ -165,7 +219,7 @@ func (Bun) PrepareGeneration(request core.PackageGenerationContext) ([]core.Merg
 
 // Private helpers ------------------------------------------------------------
 
-func bunGenerationRoot(request core.PackageGenerationContext) (map[string]any, bool, error) {
+func mergeBunWorkspaceConfig(request core.PackageGenerationContext) (map[string]any, bool, error) {
 	selectedData, err := os.ReadFile(filepath.Join(request.Stage, "package.json"))
 	selected := err == nil
 	if err != nil && !os.IsNotExist(err) {
@@ -176,7 +230,7 @@ func bunGenerationRoot(request core.PackageGenerationContext) (map[string]any, b
 		return nil, false, nil
 	}
 	if selected {
-		project, err := readGenerationJSON(selectedData)
+		project, err := parseBunPackageJSON(selectedData)
 		if err != nil {
 			return nil, false, fmt.Errorf("selected package.json: %w", err)
 		}
@@ -185,11 +239,11 @@ func bunGenerationRoot(request core.PackageGenerationContext) (map[string]any, b
 		}
 	}
 	original := request.ClientFiles["package.json"]
-	client, err := readGenerationJSON(original.Data)
+	client, err := parseBunPackageJSON(original.Data)
 	if err != nil {
 		return nil, false, fmt.Errorf("client package.json: %w", err)
 	}
-	incoming, err := readGenerationJSON(shared.Data)
+	incoming, err := parseBunPackageJSON(shared.Data)
 	if err != nil {
 		return nil, false, fmt.Errorf("shared package.json: %w", err)
 	}
@@ -204,13 +258,28 @@ func bunGenerationRoot(request core.PackageGenerationContext) (map[string]any, b
 		}
 		client = map[string]any{"name": name, "private": true, "workspaces": []any{"apps/*", "libs/*"}}
 	}
-	if err := mergeGenerationJSON(client, incoming, "package.json", request.ResolveConflict); err != nil {
+	clientData, err := json.Marshal(client)
+	if err != nil {
+		return nil, false, err
+	}
+	merged, err := core.MergeManifestDependencies(Bun{}, "package.json", shared.Data, clientData, request.ResolveConflict)
+	if err != nil {
+		return nil, false, err
+	}
+	client, err = parseBunPackageJSON(merged)
+	if err != nil {
+		return nil, false, err
+	}
+	for _, section := range []string{"dependencies", "devDependencies", "optionalDependencies", "peerDependencies"} {
+		delete(incoming, section)
+	}
+	if err := mergeBunPackageSettings(client, incoming, "package.json", request.ResolveConflict); err != nil {
 		return nil, false, err
 	}
 	return client, selected, nil
 }
 
-func bunGenerationMembership(request core.PackageGenerationContext, client map[string]any, selected bool) error {
+func includeBunWorkspaceProject(request core.PackageGenerationContext, client map[string]any, selected bool) error {
 	patterns, err := bunGenerationPatterns(client)
 	if err != nil {
 		return err
@@ -436,7 +505,7 @@ func writeBunCredentials(scope, token string) (string, error) {
 	return path, nil
 }
 
-func readGenerationJSON(data []byte) (map[string]any, error) {
+func parseBunPackageJSON(data []byte) (map[string]any, error) {
 	if len(data) == 0 {
 		return map[string]any{}, nil
 	}
@@ -458,7 +527,7 @@ func readGenerationJSON(data []byte) (map[string]any, error) {
 	return nil, fmt.Errorf("unexpected content after JSON object")
 }
 
-func mergeGenerationJSON(client, incoming map[string]any, path string, resolver core.MergeConflictResolver) error {
+func mergeBunPackageSettings(client, incoming map[string]any, path string, resolver core.MergeConflictResolver) error {
 	keys := make([]string, 0, len(incoming))
 	for key := range incoming {
 		keys = append(keys, key)
@@ -477,20 +546,12 @@ func mergeGenerationJSON(client, incoming map[string]any, path string, resolver 
 		left, leftMap := previous.(map[string]any)
 		right, rightMap := next.(map[string]any)
 		if leftMap && rightMap {
-			if err := mergeGenerationJSON(left, right, path+"."+key, resolver); err != nil {
+			if err := mergeBunPackageSettings(left, right, path+"."+key, resolver); err != nil {
 				return err
 			}
 			continue
 		}
 		conflict := core.MergeConflict{Path: "package.json", Key: path + "." + key, Kind: "native value", Shared: fmt.Sprint(next), Selected: fmt.Sprint(previous)}
-		if slices.Contains([]string{"package.json.dependencies", "package.json.devDependencies", "package.json.optionalDependencies", "package.json.peerDependencies"}, path) {
-			value, err := core.MergeDependencyVersion(conflict, resolver)
-			if err != nil {
-				return err
-			}
-			client[key] = value
-			continue
-		}
 		if resolver == nil {
 			return fmt.Errorf("merge conflict for %s requires a resolver", conflict.Key)
 		}

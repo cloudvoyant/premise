@@ -106,3 +106,12 @@ func discardGenerationPlan(t *testing.T, plan *core.GeneratePlan, root, project 
 		}
 	})
 }
+
+func readPackageManifestFixture(t *testing.T, name string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "testdata", "package-generation", "manifests", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}

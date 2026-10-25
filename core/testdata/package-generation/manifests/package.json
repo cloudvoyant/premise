@@ -1,0 +1,21 @@
+{
+  "name": "client-owned",
+  "private": true,
+  "dependencies": {
+    "tool": "1.2.0",
+    "unchanged": "1.0.0"
+  },
+  "devDependencies": {
+    "tool": "9.0.0"
+  },
+  "scripts": {
+    "test": "client test"
+  },
+  "workspaces": [
+    "apps/*",
+    "libs/*"
+  ],
+  "clientMetadata": {
+    "owner": "client"
+  }
+}

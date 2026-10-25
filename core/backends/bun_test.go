@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -441,7 +442,7 @@ func TestBunGeneration(t *testing.T) {
 
 			// Assert
 			t.Run("it reports a focused dependency conflict instead of replacing the root", func(t *testing.T) {
-				if err == nil || !strings.Contains(err.Error(), "package.json.devDependencies.tool") {
+				if err == nil || !strings.Contains(err.Error(), "devDependencies.tool") {
 					t.Fatalf("expected focused conflict: %v", err)
 				}
 				original, err := os.ReadFile(filepath.Join(root, "package.json"))
@@ -515,6 +516,109 @@ func TestBunGeneration(t *testing.T) {
 			}
 		})
 	})
+}
+
+func TestBunDependencyManifests(t *testing.T) {
+	t.Run("when parsing and regenerating package.json", func(t *testing.T) {
+		// Arrange
+		manifest := readPackageManifestFixture(t, "package.json")
+
+		// Act
+		dependencies, err := (Bun{}).ParseDependencies(manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		regenerated, err := (Bun{}).WriteDependencies(manifest, dependencies)
+
+		// Assert
+		t.Run("it keeps runtime and development dependencies in separate scopes", func(t *testing.T) {
+			versions := map[string]string{}
+			for _, dependency := range dependencies {
+				versions[strings.Join(dependency.Scope, ".")+"."+dependency.Name] = dependency.Version
+			}
+			want := map[string]string{"dependencies.tool": "1.2.0", "dependencies.unchanged": "1.0.0", "devDependencies.tool": "9.0.0"}
+			if !reflect.DeepEqual(versions, want) {
+				t.Fatalf("parsed dependencies = %#v", versions)
+			}
+		})
+		t.Run("it regenerates native dependency sections and preserves client settings", func(t *testing.T) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			var original, roundTrip map[string]any
+			if err := json.Unmarshal(manifest, &original); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(regenerated, &roundTrip); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(original, roundTrip) {
+				t.Fatalf("native round trip lost fields:\n%s", regenerated)
+			}
+		})
+	})
+
+	for _, scenario := range []struct {
+		name, incoming, dependency, wantVersion, wantError string
+		choice                                             core.MergeChoice
+	}{
+		{name: "when the registry adds a dependency", incoming: `{"dependencies":{"added":"1.0.0"}}`, dependency: "added", wantVersion: "1.0.0"},
+		{name: "when both manifests select the same version", incoming: `{"dependencies":{"tool":"1.2.0"}}`, dependency: "tool", wantVersion: "1.2.0"},
+		{name: "when the registry selects a newer compatible version", incoming: `{"dependencies":{"tool":"1.3.0"}}`, dependency: "tool", wantVersion: "1.3.0"},
+		{name: "when the client already selects a newer version", incoming: `{"dependencies":{"tool":"1.1.0"}}`, dependency: "tool", wantVersion: "1.2.0"},
+		{name: "when the manifests select different majors", incoming: `{"dependencies":{"tool":"2.0.0"}}`, wantError: "incompatible major versions"},
+		{name: "when a version range needs an explicit choice", incoming: `{"dependencies":{"tool":"^1.4.0"}}`, dependency: "tool", wantVersion: "^1.4.0", choice: core.MergeChoiceKeepShared},
+		{name: "when a local path needs an explicit choice", incoming: `{"dependencies":{"tool":"file:../helper"}}`, dependency: "tool", wantVersion: "1.2.0", choice: core.MergeChoiceUseSelected},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			// Arrange
+			client := readPackageManifestFixture(t, "package.json")
+			decisions := core.MergeDecisions{"dependencies.tool": {Choice: scenario.choice}}
+
+			// Act
+			output, err := core.MergeManifestDependencies(Bun{}, "package.json", []byte(scenario.incoming), client, decisions.Resolve)
+
+			// Assert
+			if scenario.wantError != "" {
+				t.Run("it reports the dependency conflict and leaves the source unchanged", func(t *testing.T) {
+					if err == nil || !strings.Contains(err.Error(), scenario.wantError) || output != nil || !bytes.Equal(client, readPackageManifestFixture(t, "package.json")) {
+						t.Fatalf("merge error = %v, output = %s", err, output)
+					}
+				})
+				return
+			}
+			t.Run("it writes merged dependencies while preserving scopes and client identity", func(t *testing.T) {
+				if err != nil {
+					t.Fatal(err)
+				}
+				var pkg map[string]any
+				if err := json.Unmarshal(output, &pkg); err != nil {
+					t.Fatal(err)
+				}
+				runtime := pkg["dependencies"].(map[string]any)
+				development := pkg["devDependencies"].(map[string]any)
+				if runtime[scenario.dependency] != scenario.wantVersion || development["tool"] != "9.0.0" || pkg["name"] != "client-owned" || pkg["clientMetadata"] == nil || pkg["scripts"] == nil {
+					t.Fatalf("wrong merged package:\n%s", output)
+				}
+			})
+		})
+	}
+	t.Run("when an incoming package.json has invalid dependency syntax", func(t *testing.T) {
+		// Arrange
+		client := readPackageManifestFixture(t, "package.json")
+		incoming := []byte("{\"dependencies\":{\"tool\":42}}")
+
+		// Act
+		output, err := core.MergeManifestDependencies(Bun{}, "package.json", incoming, client, core.MergeDecisions{}.Resolve)
+
+		// Assert
+		t.Run("it rejects parsing before producing a merged manifest", func(t *testing.T) {
+			if err == nil || !strings.Contains(err.Error(), "parse shared") || output != nil || !bytes.Equal(client, readPackageManifestFixture(t, "package.json")) {
+				t.Fatalf("invalid dependency syntax was accepted: %s, %v", output, err)
+			}
+		})
+	})
+
 }
 
 // Private helpers ------------------------------------------------------------

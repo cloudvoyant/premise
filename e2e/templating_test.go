@@ -689,6 +689,10 @@ func nativeRegistry(t *testing.T, manager, root string) string {
 		})
 		copyFixture(t, filepath.Join(repositoryRoot(t), "e2e/testdata/package-generation", manager, kind), filepath.Join(root, "templates", name))
 	}
+	if manager == "cargo" {
+		manifest.TemplateRegistry.WorkspaceFiles = []string{"Cargo.toml"}
+		writeFixtureFile(t, filepath.Join(root, "Cargo.toml"), readFile(t, filepath.Join(repositoryRoot(t), "e2e/testdata/package-generation/cargo/root.Cargo.toml")), 0644)
+	}
 	if manager == "bun" {
 		manifest.TemplateRegistry.WorkspaceFiles = []string{"package.json", "mise.toml"}
 		writeFixtureFile(t, filepath.Join(root, "mise.toml"), readFile(t, filepath.Join(repositoryRoot(t), "e2e/testdata/package-generation/bun/root.mise.toml")), 0644)

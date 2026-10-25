@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -713,4 +714,173 @@ func TestCargoGeneration(t *testing.T) {
 			}
 		})
 	})
+
+	t.Run("when a registry contributes workspace dependencies", func(t *testing.T) {
+		// Arrange
+		root, stage, registry := t.TempDir(), t.TempDir(), t.TempDir()
+		original, err := os.ReadFile("../testdata/package-generation/Cargo.toml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		writePackageFixtureFile(t, root, "Cargo.toml", string(original))
+		writePackageFixtureFile(t, stage, "Cargo.toml", "[package]\nname='tool'\nversion='0.1.0'\nedition='2024'\n")
+		writePackageFixtureFile(t, registry, "Cargo.toml", "[package]\nname='registry-development'\nversion='9.0.0'\n[workspace]\nmembers=['templates/*']\n[workspace.dependencies]\nshared='1.2.0'\n")
+
+		// Act
+		plan, err := core.BuildGeneratePlan(core.GenerateParameters{PackageManagers: []string{"cargo"}, RegistryRoot: registry, RegistryWorkspaceFiles: []string{"Cargo.toml"}, ClientRepoRoot: root, TemplateRoot: stage, ProjectPath: "apps/tool", TemplateKind: "app"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		discardGenerationPlan(t, plan, root, "apps/tool")
+
+		// Assert
+		t.Run("it combines dependencies through generation without importing registry identity", func(t *testing.T) {
+			var manifest struct {
+				Package   struct{ Name string } `toml:"package"`
+				Workspace struct {
+					Members      []string       `toml:"members"`
+					Dependencies map[string]any `toml:"dependencies"`
+				} `toml:"workspace"`
+			}
+			output := generationOutput(t, plan, "Cargo.toml")
+			if err := toml.Unmarshal(output, &manifest); err != nil {
+				t.Fatal(err)
+			}
+			if manifest.Package.Name != "client-root" || strings.Join(manifest.Workspace.Members, ",") != "libs/existing,apps/tool" || manifest.Workspace.Dependencies["shared"] != "1.2.0" || manifest.Workspace.Dependencies["existing"] == nil || strings.Contains(string(output), "templates/*") {
+				t.Fatalf("wrong generated Cargo workspace:\n%s", output)
+			}
+			unchanged, err := os.ReadFile(filepath.Join(root, "Cargo.toml"))
+			if err != nil || !bytes.Equal(unchanged, original) {
+				t.Fatal("planning mutated the client manifest")
+			}
+		})
+	})
+
+}
+
+func TestCargoDependencyManifests(t *testing.T) {
+	t.Run("when parsing and regenerating a Cargo manifest", func(t *testing.T) {
+		// Arrange
+		manifest := readPackageManifestFixture(t, "Cargo.toml")
+
+		// Act
+		dependencies, err := (Cargo{}).ParseDependencies(manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		regenerated, err := (Cargo{}).WriteDependencies(manifest, dependencies)
+
+		// Assert
+		t.Run("it exposes dependency scopes, versions, paths, and feature settings", func(t *testing.T) {
+			if len(dependencies) != 6 {
+				t.Fatalf("dependencies = %#v", dependencies)
+			}
+			byScope := map[string]core.Dependency{}
+			for _, dependency := range dependencies {
+				byScope[strings.Join(dependency.Scope, ".")+"."+dependency.Name] = dependency
+			}
+			local := byScope["dependencies.local"]
+			features := byScope["dependencies.unchanged"].Options.(map[string]any)
+			if local.Version != "" || local.Options.(map[string]any)["path"] != "../helper" || features["default-features"] != false || !reflect.DeepEqual(features["features"], []any{"derive"}) || byScope["dev-dependencies.tool"].Version != "9.0.0" || byScope["workspace.dependencies.shared"].Version != "1.0.0" || byScope["target.cfg(unix).build-dependencies.compiler"].Version != "1.0.0" {
+				t.Fatalf("native dependency information was lost: %#v", byScope)
+			}
+		})
+		t.Run("it regenerates the manifest without changing native values", func(t *testing.T) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			var original, roundTrip map[string]any
+			if err := toml.Unmarshal(manifest, &original); err != nil {
+				t.Fatal(err)
+			}
+			if err := toml.Unmarshal(regenerated, &roundTrip); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(original, roundTrip) || !bytes.Equal(manifest, regenerated) {
+				t.Fatalf("unchanged dependency round trip lost source content:\n%s", regenerated)
+			}
+		})
+	})
+
+	for _, scenario := range []struct {
+		name, incoming, dependency, wantVersion, wantError string
+		choice                                             core.MergeChoice
+		scope                                              []string
+	}{
+		{name: "when the manifest adds a crate", incoming: "[dependencies]\nadded='1.0.0'", dependency: "added", wantVersion: "1.0.0"},
+		{name: "when both manifests require the same version", incoming: "[dependencies]\ntool='1.2.0'", dependency: "tool", wantVersion: "1.2.0"},
+		{name: "when the incoming manifest requires a newer minor", incoming: "[dependencies]\ntool='1.3.0'", dependency: "tool", wantVersion: "1.3.0"},
+		{name: "when the client already requires a newer version", incoming: "[dependencies]\ntool='1.1.0'", dependency: "tool", wantVersion: "1.2.0"},
+		{name: "when crate majors conflict", incoming: "[dependencies]\ntool='2.0.0'", wantError: "incompatible major versions"},
+		{name: "when a range needs an explicit decision", incoming: "[dependencies]\ntool='~1.4'", dependency: "tool", wantVersion: "~1.4", choice: core.MergeChoiceKeepShared},
+		{name: "when local paths conflict", incoming: "[dependencies]\nlocal={path='../other'}", dependency: "local", choice: core.MergeChoiceUseSelected},
+		{name: "when workspace dependencies need an upgrade", incoming: "[workspace.dependencies]\nshared='1.2.0'", dependency: "shared", wantVersion: "1.2.0", scope: []string{"workspace", "dependencies"}},
+		{name: "when target dependencies need an upgrade", incoming: "[target.'cfg(unix)'.build-dependencies]\ncompiler={version='1.1.0',optional=true}", dependency: "compiler", wantVersion: "1.1.0", scope: []string{"target", "cfg(unix)", "build-dependencies"}},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			// Arrange
+			client := readPackageManifestFixture(t, "Cargo.toml")
+			decisions := core.MergeDecisions{"dependencies." + scenario.dependency: {Choice: scenario.choice}}
+
+			// Act
+			output, err := core.MergeManifestDependencies(Cargo{}, "Cargo.toml", []byte(scenario.incoming), client, decisions.Resolve)
+
+			// Assert
+			if scenario.wantError != "" {
+				t.Run("it reports the conflict and leaves the source unchanged", func(t *testing.T) {
+					if err == nil || !strings.Contains(err.Error(), scenario.wantError) || output != nil || !bytes.Equal(client, readPackageManifestFixture(t, "Cargo.toml")) {
+						t.Fatalf("merge error = %v, output = %s", err, output)
+					}
+				})
+				return
+			}
+			t.Run("it writes merged native dependencies and preserves unrelated Cargo settings", func(t *testing.T) {
+				if err != nil {
+					t.Fatal(err)
+				}
+				var manifest map[string]any
+				if err := toml.Unmarshal(output, &manifest); err != nil {
+					t.Fatal(err)
+				}
+				scope := scenario.scope
+				if len(scope) == 0 {
+					scope = []string{"dependencies"}
+				}
+				table := manifest
+				for _, name := range scope {
+					table = table[name].(map[string]any)
+				}
+				value := table[scenario.dependency]
+				version, _ := value.(string)
+				if options, ok := value.(map[string]any); ok {
+					version, _ = options["version"].(string)
+					if scenario.dependency == "local" && options["path"] != "../helper" {
+						t.Fatalf("client path was replaced: %#v", options)
+					}
+				}
+				pkg := manifest["package"].(map[string]any)
+				profile := manifest["profile"].(map[string]any)["release"].(map[string]any)
+				features := manifest["dependencies"].(map[string]any)["unchanged"].(map[string]any)
+				if version != scenario.wantVersion || pkg["name"] != "client-owned" || pkg["version"] != "7.0.0" || pkg["metadata"] == nil || profile["lto"] != true || features["default-features"] != false {
+					t.Fatalf("wrong merged Cargo manifest:\n%s", output)
+				}
+			})
+		})
+	}
+	t.Run("when an incoming Cargo.toml has invalid dependency syntax", func(t *testing.T) {
+		// Arrange
+		client := readPackageManifestFixture(t, "Cargo.toml")
+		incoming := []byte("[dependencies]\ntool={version=42}")
+
+		// Act
+		output, err := core.MergeManifestDependencies(Cargo{}, "Cargo.toml", incoming, client, core.MergeDecisions{}.Resolve)
+
+		// Assert
+		t.Run("it rejects parsing before producing a merged manifest", func(t *testing.T) {
+			if err == nil || !strings.Contains(err.Error(), "parse shared") || output != nil || !bytes.Equal(client, readPackageManifestFixture(t, "Cargo.toml")) {
+				t.Fatalf("invalid dependency syntax was accepted: %s, %v", output, err)
+			}
+		})
+	})
+
 }

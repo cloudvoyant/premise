@@ -19,6 +19,8 @@ import (
 // manager-specific release operations selected by premise.yaml. Core owns
 // release sequencing; implementations own package-format behavior.
 type PackageManagerBackend interface {
+	PackageManagerDependencies
+
 	// ID returns the package manager name used in workspace.package_managers.
 	ID() string
 
@@ -52,6 +54,25 @@ type PackageManagerBackend interface {
 	// ReleaseWorkspace prepares and returns the directory used by GoReleaser.
 	// The boolean result requests serial artifact builds.
 	ReleaseWorkspace(context.Context, string, io.Writer, io.Writer) (string, bool, error)
+}
+
+// Dependency is the manifest-independent form consumed by the merge module.
+// Scope identifies the native dependency section, such as dependencies or
+// workspace.dependencies. Options retains native fields such as path, features,
+// or tool settings; nil represents a plain version string.
+type Dependency struct {
+	Name     string
+	Scope    []string
+	Version  string
+	Options  any
+	Indirect bool
+}
+
+// PackageManagerDependencies translates native manifests to and from the common
+// dependency list. Writers retain the client's unrelated manifest settings.
+type PackageManagerDependencies interface {
+	ParseDependencies(manifest []byte) ([]Dependency, error)
+	WriteDependencies(manifest []byte, dependencies []Dependency) ([]byte, error)
 }
 
 // PackageGenerationContext identifies the selected template and its destination.

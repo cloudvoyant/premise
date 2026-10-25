@@ -65,7 +65,11 @@ func TestDependencyVersionMerging(t *testing.T) {
 			resolver := MergeDecisions{conflict.Key: {Choice: scenario.choice}}
 
 			// Act
-			selected, err := MergeDependencyVersion(conflict, resolver.Resolve)
+			merged, err := MergeDependencies("manifest", []Dependency{{Name: "tool", Scope: []string{"dependencies"}, Version: scenario.shared}}, []Dependency{{Name: "tool", Scope: []string{"dependencies"}, Version: scenario.selected}}, resolver.Resolve)
+			selected := ""
+			if len(merged) > 0 {
+				selected = merged[0].Version
+			}
 
 			// Assert
 			t.Run("it preserves compatible versions and requires an explicit decision otherwise", func(t *testing.T) {
