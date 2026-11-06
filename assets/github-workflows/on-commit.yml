@@ -11,7 +11,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: deploy-preview-${{ github.head_ref || github.ref_name }}
+  group: ${{ github.event_name == 'push' && format('deploy-preview-{0}', github.ref_name) || format('pull-request-{0}', github.head_ref || github.ref_name) }}
   cancel-in-progress: false
 
 env:
@@ -21,6 +21,7 @@ env:
 
 jobs:
   plan:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-22.04
     permissions:
       contents: read

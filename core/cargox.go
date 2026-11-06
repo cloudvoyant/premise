@@ -18,6 +18,7 @@ var cargoPackageVersionPattern = regexp.MustCompile(`^(\s*version\s*=\s*)(?:"[^"
 // workflow should publish this package.
 type CargoPackage struct {
 	Name            string
+	Binary          string
 	Version         string
 	PublishCratesIO bool
 }
@@ -39,6 +40,9 @@ func ReadCargoPackage(path string) (pkg CargoPackage, found bool, err error) {
 			Version any    `toml:"version"`
 			Publish any    `toml:"publish"`
 		} `toml:"package"`
+		Bin []struct {
+			Name string `toml:"name"`
+		} `toml:"bin"`
 	}
 	if err := toml.Unmarshal(data, &manifest); err != nil {
 		return CargoPackage{}, false, fmt.Errorf("parse Cargo manifest %s: %w", path, err)
@@ -68,7 +72,16 @@ func ReadCargoPackage(path string) (pkg CargoPackage, found bool, err error) {
 	default:
 		return CargoPackage{}, false, fmt.Errorf("Cargo manifest %s has invalid [package] publish value", path)
 	}
-	return CargoPackage{Name: manifest.Package.Name, Version: version, PublishCratesIO: publishCratesIO}, true, nil
+	binary := manifest.Package.Name
+	if len(manifest.Bin) == 1 && manifest.Bin[0].Name != "" {
+		binary = manifest.Bin[0].Name
+	}
+	return CargoPackage{
+		Name:            manifest.Package.Name,
+		Binary:          binary,
+		Version:         version,
+		PublishCratesIO: publishCratesIO,
+	}, true, nil
 }
 
 // SetCargoPackageVersion updates only the [package] version in Cargo.toml,

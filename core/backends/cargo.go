@@ -35,26 +35,19 @@ func (Cargo) Ecosystem() string { return "cargo" }
 // GetPackageMetadata reads one direct Cargo.toml. Virtual workspaces and
 // templates without a direct package are not handled by Cargo.
 func (Cargo) GetPackageMetadata(root string, template core.Template) (core.PackageMetadata, bool, error) {
-	directory, err := core.TemplateDirectory(root, template.Path)
-	if err != nil {
-		return core.PackageMetadata{}, false, fmt.Errorf("resolve Cargo template %s: %w", template.Name, err)
-	}
-	pkg, found, err := core.ReadCargoPackage(filepath.Join(directory, "Cargo.toml"))
+	pkg, found, err := inspectCargoTemplatePackage(root, template)
 	if err != nil || !found {
 		return core.PackageMetadata{}, found, err
-	}
-	if pkg.Name != template.Name {
-		return core.PackageMetadata{}, false, fmt.Errorf("Cargo package %q does not match declared template %q", pkg.Name, template.Name)
 	}
 	return core.PackageMetadata{
 		Name:           pkg.Name,
 		Version:        pkg.Version,
-		Path:           directory,
+		Path:           pkg.Directory,
 		PackageManager: "cargo",
 		Ecosystem:      "cargo",
 		Registry:       "https://crates.io",
-		Public:         pkg.PublishCratesIO,
-		Publishable:    pkg.PublishCratesIO,
+		Public:         pkg.RegistryPublish,
+		Publishable:    pkg.RegistryPublish,
 	}, true, nil
 }
 
@@ -435,6 +428,8 @@ type cargoTemplatePackage struct {
 	Template        core.Template
 	Directory       string
 	Name            string
+	Binary          string
+	Version         string
 	RegistryPublish bool
 }
 
@@ -450,22 +445,38 @@ func cargoWorkspaceDirectory(root string) (string, bool, error) {
 }
 
 func inspectCargoTemplatePackage(root string, template core.Template) (cargoTemplatePackage, bool, error) {
-	metadata, found, err := (Cargo{}).GetPackageMetadata(root, template)
+	directory, err := core.TemplateDirectory(root, template.Path)
+	if err != nil {
+		return cargoTemplatePackage{}, false, fmt.Errorf("resolve Cargo template %s: %w", template.Name, err)
+	}
+	pkg, found, err := core.ReadCargoPackage(filepath.Join(directory, "Cargo.toml"))
 	if err != nil || !found {
 		return cargoTemplatePackage{}, found, err
 	}
+	if pkg.Name != template.Name {
+		return cargoTemplatePackage{}, false, fmt.Errorf("Cargo package %q does not match declared template %q", pkg.Name, template.Name)
+	}
+	binary := pkg.Binary
+	if binary == "" {
+		binary = pkg.Name
+	}
+	if template.Package != nil && template.Package.Binary != "" {
+		binary = template.Package.Binary
+	}
 	return cargoTemplatePackage{
 		Template:        template,
-		Directory:       metadata.Path,
-		Name:            metadata.Name,
-		RegistryPublish: metadata.Publishable,
+		Directory:       directory,
+		Name:            pkg.Name,
+		Binary:          binary,
+		Version:         pkg.Version,
+		RegistryPublish: pkg.PublishCratesIO,
 	}, true, nil
 }
 
 func cargoApplicationReleaseConfig(root string, manifest core.Config) (string, error) {
-	applications := []string{}
-	for _, template := range manifest.DeclaredTemplates() {
-		if template.Kind != "app" {
+	applications := []cargoTemplatePackage{}
+	for _, template := range manifest.PublicationTargets() {
+		if template.Kind != "app" || len(template.CI.ReleasePlatforms) != 0 {
 			continue
 		}
 		pkg, found, err := inspectCargoTemplatePackage(root, template)
@@ -481,7 +492,7 @@ func cargoApplicationReleaseConfig(root string, manifest core.Config) (string, e
 			return "", fmt.Errorf("inspect Tauri config for template %q: %w", template.Name, err)
 		}
 		if !isTauri {
-			applications = append(applications, pkg.Name)
+			applications = append(applications, pkg)
 		}
 	}
 	if len(applications) == 0 {
@@ -503,7 +514,7 @@ func cargoApplicationReleaseConfig(root string, manifest core.Config) (string, e
       - --release
       - -p=%s
 
-`, application, application, application)
+`, application.Name, application.Binary, application.Name)
 	}
 	builder.WriteString("archives:\n")
 	for _, application := range applications {
@@ -514,7 +525,7 @@ func cargoApplicationReleaseConfig(root string, manifest core.Config) (string, e
       - tar.gz
     name_template: "{{ .Binary }}-{{ .Version }}-{{ .Os }}-{{ .Arch }}"
 
-`, application, application)
+`, application.Name, application.Name)
 	}
 	return builder.String(), nil
 }

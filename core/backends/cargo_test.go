@@ -607,6 +607,105 @@ func TestCargoReleaseArtifactsExcludeDirectTauriApps(t *testing.T) {
 	}
 }
 
+func TestCargoMonorepoReleaseArtifactsResolveCustomBinAndSkipNativePlatforms(t *testing.T) {
+	t.Run("when generating release configuration for a monorepo Cargo workspace", func(t *testing.T) {
+		// Arrange
+		root := t.TempDir()
+		manifest := NewManifest("lgtm")
+		manifest.Workspace.Kind = core.ProjectKindMonorepo
+		manifest.Workspace.PackageManagers = []string{"cargo"}
+		manifest.Workspace.Projects = []core.Project{
+			{
+				Name:     "lgtm-cli",
+				Template: "cloudvoyant/premise:rust-cli",
+				Path:     "apps/lgtm-cli",
+			},
+			{
+				Name:     "default-cli",
+				Template: "cloudvoyant/premise:rust-cli",
+				Path:     "apps/default-cli",
+			},
+			{
+				Name:     "native-app",
+				Template: "cloudvoyant/premise:tauri-app",
+				Path:     "apps/native-app",
+				CI: core.PlatformDeclaration{
+					ReleasePlatforms: []string{"linux", "macos"},
+				},
+			},
+			{
+				Name:     "lgtm-core",
+				Template: "cloudvoyant/premise:rust-lib",
+				Path:     "libs/lgtm-core",
+			},
+		}
+		for _, item := range []struct {
+			path    string
+			content string
+		}{
+			{
+				path:    "apps/lgtm-cli/Cargo.toml",
+				content: "[package]\nname = \"lgtm-cli\"\nversion = \"0.1.0\"\npublish = false\n\n[[bin]]\nname = \"lgtm\"\npath = \"src/main.rs\"\n",
+			},
+			{
+				path:    "apps/default-cli/Cargo.toml",
+				content: "[package]\nname = \"default-cli\"\nversion = \"0.1.0\"\npublish = false\n",
+			},
+			{
+				path:    "apps/native-app/Cargo.toml",
+				content: "[package]\nname = \"native-app\"\nversion = \"0.1.0\"\npublish = false\n",
+			},
+			{
+				path:    "libs/lgtm-core/Cargo.toml",
+				content: "[package]\nname = \"lgtm-core\"\nversion = \"0.1.0\"\n",
+			},
+		} {
+			fullPath := filepath.Join(root, filepath.FromSlash(item.path))
+			if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(fullPath, []byte(item.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		path := filepath.Join(root, ManifestFilename)
+		if err := SaveManifest(path, manifest); err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := core.LoadManifest(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Act
+		config, err := (Cargo{}).CreateGoReleaserConfig(root, loaded)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Assert
+		t.Run("it resolves custom [[bin]] names and preserves the Cargo package flag", func(t *testing.T) {
+			for _, want := range []string{
+				"- id: lgtm-cli\n    builder: rust\n    binary: lgtm\n",
+				"- -p=lgtm-cli",
+				"- id: default-cli\n    builder: rust\n    binary: default-cli\n",
+				"- -p=default-cli",
+			} {
+				if !strings.Contains(config, want) {
+					t.Fatalf("release config missing %q:\n%s", want, config)
+				}
+			}
+		})
+		t.Run("it excludes libraries and apps with native release_platforms", func(t *testing.T) {
+			for _, excluded := range []string{"native-app", "lgtm-core"} {
+				if strings.Contains(config, excluded) {
+					t.Fatalf("release config unexpectedly included %q:\n%s", excluded, config)
+				}
+			}
+		})
+	})
+}
+
 func TestCargoGeneration(t *testing.T) {
 	registerBuiltins(t)
 	t.Run("when extending an existing Cargo workspace", func(t *testing.T) {
