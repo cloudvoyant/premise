@@ -19,6 +19,7 @@ var cargoPackageVersionPattern = regexp.MustCompile(`^(\s*version\s*=\s*)(?:"[^"
 type CargoPackage struct {
 	Name            string
 	Binary          string
+	HasExplicitBin  bool
 	Version         string
 	PublishCratesIO bool
 }
@@ -79,6 +80,7 @@ func ReadCargoPackage(path string) (pkg CargoPackage, found bool, err error) {
 	return CargoPackage{
 		Name:            manifest.Package.Name,
 		Binary:          binary,
+		HasExplicitBin:  len(manifest.Bin) > 0,
 		Version:         version,
 		PublishCratesIO: publishCratesIO,
 	}, true, nil

@@ -561,10 +561,10 @@ func (manifest Config) PublicationTargets() []Template {
 		targets = make([]Template, 0, len(manifest.Workspace.Projects))
 		for _, project := range manifest.Workspace.Projects {
 			kind := ""
-			if strings.HasPrefix(filepath.ToSlash(project.Path), "apps/") {
-				kind = "app"
-			} else if strings.HasPrefix(filepath.ToSlash(project.Path), "libs/") {
+			if strings.HasSuffix(project.Template, "-lib") || strings.HasPrefix(filepath.ToSlash(project.Path), "libs/") {
 				kind = "lib"
+			} else if strings.HasPrefix(filepath.ToSlash(project.Path), "apps/") {
+				kind = "app"
 			}
 			targets = append(targets, Template{Name: project.Name, Kind: kind, Path: project.Path, Version: project.Version, CI: project.CI, Package: project.Package})
 		}

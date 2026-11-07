@@ -634,6 +634,14 @@ func TestCargoMonorepoReleaseArtifactsResolveCustomBinAndSkipNativePlatforms(t *
 				},
 			},
 			{
+				Name:     "lgtm-forge",
+				Template: "cloudvoyant/premise-cargo:premise-rust-lib",
+				Path:     "apps/lgtm-forge",
+				CI: core.PlatformDeclaration{
+					CheckPlatforms: []string{"linux"},
+				},
+			},
+			{
 				Name:     "lgtm-core",
 				Template: "cloudvoyant/premise:rust-lib",
 				Path:     "libs/lgtm-core",
@@ -654,6 +662,18 @@ func TestCargoMonorepoReleaseArtifactsResolveCustomBinAndSkipNativePlatforms(t *
 			{
 				path:    "apps/native-app/Cargo.toml",
 				content: "[package]\nname = \"native-app\"\nversion = \"0.1.0\"\npublish = false\n",
+			},
+			{
+				path:    "apps/lgtm-forge/Cargo.toml",
+				content: "[package]\nname = \"lgtm-forge\"\nversion = \"0.1.0\"\npublish = false\n",
+			},
+			{
+				path:    "apps/lgtm-forge/src/lib.rs",
+				content: "pub fn serve() {}\n",
+			},
+			{
+				path:    "apps/lgtm-forge/src/main.rs",
+				content: "fn main() { lgtm_forge::serve(); }\n",
 			},
 			{
 				path:    "libs/lgtm-core/Cargo.toml",
@@ -697,7 +717,7 @@ func TestCargoMonorepoReleaseArtifactsResolveCustomBinAndSkipNativePlatforms(t *
 			}
 		})
 		t.Run("it excludes libraries and apps with native release_platforms", func(t *testing.T) {
-			for _, excluded := range []string{"native-app", "lgtm-core"} {
+			for _, excluded := range []string{"native-app", "lgtm-forge", "lgtm-core"} {
 				if strings.Contains(config, excluded) {
 					t.Fatalf("release config unexpectedly included %q:\n%s", excluded, config)
 				}

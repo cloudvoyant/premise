@@ -429,6 +429,7 @@ type cargoTemplatePackage struct {
 	Directory       string
 	Name            string
 	Binary          string
+	HasExplicitBin  bool
 	Version         string
 	RegistryPublish bool
 }
@@ -468,6 +469,7 @@ func inspectCargoTemplatePackage(root string, template core.Template) (cargoTemp
 		Directory:       directory,
 		Name:            pkg.Name,
 		Binary:          binary,
+		HasExplicitBin:  pkg.HasExplicitBin,
 		Version:         pkg.Version,
 		RegistryPublish: pkg.PublishCratesIO,
 	}, true, nil
@@ -485,6 +487,15 @@ func cargoApplicationReleaseConfig(root string, manifest core.Config) (string, e
 		}
 		if !found {
 			continue
+		}
+		if manifest.Workspace.Kind != core.ProjectKindTemplateRegistry && !pkg.HasExplicitBin {
+			hasLib, err := core.IsRegularFile(filepath.Join(pkg.Directory, "src", "lib.rs"))
+			if err != nil {
+				return "", fmt.Errorf("inspect Cargo library source for %q: %w", template.Name, err)
+			}
+			if hasLib {
+				continue
+			}
 		}
 		tauriConfig := filepath.Join(pkg.Directory, "tauri.conf.json")
 		isTauri, err := core.IsRegularFile(tauriConfig)
