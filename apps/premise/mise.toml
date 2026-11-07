@@ -1,9 +1,11 @@
 [env]
 GOWORK = "off"
+PREMISE_TEST_FNOX = "1"
 
 [tools]
 go = "1.25.14"
 golangci-lint = "2.15.0"
+fnox = "1.39.0"
 
 [tasks."install"]
 run = "go mod download all"
