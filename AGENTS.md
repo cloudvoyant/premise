@@ -18,6 +18,7 @@
 - Put provider interfaces and implementations in `libs/core/providers`. Keep provider behavior independent of the CI runner; put runner identity exchange and output formatting in CI adapters.
 - Put new external-tool wrappers in `libs/core/extensions`. Move existing wrappers in a separate follow-up.
 - Define application tasks in `mise.toml`. Do not add standalone task dispatcher scripts.
+- [Proposed] Keep `templates/premise-app` and `templates/premise-lib` registered under `template_registry` in `premise.yaml` so `cloudvoyant/premise` continues to serve its language-agnostic official templates alongside the monorepo workspace.
 - Keep reusable test files in fixtures. Process doubles may replace tools for module failure tests.
 - See [module docs](docs/modules/README.md) and the [E2E guide](e2e/README.md).
 

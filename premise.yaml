@@ -23,3 +23,26 @@ workspace:
       path: libs/core
       package:
         public: true
+template_registry:
+  workspace_files: []
+  templates:
+    - name: premise-app
+      kind: app
+      path: templates/premise-app
+      version: 0.1.0
+      questions:
+        - prompt: "App name:"
+          type: string
+          populate: name
+      substitutions:
+        premise-app: name
+    - name: premise-lib
+      kind: lib
+      path: templates/premise-lib
+      version: 0.1.0
+      questions:
+        - prompt: "Library name:"
+          type: string
+          populate: name
+      substitutions:
+        premise-lib: name
