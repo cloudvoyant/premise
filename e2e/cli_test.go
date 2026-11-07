@@ -18,7 +18,7 @@ func testCLIGenerateRequiresInitializedWorkspace(t *testing.T) {
 		binaryName += ".exe"
 	}
 	binary := filepath.Join(t.TempDir(), binaryName)
-	build := exec.Command("go", "build", "-o", binary, ".")
+	build := exec.Command("go", "build", "-o", binary, "./apps/premise")
 	build.Dir = repositoryRoot
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build CLI: %v\n%s", err, output)
@@ -43,7 +43,7 @@ func testCLIInstallRequiresWorkspaceRoot(t *testing.T) {
 		binaryName += ".exe"
 	}
 	binary := filepath.Join(t.TempDir(), binaryName)
-	build := exec.Command("go", "build", "-o", binary, ".")
+	build := exec.Command("go", "build", "-o", binary, "./apps/premise")
 	build.Dir = repositoryRoot
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build CLI: %v\n%s", err, output)
@@ -73,7 +73,7 @@ func testCLIWorkspaceAndTemplateLifecycle(t *testing.T) {
 		binaryName += ".exe"
 	}
 	binary := filepath.Join(t.TempDir(), binaryName)
-	build := exec.Command("go", "build", "-o", binary, ".")
+	build := exec.Command("go", "build", "-o", binary, "./apps/premise")
 	build.Dir = repositoryRoot
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build CLI: %v\n%s", err, output)
@@ -96,7 +96,7 @@ func testCLIWorkspaceAndTemplateLifecycle(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(workspace, "premise.yaml")); err != nil {
 		t.Fatal(err)
 	}
-	expectedMise, err := os.ReadFile(filepath.Join(repositoryRoot, "assets", "workspace-mise.toml"))
+	expectedMise, err := os.ReadFile(filepath.Join(repositoryRoot, "apps", "premise", "assets", "workspace-mise.toml"))
 	if err != nil {
 		t.Fatalf("read embedded workspace mise template: %v", err)
 	}

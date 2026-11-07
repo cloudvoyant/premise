@@ -1,0 +1,42 @@
+[env]
+GOWORK = "off"
+
+[tools]
+go = "1.25.14"
+golangci-lint = "2.15.0"
+
+[tasks."install"]
+run = "go mod download all"
+
+[tasks."build"]
+run = '''
+set -eu
+go build ./...
+'''
+
+[tasks."clean"]
+run = "rm -rf dist"
+
+[tasks."test"]
+run = "go test ./..."
+
+[tasks."lint"]
+run = "golangci-lint run"
+
+[tasks."lint:fix"]
+run = "golangci-lint run --fix"
+
+[tasks."format"]
+run = "golangci-lint fmt"
+
+[tasks."format:check"]
+run = "golangci-lint fmt --diff"
+
+[tasks."env-pull"]
+run = "echo \"env-pull: nothing to pull\""
+
+[tasks."publish"]
+run = "go test ./..."
+
+[tasks."publish:rc"]
+run = "go test ./..."

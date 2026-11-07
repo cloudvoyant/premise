@@ -28,7 +28,7 @@ func premiseBinary(t *testing.T) string {
 		return absolute
 	}
 	binary := filepath.Join(t.TempDir(), "pm")
-	runCommand(t, repositoryRoot(t), "go", "build", "-o", binary, ".")
+	runCommand(t, repositoryRoot(t), "go", "build", "-o", binary, "./apps/premise")
 	return binary
 }
 

@@ -237,7 +237,7 @@ Infrastructure and migration failures stop the pipeline. They do not trigger app
 | `PlanMigrations` / `RunMigrations` | Discover optional tasks and run independent groups. |
 | `RunApplicationDeployment` | Deploy and check applications, with client rollback on failure. |
 
-The Pulumi process boundary lives in `core/extensions/pulumix.go`. Infrastructure operations, setup, and queries live in `core/infra.go`. Application deployment and rollback task execution live in `core/deploy.go`. Provider authentication, CI output adapters, and storage operations live under `core/providers`.
+The Pulumi process boundary lives in `libs/core/extensions/pulumix.go`. Infrastructure operations, setup, and queries live in `libs/core/infra.go`. Application deployment and rollback task execution live in `libs/core/deploy.go`. Provider authentication, CI output adapters, and storage operations live under `libs/core/providers`.
 
 ## Validation
 

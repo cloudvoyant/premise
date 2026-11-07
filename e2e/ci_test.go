@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	core "github.com/cloudvoyant/premise/core"
+	core "github.com/cloudvoyant/premise/libs/core"
 )
 
 // Public API -----------------------------------------------------------------

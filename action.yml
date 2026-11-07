@@ -208,12 +208,12 @@ runs:
             if [[ "$RUNNER_OS" == "Windows" ]]; then
               (
                 cd "$ACTION_PATH"
-                mise exec -- go build -o "$INSTALL_DIR/pm.exe" .
+                mise exec -- go build -o "$INSTALL_DIR/pm.exe" ./apps/premise
               )
             else
               (
                 cd "$ACTION_PATH"
-                mise exec -- go build -o "$INSTALL_DIR/premise" .
+                mise exec -- go build -o "$INSTALL_DIR/premise" ./apps/premise
               )
               ln -sf premise "$INSTALL_DIR/pm"
             fi

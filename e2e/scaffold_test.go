@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	core "github.com/cloudvoyant/premise/core"
-	"github.com/cloudvoyant/premise/core/backends"
+	core "github.com/cloudvoyant/premise/libs/core"
+	"github.com/cloudvoyant/premise/libs/core/backends"
 )
 
 // Tests ----------------------------------------------------------------------

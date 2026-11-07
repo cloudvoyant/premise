@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cloudvoyant/premise/core"
+	"github.com/cloudvoyant/premise/libs/core"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -53,7 +53,7 @@ func TestSourceOnlyCLIAndActionRelease(t *testing.T) {
 	root := repositoryRoot(t)
 	bin := t.TempDir()
 	binary := filepath.Join(bin, "pm")
-	build := exec.Command("go", "build", "-o", binary, ".")
+	build := exec.Command("go", "build", "-o", binary, "./apps/premise")
 	build.Dir = root
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build CLI: %v\n%s", err, out)

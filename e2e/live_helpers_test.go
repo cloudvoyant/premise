@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	core "github.com/cloudvoyant/premise/core"
+	core "github.com/cloudvoyant/premise/libs/core"
 )
 
 // Private helpers ------------------------------------------------------------

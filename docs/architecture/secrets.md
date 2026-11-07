@@ -75,14 +75,14 @@ No `ProjectSecrets` schema exists in premise.yaml. There is no declarative env m
 ### Owned modules
 
 ```text
-cmd/secrets.go                 # Public pull command
-core/secrets.go                # Task discovery and environment context
-core/infra.go                  # Saved-state queries and native infra operations
-core/deploy.go                 # Application tasks and client rollback
-core/extensions/fnoxx.go       # Fnox process boundary
-core/extensions/pulumix.go     # Pulumi process boundary
-core/extensions/gitx.go        # Preview branch lookup
-core/providers/provider.go     # CI and infra provider interfaces
+apps/premise/cmd/secrets.go         # Public pull command
+libs/core/secrets.go                # Task discovery and environment context
+libs/core/infra.go                  # Saved-state queries and native infra operations
+libs/core/deploy.go                 # Application tasks and client rollback
+libs/core/extensions/fnoxx.go       # Fnox process boundary
+libs/core/extensions/pulumix.go     # Pulumi process boundary
+libs/core/extensions/gitx.go        # Preview branch lookup
+libs/core/providers/provider.go     # CI and infra provider interfaces
 ```
 
 ### Validation
