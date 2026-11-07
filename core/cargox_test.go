@@ -13,15 +13,13 @@ func TestReadCargoPackage(t *testing.T) {
 		content string
 		found   bool
 		publish bool
-		binary  string
 		wantErr string
 	}{
 		{name: "virtual workspace", content: "[workspace]\n", found: false},
-		{name: "default registry", content: "[package]\nname = 'demo'\nversion = '1.0.0'\n", found: true, publish: true, binary: "demo"},
-		{name: "custom binary", content: "[package]\nname = 'demo'\nversion = '1.0.0'\n\n[[bin]]\nname = 'demo-bin'\npath = 'src/main.rs'\n", found: true, publish: true, binary: "demo-bin"},
-		{name: "private package", content: "[package]\nname = 'demo'\nversion = '1.0.0'\npublish = false\n", found: true, binary: "demo"},
-		{name: "other registry", content: "[package]\nname = 'demo'\nversion = '1.0.0'\npublish = ['custom']\n", found: true, binary: "demo"},
-		{name: "crates.io allowlist", content: "[package]\nname = 'demo'\nversion = '1.0.0'\npublish = ['custom', 'crates-io']\n", found: true, publish: true, binary: "demo"},
+		{name: "default registry", content: "[package]\nname = 'demo'\nversion = '1.0.0'\n", found: true, publish: true},
+		{name: "private package", content: "[package]\nname = 'demo'\nversion = '1.0.0'\npublish = false\n", found: true},
+		{name: "other registry", content: "[package]\nname = 'demo'\nversion = '1.0.0'\npublish = ['custom']\n", found: true},
+		{name: "crates.io allowlist", content: "[package]\nname = 'demo'\nversion = '1.0.0'\npublish = ['custom', 'crates-io']\n", found: true, publish: true},
 		{name: "missing version", content: "[package]\nname = 'demo'\n", wantErr: "no [package] version"},
 		{name: "bad publish value", content: "[package]\nname = 'demo'\nversion = '1.0.0'\npublish = 12\n", wantErr: "invalid [package] publish"},
 	} {
@@ -40,8 +38,8 @@ func TestReadCargoPackage(t *testing.T) {
 			if err != nil || found != tc.found {
 				t.Fatalf("ReadCargoPackage = %+v, %v, %v; want found=%v", pkg, found, err, tc.found)
 			}
-			if found && (pkg.Name != "demo" || pkg.Binary != tc.binary || pkg.Version != "1.0.0" || pkg.PublishCratesIO != tc.publish) {
-				t.Fatalf("ReadCargoPackage = %+v; want binary=%q publish=%v", pkg, tc.binary, tc.publish)
+			if found && (pkg.Name != "demo" || pkg.Version != "1.0.0" || pkg.PublishCratesIO != tc.publish) {
+				t.Fatalf("ReadCargoPackage = %+v; want publish=%v", pkg, tc.publish)
 			}
 		})
 	}
