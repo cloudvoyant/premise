@@ -426,6 +426,11 @@ func assertScaffoldWorkflows(t *testing.T, workspace string, infrastructure bool
 	for _, name := range []string{"on-commit", "on-merge"} {
 		assertFileContains(t, filepath.Join(workspace, ".github/workflows", name+".yml"), "cloudvoyant/premise@v0\n")
 	}
+	assertFileContains(
+		t,
+		filepath.Join(workspace, ".github/workflows/on-commit.yml"),
+		"if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository\n",
+	)
 	deploy := filepath.Join(workspace, ".github/workflows/on-deploy.yml")
 	if infrastructure {
 		assertFileContains(t, deploy, "workflow_dispatch:")
