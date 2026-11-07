@@ -19,33 +19,34 @@ When mise is active, it prepends the repository's `bin/` directory to `PATH`. Af
 ## Project Structure
 
 ```
-main.go               # CLI entry point (package main)
-cmd/                   # Cobra command tree
-core/                  # Public library surface, split into responsibility-focused modules
-core/misex.go          # Mise command extension and sole executable boundary
-core/osx.go            # Shared filesystem checks
-core/bunx.go           # Generic package.json reading for Bun packages
-core/cargox.go         # Generic Cargo manifest reading and version edits
-core/package_metadata.go # Package-manager-neutral metadata
-core/package_manager_backend.go # Backend contract, registration, and selection
-core/release_backends.go # Release sequencing across selected managers
-core/backends/go.go     # Go artifact policy
-core/backends/cargo.go  # Cargo metadata, artifact, and publication policy
-core/backends/bun.go    # Bun metadata and npm publication policy
-core/backends/register.go # Registration of built-in backends
-core/ci.go             # Lifecycle selection and release-phase gating
-core/release.go        # Shared stable/RC release preparation and publication
-core/version.go        # Semantic version calculation and validation
-docs/modules/          # Per-module design, API usage, and implementation details
-go.mod                # Module manifest
-mise.toml             # Task runner and tool versions
-action.yml            # Published composite action (root — use a v0 tag while premise is in alpha)
-.github/workflows/    # on-commit, on-deploy, and on-merge only
+apps/premise/main.go               # CLI entry point (package main)
+apps/premise/cmd/                  # Cobra command tree
+apps/premise/assets/               # Embedded workspace and GitHub Actions workflow templates
+libs/core/                         # Public library surface, split into responsibility-focused modules
+libs/core/misex.go                 # Mise command extension and sole executable boundary
+libs/core/osx.go                   # Shared filesystem checks
+libs/core/bunx.go                  # Generic package.json reading for Bun packages
+libs/core/cargox.go                # Generic Cargo manifest reading and version edits
+libs/core/package_metadata.go      # Package-manager-neutral metadata
+libs/core/package_manager_backend.go # Backend contract, registration, and selection
+libs/core/release_backends.go      # Release sequencing across selected managers
+libs/core/backends/go.go           # Go artifact policy
+libs/core/backends/cargo.go        # Cargo metadata, artifact, and publication policy
+libs/core/backends/bun.go          # Bun metadata and npm publication policy
+libs/core/backends/register.go     # Registration of built-in backends
+libs/core/ci.go                    # Lifecycle selection and release-phase gating
+libs/core/release.go               # Shared stable/RC release preparation and publication
+libs/core/version.go               # Semantic version calculation and validation
+docs/modules/                      # Per-module design, API usage, and implementation details
+go.mod                             # Module manifest
+mise.toml                          # Task runner and tool versions
+action.yml                         # Published composite action (root — use a v0 tag while premise is in alpha)
+.github/workflows/                 # on-commit, on-deploy, and on-merge only
 ```
 
 ## Development Workflow
 
-1. **Write code** in `core/` (shared library logic), `core/backends/` (package-manager backends), or `cmd/` (commands)
+1. **Write code** in `libs/core/` (shared library logic), `libs/core/backends/` (package-manager backends), or `apps/premise/cmd/` (commands)
 2. **Write tests** as `*_test.go` files with `func TestXxx(t *testing.T)`
 3. **Run tests**: `mise run test`
 4. **Check format**: `mise run format:check`; fix with `mise run format`
@@ -56,10 +57,10 @@ action.yml            # Published composite action (root — use a v0 tag while 
 ```bash
 # CLI binary
 curl -fsSL https://raw.githubusercontent.com/cloudvoyant/premise/main/install.sh | bash
-go install github.com/cloudvoyant/premise@vX.Y.Z
+go install github.com/cloudvoyant/premise/apps/premise@vX.Y.Z
 
 # Library
-go get github.com/cloudvoyant/premise@vX.Y.Z
+go get github.com/cloudvoyant/premise/libs/core@vX.Y.Z
 ```
 
 ```yaml

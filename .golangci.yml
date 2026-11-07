@@ -1,0 +1,29 @@
+version: "2"
+
+run:
+  timeout: 5m
+  relative-path-mode: cfg
+
+linters:
+  default: none
+  enable:
+    - govet
+    - cyclop
+  settings:
+    cyclop:
+      max-complexity: 35
+  exclusions:
+    generated: strict
+    rules:
+      - path: _test\.go
+        linters:
+          - cyclop
+      - path: libs/core/(ci|config|deploy|infra|release|registry|secrets|template)\.go
+        linters:
+          - cyclop
+
+formatters:
+  enable:
+    - gofmt
+  exclusions:
+    generated: strict

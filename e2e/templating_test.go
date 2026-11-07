@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	core "github.com/cloudvoyant/premise/core"
+	core "github.com/cloudvoyant/premise/libs/core"
 )
 
 // Private helpers ------------------------------------------------------------
@@ -88,7 +88,7 @@ func installMiseTaskShim(t *testing.T) *miseInvocationLog {
 
 func workspaceMiseTemplate(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join(repositoryRoot(t), "assets", "workspace-mise.toml")
+	path := filepath.Join(repositoryRoot(t), "apps", "premise", "assets", "workspace-mise.toml")
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read workspace mise template: %v", err)

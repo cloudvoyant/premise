@@ -80,7 +80,7 @@ flowchart LR
 
 ## Maintainer notes
 
-- Shared merge policy lives in `core/merge.go`; typed Mise behavior lives in `core/misex.go`.
+- Shared merge policy lives in `libs/core/merge.go`; typed Mise behavior lives in `libs/core/misex.go`.
 - Native syntax and manifest validation stay in each backend file. Generic document merging does not interpret dependency versions.
 - Writers preserve unrelated client values. Serialization can normalize formatting and remove comments; unchanged Cargo dependency lists preserve their original bytes.
 - JSON and YAML accept one object document. Empty inputs represent an empty object. Invalid inputs fail before serialization.

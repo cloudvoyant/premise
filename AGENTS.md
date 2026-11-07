@@ -14,9 +14,9 @@
 # Organization
 
 - Prefer keeping related behavior in the existing module or backend, with one matching `_test.go` file. Avoid adding files for a few functions unless it improves organization and semantic clarity. Put file-scoped helpers at the bottom; use a dedicated utility file when the utilities form a coherent shared responsibility.
-- Keep infra setup and querying in `core/infra.go`, app deploy and rollback in `core/deploy.go`, and CI sequencing in `core/ci.go`.
-- Put provider interfaces and implementations in `core/providers`. Keep provider behavior independent of the CI runner; put runner identity exchange and output formatting in CI adapters.
-- Put new external-tool wrappers in `core/extensions`. Move existing wrappers in a separate follow-up.
+- Keep infra setup and querying in `libs/core/infra.go`, app deploy and rollback in `libs/core/deploy.go`, and CI sequencing in `libs/core/ci.go`.
+- Put provider interfaces and implementations in `libs/core/providers`. Keep provider behavior independent of the CI runner; put runner identity exchange and output formatting in CI adapters.
+- Put new external-tool wrappers in `libs/core/extensions`. Move existing wrappers in a separate follow-up.
 - Define application tasks in `mise.toml`. Do not add standalone task dispatcher scripts.
 - Keep reusable test files in fixtures. Process doubles may replace tools for module failure tests.
 - See [module docs](docs/modules/README.md) and the [E2E guide](e2e/README.md).
@@ -25,7 +25,7 @@
 
 ## Go
 
-- Follow `core/template.go`. Exported functions and methods go under `// Public API -----------------------------------------------------------------`.
+- Follow `libs/core/template.go`. Exported functions and methods go under `// Public API -----------------------------------------------------------------`.
 - Put unexported functions, helper types, and methods on unexported types at the bottom under `// Private helpers ------------------------------------------------------------`.
 - Keep documentation with each declaration. Avoid comments that repeat its name and description.
 - Put each field of a multi-field struct declaration or literal on its own line.
@@ -34,7 +34,7 @@
 
 - Define each command in a named function such as `InfraCommand() *cobra.Command`. Do not use a `New` prefix or build commands in loops.
 - Create the command, flags, and children in that function. Keep flag values local to each command instance.
-- Keep one `init` in `cmd/root.go`; it only registers top-level commands explicitly.
+- Keep one `init` in `apps/premise/cmd/root.go`; it only registers top-level commands explicitly.
 - Parse flags inside `RunE`. Execution helpers accept plain inputs, not Cobra commands.
 - Read release environment variables inside the release module and expose typed results.
 

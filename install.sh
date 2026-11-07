@@ -6,7 +6,7 @@
 # Set INSTALL_DIR to override the install location.
 #
 # Prebuilt binaries cover linux/macOS on x86_64 and aarch64. To build from source:
-#   go install github.com/cloudvoyant/premise@vX.Y.Z
+#   go install github.com/cloudvoyant/premise/apps/premise@vX.Y.Z
 set -euo pipefail
 
 PROJECT="premise"

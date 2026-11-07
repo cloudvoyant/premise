@@ -2,13 +2,20 @@
 # mise.toml - premise development environment and tasks
 # =============================================================================
 
+monorepo_root = true
+
 [env]
 _.path = ['{{config_root}}/bin', '{{config_root}}/node_modules/.bin']
 PROJECT = "premise"
+GOWORK = "off"
+
+[monorepo]
+config_roots = ["apps/*", "libs/*"]
 
 [tools]
 # Matches the `go` directive in go.mod (testscript/go-internal requires 1.25+).
 go = "1.25"
+golangci-lint = "2.15.0"
 node = "lts"
 "npm:prettier" = "latest"
 shellcheck = "latest"
@@ -20,23 +27,22 @@ actionlint = "1.7.12"
 
 [tasks.install]
 description = "Install the premise CLI"
-run = "go install"
+run = "go install ./apps/premise"
 
 [tasks.build]
 description = "Build the premise CLI"
 sources = [
-  "main.go",
-  "cmd/**/*.go",
-  "core/**/*.go",
-  "assets/**/*.toml",
-  "templates/**/*.toml",
+  "apps/premise/**/*.go",
+  "apps/premise/assets/**/*.toml",
+  "apps/premise/assets/**/*.yml",
+  "libs/core/**/*.go",
   "go.mod",
   "go.sum",
 ]
 run = '''
 go build ./...
 mkdir -p bin
-go build -o "bin/$PROJECT" .
+go build -o "bin/$PROJECT" ./apps/premise
 ln -sfn "$PROJECT" bin/pm
 echo "Build successful -> bin/$PROJECT (pm)"
 '''
@@ -98,7 +104,7 @@ exit "$status"
 description = "Run Go and shell static analysis"
 run = '''
 go vet ./...
-gocyclo -over 30 -ignore '_test\.go$' core/backends core/merge.go core/misex.go core/generate.go
+gocyclo -over 30 -ignore '_test\.go$' libs/core/backends libs/core/merge.go libs/core/misex.go libs/core/generate.go
 shellcheck install.sh
 '''
 
@@ -130,26 +136,6 @@ run = '''
 gofmt -w .
 shfmt -w install.sh
 go vet ./...
-gocyclo -over 30 -ignore '_test\.go$' core/backends core/merge.go core/misex.go core/generate.go
+gocyclo -over 30 -ignore '_test\.go$' libs/core/backends libs/core/merge.go libs/core/misex.go libs/core/generate.go
 shellcheck install.sh
 '''
-
-[tasks."on-commit"]
-description = "Validate Premise and its native template registry"
-run = '''
-pm install
-mise run build
-mise run test
-mise run format:check
-mise run lint
-mise run e2e
-pm template test
-'''
-
-[tasks."on-merge"]
-description = "Validate Premise before stable publication"
-run = "mise run on-commit"
-
-[tasks."on-deploy"]
-description = "Report that Premise has no deployment target"
-run = 'echo "No Premise deployment target — nothing to do."'

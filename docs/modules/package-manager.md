@@ -98,11 +98,11 @@ flowchart LR
 
 Go source is available at the shared tag. Cargo and Bun upload to their registries afterward. Core owns this ordering; backends supply native checks and tasks.
 
-| Where to look                     | Responsibility                           |
-| --------------------------------- | ---------------------------------------- |
-| `core/backends/{go,cargo,bun}.go` | Native behavior and serialization.       |
-| `core/merge.go`                   | Shared merge policy.                     |
-| `core/generate.go`                | Candidate staging, checks, and rollback. |
-| `core/release.go`, `core/ci.go`   | Release and CI sequencing.               |
+| Where to look                             | Responsibility                           |
+| ----------------------------------------- | ---------------------------------------- |
+| `libs/core/backends/{go,cargo,bun}.go`    | Native behavior and serialization.       |
+| `libs/core/merge.go`                      | Shared merge policy.                     |
+| `libs/core/generate.go`                   | Candidate staging, checks, and rollback. |
+| `libs/core/release.go`, `libs/core/ci.go` | Release and CI sequencing.               |
 
 See [Merge](merge.md), [Generate](generate.md), [Release](release.md), and the [Go guide](../guides/go.md).

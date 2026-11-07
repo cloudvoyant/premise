@@ -78,7 +78,7 @@ flowchart LR
 
 After validation, Premise writes the planned root files and renames the staged project into its destination. It keeps in-memory copies of changed root files until the workspace manifest is saved. A publication or manifest error restores those files and removes the new destination. There is no lock, journal, crash-recovery protocol, platform-specific transaction wrapper, or existing-project migration.
 
-`core/config.go` owns manifest validation and workspace-file pattern rules. `core/misex.go` owns typed Mise extraction, encoding, mutation, and merge behavior. `core/merge.go` owns file-level decisions. `core/generate.go` owns pattern expansion, planning, staging, candidate validation, root publication, and destination publication.
+`libs/core/config.go` owns manifest validation and workspace-file pattern rules. `libs/core/misex.go` owns typed Mise extraction, encoding, mutation, and merge behavior. `libs/core/merge.go` owns file-level decisions. `libs/core/generate.go` owns pattern expansion, planning, staging, candidate validation, root publication, and destination publication.
 
 ## References
 

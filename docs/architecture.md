@@ -88,7 +88,7 @@ Local env files combine JSON secret documents with queried infrastructure values
   +--> [Version] --> [Git + svu]   |
   |                                |
   +--> [Release] ------------------+
-  |      `--> [PackageManagerBackend] <--- [core/backends]
+  |      `--> [PackageManagerBackend] <--- [libs/core/backends]
   |
   `--> [Updater] --> [HTTP Installer]
 ```
@@ -331,7 +331,7 @@ Mise owns tools, environments, and task execution. Premise manages monorepo conv
 
 Generation relies on the expected monorepo structure when it selects a destination and records provenance. Template registry and generated-project capabilities may coexist; `workspace.kind` selects default CI behavior rather than enforcing exclusive repository contents.
 
-Infrastructure setup and saved-state queries live in `core/infra.go`. Application deployment and native rollback live in `core/deploy.go`; optional migration groups live in `core/migrations.go`. Provider interfaces and authentication implementations live in `core/providers`. External-tool wrappers for Pulumi, fnox, and Git live in `core/extensions`.
+Infrastructure setup and saved-state queries live in `libs/core/infra.go`. Application deployment and native rollback live in `libs/core/deploy.go`; optional migration groups live in `libs/core/migrations.go`. Provider interfaces and authentication implementations live in `libs/core/providers`. External-tool wrappers for Pulumi, fnox, and Git live in `libs/core/extensions`.
 
 `pm infra setup --pulumi-lang go` adds a client program and the missing manual deployment workflow to an existing workspace. `pm infra query` reads saved state for project tasks. `pm secrets pull` selects project tasks that use native fnox profiles and write their own env files. The [infrastructure module](modules/infrastructure.md) documents configuration and Go/TypeScript examples.
 

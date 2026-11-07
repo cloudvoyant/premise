@@ -120,7 +120,7 @@ flowchart TD
 
 ### CI provider outputs
 
-`pm ci plan --ci-output` formats the plan through the workspace's configured CI provider. The GitHub adapter writes step-output values, including the task matrix and migration matrix. `--json` returns the runner-independent plan. `--github-output` remains a compatibility alias for existing released workflows. CI-specific formatting lives under `core/providers`, not in command handlers or workflow Python scripts.
+`pm ci plan --ci-output` formats the plan through the workspace's configured CI provider. The GitHub adapter writes step-output values, including the task matrix and migration matrix. `--json` returns the runner-independent plan. `--github-output` remains a compatibility alias for existing released workflows. CI-specific formatting lives under `libs/core/providers`, not in command handlers or workflow Python scripts.
 
 ### API
 

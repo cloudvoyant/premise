@@ -1,6 +1,6 @@
 workspace:
   name: premise
-  kind: template-registry
+  kind: monorepo
   schema-version: "0.2"
   package_managers:
     - go
@@ -10,27 +10,16 @@ workspace:
     tasks: mise
     infra: pulumi
     versioning: svu
-  projects: []
-template_registry:
-  workspace_files: []
-  templates:
-    - name: premise-app
-      kind: app
-      path: templates/premise-app
-      version: 0.1.0
-      questions:
-        - prompt: "App name:"
-          type: string
-          populate: name
-      substitutions:
-        premise-app: name
-    - name: premise-lib
-      kind: lib
-      path: templates/premise-lib
-      version: 0.1.0
-      questions:
-        - prompt: "Library name:"
-          type: string
-          populate: name
-      substitutions:
-        premise-lib: name
+  projects:
+    - name: premise
+      template: cloudvoyant/premise-go:premise-cobra-cli
+      path: apps/premise
+      package:
+        public: false
+        main: "."
+        binary: premise
+    - name: core
+      template: cloudvoyant/premise-go:premise-go-lib
+      path: libs/core
+      package:
+        public: true
