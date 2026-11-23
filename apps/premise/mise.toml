@@ -17,7 +17,7 @@ run = "go build -o dist/premise ."
 run = "rm -rf dist"
 
 [tasks."test"]
-run = "go test ./... ../../e2e"
+run = "go test ./..."
 
 [tasks."lint"]
 run = "golangci-lint run"
@@ -58,5 +58,5 @@ run = "echo \"Configure deployment for your environment; no cloud resources prov
 [tasks."e2e"]
 run = '''
 set -eu
-go test ../../e2e -run "Test"
+(cd ../.. && mise run e2e)
 '''
