@@ -1,10 +1,17 @@
+/**
+ * @module-tag e2e
+ * @module-tag cli
+ * @module-tag workspace
+ */
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { createNativeRegistry, usePremiseHarness } from "../common/fixtures.js";
 import { REPO_ROOT, TESTDATA_ROOT, type PremiseHarness } from "../common/premise-harness.js";
 import { copyScaffold, pathExists } from "../common/test-utils.js";
+
+// Fixtures -------------------------------------------------------------------
 
 const COMMON_CONTRACTS = [
   "install",
@@ -21,87 +28,20 @@ const COMMON_CONTRACTS = [
 ];
 const APP_ONLY_CONTRACTS = ["run", "dev", "deploy", "e2e"];
 
-async function scaffoldProject(
-  h: PremiseHarness,
-  kind: "lib" | "app",
-  infrastructure: boolean,
-): Promise<{ registry: string; projectDir: string }> {
-  const registry = join(h.outputDir, "registry");
-  await mkdir(registry, { recursive: true });
-  await h.pm(["init", "--kind", "template-registry"], { cwd: registry });
-  await h.pm(["template", "init", kind], { cwd: registry });
-  await copyScaffold(join(TESTDATA_ROOT, "scaffold", kind), join(registry, "templates", kind));
+// Tests ----------------------------------------------------------------------
 
-  const initArgs = infrastructure ? ["init", "--infra", "--pulumi-lang", "go"] : ["init"];
-  await h.pm(initArgs);
-  await h.pm(["generate", `${registry}:${kind}`, "--answer", "name=example"]);
-  return {
-    registry,
-    projectDir: join(h.workspace, kind === "lib" ? "libs" : "apps", "example"),
-  };
-}
-
-async function assertScaffoldWorkflows(workspace: string, infrastructure: boolean): Promise<void> {
-  for (const name of ["on-commit.yml", "on-merge.yml"]) {
-    const content = await readFile(join(workspace, ".github/workflows", name), "utf8");
-    expect(content).toContain("cloudvoyant/premise@v0\n");
-  }
-  const onCommit = await readFile(join(workspace, ".github/workflows/on-commit.yml"), "utf8");
-  expect(onCommit).toContain(
-    "if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository\n",
-  );
-
-  const deployPath = join(workspace, ".github/workflows/on-deploy.yml");
-  if (infrastructure) {
-    const deploy = await readFile(deployPath, "utf8");
-    expect(deploy).toContain("workflow_dispatch:");
-  } else {
-    expect(await pathExists(deployPath)).toBe(false);
-  }
-}
-
-async function assertProjectContracts(projectDir: string, isApp: boolean): Promise<void> {
-  const content = await readFile(join(projectDir, "mise.toml"), "utf8");
-  for (const task of COMMON_CONTRACTS) {
-    const escaped = task.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    expect(content).toMatch(new RegExp(`\\[tasks\\.("?${escaped}"?)\\]`));
-  }
-  for (const task of APP_ONLY_CONTRACTS) {
-    const present = new RegExp(`\\[tasks\\.("?${task}"?)\\]`).test(content);
-    expect(present).toBe(isApp);
-  }
-}
-
-async function assertNoTempDirs(...roots: string[]): Promise<void> {
-  const forbidden = [
-    ".premise-stage-",
-    "premise-selected-",
-    "premise-tool-preflight-",
-    "premise-candidate-validation-",
-  ];
-  for (const root of roots) {
-    if (!(await pathExists(root))) continue;
-    const entries = await readdir(root);
-    for (const name of entries) {
-      for (const prefix of forbidden) {
-        expect(name).not.toContain(prefix);
-      }
-    }
-  }
-}
-
-describe("workspace lifecycle", () => {
+describe("workspace lifecycle", { tags: ["e2e", "cli", "workspace", "replay"] }, () => {
   const harness = usePremiseHarness();
 
-  describe("given a fresh initialized workspace", () => {
+  describe("given a fresh workspace", () => {
     it(
       "when scaffolding a lib or app without infra, then workflows, substitutions, contracts, and runnable tasks succeed",
-      { tags: ["e2e", "cli", "smoke", "workspace", "go", "replay"] },
+      { tags: ["smoke", "go"] },
       async () => {
         // Arrange
         const h = harness();
 
-        // Act: scaffold a library first in workspace
+        // Act: scaffold a library
         const { projectDir: libDir } = await scaffoldProject(h, "lib", false);
 
         // Assert library workflows, substitutions, build/test, contracts, and no infra plan
@@ -119,10 +59,10 @@ describe("workspace lifecycle", () => {
         const plan = await h.pm(["ci", "plan", "--ci-output"]);
         expect(plan.stdout).toContain("has_infra=false\n");
 
-        // Act: scaffold an app without infra in a sibling workspace under outputDir
+        // Act: scaffold an app without infra in a sibling workspace
         const appWorkspace = join(h.outputDir, "app-workspace");
-        await mkdir(appWorkspace, { recursive: true });
         const appRegistry = join(h.outputDir, "app-registry");
+        await mkdir(appWorkspace, { recursive: true });
         await mkdir(appRegistry, { recursive: true });
         await h.pm(["init", "--kind", "template-registry"], { cwd: appRegistry });
         await h.pm(["template", "init", "app"], { cwd: appRegistry });
@@ -148,10 +88,44 @@ describe("workspace lifecycle", () => {
       },
     );
 
+    it(
+      "when adding Pulumi infra via infra setup twice, then infra/ and on-deploy.yml are created while preserving workflows and pins",
+      { tags: ["smoke", "pulumi"] },
+      async () => {
+        // Arrange
+        const h = harness();
+        await scaffoldProject(h, "app", false);
+        const onCommitBefore = await h.readFile(".github/workflows/on-commit.yml");
+
+        // Act
+        await h.pm(["infra", "setup", "--pulumi-lang", "go"]);
+
+        // Assert infra scaffolded, on-deploy added, existing workflow & app preserved
+        await assertScaffoldWorkflows(h.workspace, true);
+        expect(await h.readFile("infra/Pulumi.yaml")).toContain("runtime: go");
+        expect(await h.readFile(".github/workflows/on-commit.yml")).toBe(onCommitBefore);
+        expect(await h.readFile("apps/example/main.go")).toContain('fmt.Println("example")');
+
+        // Act: run infra setup a second time
+        const miseBefore = await h.readFile("mise.toml");
+        await h.pm(["infra", "setup"]);
+
+        // Assert tool pins remain unchanged
+        expect(await h.readFile("mise.toml")).toBe(miseBefore);
+        await h.writeManifest();
+      },
+    );
+  });
+
+  describe("given a fresh initialized monorepo", () => {
+    beforeEach(async () => {
+      await harness().pm(["init"]);
+    });
+
     for (const manager of ["go", "cargo", "bun"] as const) {
       it(
         `when generating a ${manager} lib+app pair, then native tools build, test, and run with preserved e2e/outputs/`,
-        { tags: ["e2e", "cli", "workspace", manager, "replay"] },
+        { tags: [manager] },
         async () => {
           // Arrange
           const h = harness();
@@ -159,7 +133,6 @@ describe("workspace lifecycle", () => {
             manager,
             join(h.outputDir, `registry-${manager}`),
           );
-          await h.pm(["init"]);
           await h.pm([
             "generate",
             `${registry}:lib-template`,
@@ -204,8 +177,7 @@ describe("workspace lifecycle", () => {
           if (lockFile) {
             expect(await h.readFile(lockFile)).not.toContain("stale");
             expect(await pathExists(join(h.workspace, "apps/tool", lockFile))).toBe(false);
-            const info = await stat(join(h.workspace, lockFile));
-            expect(info.mode & 0o777).toBe(0o640);
+            expect((await stat(join(h.workspace, lockFile))).mode & 0o777).toBe(0o640);
           }
 
           const appOutput = await h.pm(["run", "tool:run"]);
@@ -226,7 +198,7 @@ describe("workspace lifecycle", () => {
             expect(parsed.workspace_members).toHaveLength(2);
             await h.run("cargo", ["fetch", "--offline"], { expectSuccess: true });
             expect(await pathExists(join(h.workspace, "Cargo.lock"))).toBe(true);
-          } else if (manager === "bun") {
+          } else {
             expect(await pathExists(join(h.workspace, "bun.lock"))).toBe(true);
             await h.run("bun", ["install", "--ignore-scripts", "--frozen-lockfile"], {
               cwd: join(h.workspace, "apps/tool"),
@@ -246,52 +218,55 @@ describe("workspace lifecycle", () => {
       );
     }
 
-    it(
-      "when combining Go, Cargo, Bun, and language-neutral templates, then all workspaces coexist cleanly",
-      { tags: ["e2e", "cli", "workspace", "go", "cargo", "bun", "replay"] },
-      async () => {
-        // Arrange
-        const h = harness();
-        await h.pm(["init"]);
-        const managers = ["go", "bun", "cargo"] as const;
+    for (const order of [
+      ["bun", "cargo"],
+      ["cargo", "bun"],
+    ] as const) {
+      it(
+        `when combining Go with ${order.join(" then ")} and a language-neutral template, then all workspaces coexist cleanly`,
+        { tags: ["go", "cargo", "bun"] },
+        async () => {
+          // Arrange
+          const h = harness();
+          const managers = ["go", ...order] as const;
 
-        // Act
-        for (const manager of managers) {
-          const registry = await createNativeRegistry(
-            manager,
-            join(h.outputDir, `registry-${manager}`),
-          );
-          const libName = `${manager}-helper`;
-          await h.pm([
-            "generate",
-            `${registry}:lib-template`,
-            "--answer",
-            `name=${libName},library=${libName}`,
-          ]);
-          await h.pm([
-            "generate",
-            `${registry}:app-template`,
-            "--answer",
-            `name=${manager}-tool,library=${libName}`,
-          ]);
-        }
-        await h.pm(["install"]);
+          // Act
+          for (const manager of managers) {
+            const registry = await createNativeRegistry(
+              manager,
+              join(h.outputDir, `registry-${manager}`),
+            );
+            const libName = `${manager}-helper`;
+            await h.pm([
+              "generate",
+              `${registry}:lib-template`,
+              "--answer",
+              `name=${libName},library=${libName}`,
+            ]);
+            await h.pm([
+              "generate",
+              `${registry}:app-template`,
+              "--answer",
+              `name=${manager}-tool,library=${libName}`,
+            ]);
+          }
+          await h.pm(["install"]);
 
-        // Assert all three native ecosystems run cleanly
-        for (const manager of managers) {
-          const output = await h.pm(["run", `${manager}-tool:run`]);
-          expect(output.stdout.trim()).toBe("hello");
-        }
-        expect(await h.readFile("Cargo.toml")).toContain("libs/cargo-helper");
-        expect(await h.readFile("go.mod")).toContain("module example.com/workspace");
-        expect(await pathExists(join(h.workspace, "libs/go-helper/go.mod"))).toBe(false);
+          // Assert all three native ecosystems run cleanly
+          for (const manager of managers) {
+            const output = await h.pm(["run", `${manager}-tool:run`]);
+            expect(output.stdout.trim()).toBe("hello");
+          }
+          expect(await h.readFile("Cargo.toml")).toContain("libs/cargo-helper");
+          expect(await h.readFile("go.mod")).toContain("module example.com/workspace");
+          expect(await pathExists(join(h.workspace, "libs/go-helper/go.mod"))).toBe(false);
 
-        // Act: add a language-neutral template on top
-        const genericRegistry = join(h.outputDir, "registry-generic");
-        await mkdir(genericRegistry, { recursive: true });
-        await writeFile(
-          join(genericRegistry, "premise.yaml"),
-          `workspace:
+          // Act: add a language-neutral template on top
+          const genericRegistry = join(h.outputDir, "registry-generic");
+          await mkdir(genericRegistry, { recursive: true });
+          await writeFile(
+            join(genericRegistry, "premise.yaml"),
+            `workspace:
   name: generic
   kind: template-registry
   schema-version: "0.2"
@@ -313,93 +288,91 @@ template_registry:
           type: string
           populate: name
 `,
-          "utf8",
-        );
-        await copyScaffold(
-          join(TESTDATA_ROOT, "package-generation/generic"),
-          join(genericRegistry, "templates/notes"),
-        );
-        const originals = {
-          "go.mod": await h.readFile("go.mod"),
-          "Cargo.toml": await h.readFile("Cargo.toml"),
-          "package.json": await h.readFile("package.json"),
-        };
+            "utf8",
+          );
+          await copyScaffold(
+            join(TESTDATA_ROOT, "package-generation/generic"),
+            join(genericRegistry, "templates/notes"),
+          );
+          const originals = {
+            "go.mod": await h.readFile("go.mod"),
+            "Cargo.toml": await h.readFile("Cargo.toml"),
+            "package.json": await h.readFile("package.json"),
+          };
 
-        await h.pm(["generate", `${genericRegistry}:notes`, "--answer", "name=notes"]);
+          await h.pm(["generate", `${genericRegistry}:notes`, "--answer", "name=notes"]);
 
-        // Assert native manifests are untouched and generic project is created
-        for (const [file, before] of Object.entries(originals)) {
-          expect(await h.readFile(file)).toBe(before);
-        }
-        expect(await h.readFile("libs/notes/README.md")).toContain("generic fixture");
-        await h.writeManifest();
-      },
-    );
+          // Assert native manifests are untouched and generic project is created
+          for (const [file, before] of Object.entries(originals)) {
+            expect(await h.readFile(file)).toBe(before);
+          }
+          expect(await h.readFile("libs/notes/README.md")).toContain("generic fixture");
+          await h.writeManifest();
+        },
+      );
+    }
 
     it(
-      "when adding Pulumi infra (init --infra or infra setup twice), then infra/ and on-deploy.yml are created while preserving workflows and pins",
-      { tags: ["e2e", "cli", "smoke", "workspace", "pulumi", "replay"] },
+      "when combining Cargo and Bun registries with shared root files, then .gitignore, .gitattributes, and mise.toml merge cleanly",
+      { tags: ["cargo", "bun"] },
       async () => {
         // Arrange
         const h = harness();
-        await scaffoldProject(h, "app", false);
-        const onCommitBefore = await h.readFile(".github/workflows/on-commit.yml");
+        const cargoReg = await createSharedRootRegistry(h, "cargo");
+        const bunReg = await createSharedRootRegistry(h, "bun");
 
         // Act
-        await h.pm(["infra", "setup", "--pulumi-lang", "go"]);
+        await h.pm(["generate", `${cargoReg}:rust-cli`, "--answer", "name=orders-cli"]);
+        await h.pm(["generate", `${bunReg}:hono-api`, "--answer", "name=gateway-api"]);
 
-        // Assert infra scaffolded, on-deploy added, existing workflow & app preserved
-        await assertScaffoldWorkflows(h.workspace, true);
-        expect(await h.readFile("infra/Pulumi.yaml")).toContain("runtime: go");
-        expect(await h.readFile(".github/workflows/on-commit.yml")).toBe(onCommitBefore);
-        expect(await h.readFile("apps/example/main.go")).toContain('fmt.Println("example")');
-
-        // Act: run infra setup a second time
-        const miseBefore = await h.readFile("mise.toml");
-        await h.pm(["infra", "setup"]);
-
-        // Assert tool pins remain unchanged
-        expect(await h.readFile("mise.toml")).toBe(miseBefore);
+        // Assert shared root files merged while project files stayed isolated
+        const rootGitignore = await h.readFile(".gitignore");
+        expect(rootGitignore).toContain("/target");
+        expect(rootGitignore).toContain("node_modules/");
+        const rootAttrs = await h.readFile(".gitattributes");
+        expect(rootAttrs).toContain("*.rs text eol=lf");
+        expect(rootAttrs).toContain("*.ts text eol=lf");
+        const rootMise = await h.readFile("mise.toml");
+        expect(rootMise).toContain("CARGO_SHARED_ROOT");
+        expect(rootMise).toContain("BUN_SHARED_ROOT");
+        expect(await h.readFile("package.json")).not.toContain("gateway-api");
+        expect(await h.readFile("apps/orders-cli/Cargo.toml")).toContain('name = "orders-cli"');
+        expect(await h.readFile("apps/gateway-api/package.json")).toContain("gateway-api");
+        expect(await h.readFile("Cargo.toml")).toContain("apps/orders-cli");
+        await assertNoTempDirs(join(h.workspace, "apps"));
         await h.writeManifest();
       },
     );
 
-    it(
-      "when generating templates with binary assets and executable modes, then assets, permissions, and provenance are preserved",
-      { tags: ["e2e", "cli", "workspace", "replay"] },
-      async () => {
-        // Arrange
-        const h = harness();
-        const registry = join(h.outputDir, "registry-binary");
-        await mkdir(registry, { recursive: true });
-        await h.pm(["init", "--kind", "template-registry"], { cwd: registry });
-        await h.pm(["template", "init", "app"], { cwd: registry });
-        await chmod(join(registry, "templates/app/mise.toml"), 0o755);
-        const binaryBytes = Buffer.from([112, 114, 101, 109, 105, 115, 101, 0, 1]);
-        await writeFile(join(registry, "templates/app/asset.bin"), binaryBytes);
+    it("when generating templates with binary assets and executable modes, then assets, permissions, and provenance are preserved", async () => {
+      // Arrange
+      const h = harness();
+      const registry = join(h.outputDir, "registry-binary");
+      await mkdir(registry, { recursive: true });
+      await h.pm(["init", "--kind", "template-registry"], { cwd: registry });
+      await h.pm(["template", "init", "app"], { cwd: registry });
+      await chmod(join(registry, "templates/app/mise.toml"), 0o755);
+      const binaryBytes = Buffer.from([112, 114, 101, 109, 105, 115, 101, 0, 1]);
+      await writeFile(join(registry, "templates/app/asset.bin"), binaryBytes);
 
-        await h.pm(["init"]);
+      // Act
+      const result = await h.pm(["generate", `${registry}:app`, "--answer", "name=orders"]);
 
-        // Act
-        const result = await h.pm(["generate", `${registry}:app`, "--answer", "name=orders"]);
-
-        // Assert
-        expect(result.combined).toContain("Generated app orders");
-        const generatedMise = await h.readFile("apps/orders/mise.toml");
-        expect(generatedMise).toContain("orders: build");
-        expect(generatedMise).not.toContain("premise-app");
-        const copiedBinary = await readFile(join(h.workspace, "apps/orders/asset.bin"));
-        expect(Buffer.compare(copiedBinary, binaryBytes)).toBe(0);
-        const mode = (await stat(join(h.workspace, "apps/orders/mise.toml"))).mode & 0o777;
-        expect(mode).toBe(0o755);
-        expect(await h.readFile("premise.yaml")).toContain("path: apps/orders");
-        await h.writeManifest();
-      },
-    );
+      // Assert
+      expect(result.combined).toContain("Generated app orders");
+      const generatedMise = await h.readFile("apps/orders/mise.toml");
+      expect(generatedMise).toContain("orders: build");
+      expect(generatedMise).not.toContain("premise-app");
+      const copiedBinary = await readFile(join(h.workspace, "apps/orders/asset.bin"));
+      expect(Buffer.compare(copiedBinary, binaryBytes)).toBe(0);
+      expect((await stat(join(h.workspace, "apps/orders/mise.toml"))).mode & 0o777).toBe(0o755);
+      expect(await h.readFile("premise.yaml")).toContain("path: apps/orders");
+      await h.writeManifest();
+    });
 
     it(
-      "when root manifests conflict or candidate contracts fail, then live files, modes, and manifests roll back cleanly",
-      { tags: ["e2e", "cli", "workspace", "go", "cargo", "bun", "replay"] },
+      "when root manifests conflict, then live files, modes, and manifests roll back cleanly",
+      { tags: ["go", "cargo", "bun"] },
       async () => {
         // Arrange & Act & Assert for each package manager conflict
         const h = harness();
@@ -457,29 +430,110 @@ template_registry:
         await h.writeManifest();
       },
     );
+
+    it(
+      "when selective tool updates or final candidate contracts fail, then live state, locks, modes, and temp dirs roll back cleanly",
+      { tags: ["cargo", "bun"] },
+      async () => {
+        // Arrange: install a controlled mise shim that fails targeted validation steps
+        const h = harness();
+        const shimBin = await installMiseFailureShim(h);
+        const cases = [
+          {
+            name: "selective-tool-update",
+            manager: "bun" as const,
+            template: "hono-api",
+            project: "broken-api",
+            nativePath: "package.json",
+            nativeOriginal: '{"name":"client","private":true,"workspaces":["apps/*"]}',
+            extraRootMise: "\n[tools]\nbun = '1.1'\n",
+            failEnv: { MISE_FAIL_MISE_CONTAINS: "bun = '1.2'" },
+            wantError: "tool update bun 1.1 -> 1.2 failed",
+          },
+          {
+            name: "final-candidate-contract",
+            manager: "cargo" as const,
+            template: "rust-cli",
+            project: "broken-cli",
+            nativePath: "Cargo.toml",
+            nativeOriginal: "[workspace]\nmembers=[]\nresolver='2'\n",
+            extraRootMise: "",
+            failEnv: {
+              MISE_FAIL_DIRECTORY: "premise-candidate-validation-",
+              MISE_FAIL_ARGUMENT: "run e2e",
+            },
+            wantError: "generated candidate validation failed",
+          },
+        ];
+
+        for (const c of cases) {
+          const clientDir = join(h.workspace, c.name);
+          const tempDir = join(h.outputDir, `tmp-${c.name}`);
+          await mkdir(clientDir, { recursive: true });
+          await mkdir(tempDir, { recursive: true });
+          await h.pm(["init"], { cwd: clientDir });
+          if (c.extraRootMise) {
+            const miseBefore = await readFile(join(clientDir, "mise.toml"), "utf8");
+            await writeFile(join(clientDir, "mise.toml"), miseBefore + c.extraRootMise, "utf8");
+          }
+          await writeFile(join(clientDir, c.nativePath), c.nativeOriginal, { mode: 0o640 });
+          await chmod(join(clientDir, c.nativePath), 0o640);
+          const manifestBefore = await readFile(join(clientDir, "premise.yaml"), "utf8");
+          const registry = await createSharedRootRegistry(h, c.manager, `rollback-${c.name}`);
+
+          // Act
+          const failure = await h.pmFail(
+            ["generate", `${registry}:${c.template}`, "--answer", `name=${c.project}`],
+            {
+              cwd: clientDir,
+              env: {
+                PATH: `${shimBin}:${process.env.PATH ?? ""}`,
+                TMPDIR: tempDir,
+                ...c.failEnv,
+              },
+            },
+          );
+
+          // Assert
+          expect(failure.code).not.toBe(0);
+          expect(failure.combined).toContain(c.wantError);
+          expect(await pathExists(join(clientDir, "apps", c.project))).toBe(false);
+          expect(await readFile(join(clientDir, c.nativePath), "utf8")).toBe(c.nativeOriginal);
+          expect((await stat(join(clientDir, c.nativePath))).mode & 0o777).toBe(0o640);
+          expect(await pathExists(join(clientDir, "bun.lock"))).toBe(false);
+          expect(await pathExists(join(clientDir, "Cargo.lock"))).toBe(false);
+          expect(await readFile(join(clientDir, "premise.yaml"), "utf8")).toBe(manifestBefore);
+          await assertNoTempDirs(join(clientDir, "apps"), tempDir);
+        }
+        await h.writeManifest();
+      },
+    );
   });
 
   describe("given an existing standalone Cargo crate workspace", () => {
+    beforeEach(async () => {
+      const h = harness();
+      await h.pm(["init"]);
+      const oldDir = join(h.workspace, "libs/old-helper");
+      await copyScaffold(join(TESTDATA_ROOT, "package-generation/cargo/lib"), oldDir);
+      const oldCargo = (await readFile(join(oldDir, "Cargo.toml"), "utf8")).replaceAll(
+        "lib-template",
+        "old-helper",
+      );
+      await writeFile(join(oldDir, "Cargo.toml"), oldCargo, "utf8");
+      const manifest = (await h.readFile("premise.yaml")).replace(
+        "    projects: []",
+        "    package_managers:\n        - cargo\n    projects:\n        - name: old-helper\n          template: legacy:lib\n          path: libs/old-helper",
+      );
+      await h.writeFile("premise.yaml", manifest);
+    });
+
     it(
       "when generating a second crate, then root Cargo.toml includes both and offline tests pass",
-      { tags: ["e2e", "cli", "workspace", "cargo", "replay"] },
+      { tags: ["cargo"] },
       async () => {
         // Arrange
         const h = harness();
-        await h.pm(["init"]);
-        const oldDir = join(h.workspace, "libs/old-helper");
-        await copyScaffold(join(TESTDATA_ROOT, "package-generation/cargo/lib"), oldDir);
-        const oldCargo = (await readFile(join(oldDir, "Cargo.toml"), "utf8")).replaceAll(
-          "lib-template",
-          "old-helper",
-        );
-        await writeFile(join(oldDir, "Cargo.toml"), oldCargo, "utf8");
-
-        const manifest = (await h.readFile("premise.yaml")).replace(
-          "    projects: []",
-          "    package_managers:\n        - cargo\n    projects:\n        - name: old-helper\n          template: legacy:lib\n          path: libs/old-helper",
-        );
-        await h.writeFile("premise.yaml", manifest);
         const registry = await createNativeRegistry("cargo", join(h.outputDir, "registry-cargo"));
 
         // Act
@@ -502,7 +556,10 @@ template_registry:
         const rootCargo = await h.readFile("Cargo.toml");
         expect(rootCargo).toContain("libs/old-helper");
         expect(rootCargo).toContain("libs/new-helper");
-        await h.run("cargo", ["test", "--offline"], { cwd: oldDir, expectSuccess: true });
+        await h.run("cargo", ["test", "--offline"], {
+          cwd: join(h.workspace, "libs/old-helper"),
+          expectSuccess: true,
+        });
         await h.writeManifest();
       },
     );
@@ -511,7 +568,7 @@ template_registry:
   describe("given invalid CLI boundaries or manifests", () => {
     it(
       "when invoking pm init, install, generate, or template test on invalid inputs, then each fails with actionable errors",
-      { tags: ["e2e", "cli", "smoke", "workspace", "replay"] },
+      { tags: ["smoke"] },
       async () => {
         // Arrange
         const h = harness();
@@ -593,35 +650,44 @@ template_registry:
         expect(unknownRes.code).not.toBe(0);
         expect(unknownRes.combined).toContain("field unknown not found");
 
-        // Act & Assert: duplicate project names/paths rejected
-        const dupDir = join(h.workspace, "dup-projects");
-        await mkdir(dupDir, { recursive: true });
+        // Act & Assert: duplicate project name and duplicate project path rejected
+        const dupNameDir = join(h.workspace, "dup-project-name");
+        await mkdir(dupNameDir, { recursive: true });
         await writeFile(
-          join(dupDir, "premise.yaml"),
+          join(dupNameDir, "premise.yaml"),
           `workspace:
   name: example
   schema-version: "0.2"
-  providers:
-    ci: github
-    tools: mise
-    tasks: mise
-    infra: pulumi
-    versioning: svu
+  providers: {ci: github, tools: mise, tasks: mise, infra: pulumi, versioning: svu}
   projects:
-    - name: orders
-      template: .:app
-      path: apps/orders
-    - name: orders
-      template: .:app
-      path: apps/orders-v2
+    - {name: orders, template: ".:app", path: apps/orders}
+    - {name: orders, template: ".:app", path: apps/orders-v2}
 `,
           "utf8",
         );
-        const dupRes = await h.pmFail(["ci", "plan"], { cwd: dupDir });
-        expect(dupRes.code).not.toBe(0);
-        expect(dupRes.combined).toContain("duplicate project name");
+        const dupNameRes = await h.pmFail(["ci", "plan"], { cwd: dupNameDir });
+        expect(dupNameRes.code).not.toBe(0);
+        expect(dupNameRes.combined).toContain("duplicate project name");
 
-        // Act & Assert: template registry lifecycle (init, ls, test)
+        const dupPathDir = join(h.workspace, "dup-project-path");
+        await mkdir(dupPathDir, { recursive: true });
+        await writeFile(
+          join(dupPathDir, "premise.yaml"),
+          `workspace:
+  name: example
+  schema-version: "0.2"
+  providers: {ci: github, tools: mise, tasks: mise, infra: pulumi, versioning: svu}
+  projects:
+    - {name: orders, template: ".:app", path: apps/orders}
+    - {name: payments, template: ".:app", path: apps/orders}
+`,
+          "utf8",
+        );
+        const dupPathRes = await h.pmFail(["ci", "plan"], { cwd: dupPathDir });
+        expect(dupPathRes.code).not.toBe(0);
+        expect(dupPathRes.combined).toContain("duplicate project path");
+
+        // Act & Assert: template registry lifecycle (init, ls, test) & multi-failure aggregation
         const regDir = join(h.workspace, "registry");
         await mkdir(regDir, { recursive: true });
         await h.pm(["init", "--kind", "template-registry"], { cwd: regDir });
@@ -630,8 +696,228 @@ template_registry:
         const ls = await h.pm(["template", "ls"], { cwd: regDir });
         expect(ls.stdout).toBe("app\nlib\n");
         await h.pm(["template", "test"], { cwd: regDir });
+
+        const failBin = join(h.outputDir, "fail-mise-bin");
+        await mkdir(failBin, { recursive: true });
+        await writeFile(join(failBin, "mise"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+        await chmod(join(failBin, "mise"), 0o755);
+        const contractFail = await h.pmFail(["template", "test"], {
+          cwd: regDir,
+          env: { PATH: `${failBin}:${process.env.PATH ?? ""}` },
+        });
+        expect(contractFail.code).not.toBe(0);
+        for (const expected of [
+          "template app task build failed",
+          "template app task e2e failed",
+          "template lib task publish:rc failed",
+          "template lib task publish failed",
+        ]) {
+          expect(contractFail.combined).toContain(expected);
+        }
         await h.writeManifest();
       },
     );
   });
 });
+
+// Private helpers ------------------------------------------------------------
+
+async function scaffoldProject(
+  h: PremiseHarness,
+  kind: "lib" | "app",
+  infrastructure: boolean,
+): Promise<{ registry: string; projectDir: string }> {
+  const registry = join(h.outputDir, "registry");
+  await mkdir(registry, { recursive: true });
+  await h.pm(["init", "--kind", "template-registry"], { cwd: registry });
+  await h.pm(["template", "init", kind], { cwd: registry });
+  await copyScaffold(join(TESTDATA_ROOT, "scaffold", kind), join(registry, "templates", kind));
+
+  const initArgs = infrastructure ? ["init", "--infra", "--pulumi-lang", "go"] : ["init"];
+  await h.pm(initArgs);
+  await h.pm(["generate", `${registry}:${kind}`, "--answer", "name=example"]);
+  return {
+    registry,
+    projectDir: join(h.workspace, kind === "lib" ? "libs" : "apps", "example"),
+  };
+}
+
+async function assertScaffoldWorkflows(workspace: string, infrastructure: boolean): Promise<void> {
+  for (const name of ["on-commit.yml", "on-merge.yml"]) {
+    const content = await readFile(join(workspace, ".github/workflows", name), "utf8");
+    expect(content).toContain("cloudvoyant/premise@v0\n");
+  }
+  const onCommit = await readFile(join(workspace, ".github/workflows/on-commit.yml"), "utf8");
+  expect(onCommit).toContain(
+    "if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository\n",
+  );
+
+  const deployPath = join(workspace, ".github/workflows/on-deploy.yml");
+  if (infrastructure) {
+    const deploy = await readFile(deployPath, "utf8");
+    expect(deploy).toContain("workflow_dispatch:");
+  } else {
+    expect(await pathExists(deployPath)).toBe(false);
+  }
+}
+
+async function assertProjectContracts(projectDir: string, isApp: boolean): Promise<void> {
+  const content = await readFile(join(projectDir, "mise.toml"), "utf8");
+  for (const task of COMMON_CONTRACTS) {
+    const escaped = task.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    expect(content).toMatch(new RegExp(`\\[tasks\\.("?${escaped}"?)\\]`));
+  }
+  for (const task of APP_ONLY_CONTRACTS) {
+    const present = new RegExp(`\\[tasks\\.("?${task}"?)\\]`).test(content);
+    expect(present).toBe(isApp);
+  }
+}
+
+async function assertNoTempDirs(...roots: string[]): Promise<void> {
+  const forbidden = [
+    ".premise-stage-",
+    "premise-selected-",
+    "premise-tool-preflight-",
+    "premise-candidate-validation-",
+  ];
+  for (const root of roots) {
+    if (!(await pathExists(root))) continue;
+    const entries = await readdir(root);
+    for (const name of entries) {
+      for (const prefix of forbidden) {
+        expect(name).not.toContain(prefix);
+      }
+    }
+  }
+}
+
+async function installMiseFailureShim(h: PremiseHarness): Promise<string> {
+  const shimBin = join(h.outputDir, "mise-failure-shim");
+  await mkdir(shimBin, { recursive: true });
+  const script = `#!/bin/sh
+if [ -n "\${MISE_FAIL_DIRECTORY:-}" ]; then
+  case "$PWD" in
+    *"$MISE_FAIL_DIRECTORY"*)
+      if [ -z "\${MISE_FAIL_ARGUMENT:-}" ] || [ "$*" = "$MISE_FAIL_ARGUMENT" ]; then exit 7; fi
+      ;;
+  esac
+fi
+if [ -n "\${MISE_FAIL_MISE_CONTAINS:-}" ] && [ -f mise.toml ] && grep -F "$MISE_FAIL_MISE_CONTAINS" mise.toml >/dev/null; then
+  exit 8
+fi
+exit 0
+`;
+  await writeFile(join(shimBin, "mise"), script, { mode: 0o755 });
+  await chmod(join(shimBin, "mise"), 0o755);
+  return shimBin;
+}
+
+async function createSharedRootRegistry(
+  h: PremiseHarness,
+  manager: "cargo" | "bun",
+  label = `shared-${manager}`,
+): Promise<string> {
+  const root = join(h.outputDir, label);
+  await mkdir(root, { recursive: true });
+  if (manager === "cargo") {
+    const tpl = join(root, "templates/rust-cli");
+    await mkdir(join(tpl, "src"), { recursive: true });
+    await writeFile(
+      join(root, "premise.yaml"),
+      `workspace:
+  name: cargo
+  kind: template-registry
+  schema-version: "0.2"
+  package_managers: [cargo]
+  providers: {ci: github, tools: mise, tasks: mise, infra: pulumi, versioning: svu}
+  projects: []
+template_registry:
+  workspace_files: [".gitignore", ".gitattributes", "mise.toml"]
+  templates:
+    - name: rust-cli
+      kind: app
+      path: templates/rust-cli
+      version: 0.1.0
+      questions: [{prompt: "CLI name:", type: string, populate: name}]
+      substitutions: {rust-cli: name}
+`,
+      "utf8",
+    );
+    await writeFile(join(root, ".gitignore"), "# shared rust\n/target\n", "utf8");
+    await writeFile(join(root, ".gitattributes"), "*.rs text eol=lf\n", "utf8");
+    await writeFile(
+      join(root, "mise.toml"),
+      "[tools]\nrust = '1.88.0'\n\n[env]\nCARGO_SHARED_ROOT = 'cargo'\n",
+      "utf8",
+    );
+    const appMise = await readFile(
+      join(TESTDATA_ROOT, "package-generation/cargo/app/mise.toml"),
+      "utf8",
+    );
+    await writeFile(join(tpl, "mise.toml"), `${appMise}\n[env]\nAPP_KIND = 'rust-cli'\n`, "utf8");
+    await writeFile(
+      join(tpl, "Cargo.toml"),
+      '[package]\nname = "rust-cli"\nversion = "0.1.0"\nedition = "2021"\n',
+      "utf8",
+    );
+    await writeFile(join(tpl, "src/main.rs"), 'fn main() { println!("rust-cli"); }\n', "utf8");
+    return root;
+  }
+
+  const tpl = join(root, "templates/hono-api");
+  await mkdir(join(tpl, "src"), { recursive: true });
+  await writeFile(
+    join(root, "premise.yaml"),
+    `workspace:
+  name: bun
+  kind: template-registry
+  schema-version: "0.2"
+  package_managers: [bun]
+  providers: {ci: github, tools: mise, tasks: mise, infra: pulumi, versioning: svu}
+  projects: []
+template_registry:
+  workspace_files: [".gitignore", ".gitattributes", "mise.toml", "package.json"]
+  templates:
+    - name: hono-api
+      kind: app
+      path: templates/hono-api
+      version: 0.2.0
+      questions: [{prompt: "API name:", type: string, populate: name}]
+      substitutions: {hono-api: name}
+`,
+    "utf8",
+  );
+  await writeFile(join(root, ".gitignore"), "# shared bun\nnode_modules/\n", "utf8");
+  await writeFile(join(root, ".gitattributes"), "*.ts text eol=lf\n", "utf8");
+  await writeFile(
+    join(root, "package.json"),
+    '{"private":true,"workspaces":["apps/*","libs/*"]}\n',
+    "utf8",
+  );
+  await writeFile(
+    join(root, "mise.toml"),
+    "[tools]\nbun = '1.2'\n\n[env]\nBUN_SHARED_ROOT = 'bun'\n",
+    "utf8",
+  );
+  const appMise = await readFile(
+    join(TESTDATA_ROOT, "package-generation/bun/app/mise.toml"),
+    "utf8",
+  );
+  await writeFile(
+    join(tpl, "mise.toml"),
+    `${appMise.replace("bun = '1.4.2'", "bun = '1.1'")}\n[env]\nAPP_KIND = 'hono-api'\n`,
+    "utf8",
+  );
+  await writeFile(
+    join(tpl, "package.json"),
+    '{"name":"hono-api","scripts":{"build":"bun build src/index.ts"}}\n',
+    "utf8",
+  );
+  await writeFile(join(tpl, "src/index.ts"), "export const appName = 'hono-api';\n", "utf8");
+  await writeFile(
+    join(tpl, "src/index.test.ts"),
+    "import { expect, test } from 'bun:test';\nimport { appName } from './index';\ntest('uses generated name', () => expect(appName).toBe('hono-api'));\n",
+    "utf8",
+  );
+  return root;
+}

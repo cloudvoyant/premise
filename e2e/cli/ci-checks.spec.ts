@@ -1,57 +1,35 @@
+/**
+ * @module-tag e2e
+ * @module-tag cli
+ * @module-tag ci
+ */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { usePremiseHarness } from "../common/fixtures.js";
 import { TESTDATA_ROOT, type PremiseHarness } from "../common/premise-harness.js";
 import { copyScaffold, pathExists } from "../common/test-utils.js";
 
-function hostCIPlatform(): string {
-  if (process.platform === "darwin") return "macos";
-  if (process.platform === "win32") return "windows";
-  return "linux";
-}
+// Tests ----------------------------------------------------------------------
 
-async function setupCIWorkspace(h: PremiseHarness): Promise<void> {
-  await copyScaffold(join(TESTDATA_ROOT, "pulumi/client"), h.workspace);
-  await h.writeFile(
-    "mise.toml",
-    "monorepo_root = true\n[monorepo]\nconfig_roots = ['apps/*', 'libs/*']\n",
-  );
-  const manifestPath = join(h.workspace, "premise.yaml");
-  const manifest = await readFile(manifestPath, "utf8");
-  const platform = hostCIPlatform();
-  const updated = manifest.includes("release_platforms:")
-    ? manifest.replace(/release_platforms:.*$/m, `release_platforms: [${platform}]`)
-    : manifest.replace(
-        "path: apps/web",
-        `path: apps/web\n      ci:\n        release_platforms:\n          - ${platform}`,
-      );
-  await writeFile(manifestPath, updated, "utf8");
-  await h.initGit("chore: initial project", "v1.0.0");
-}
-
-async function commitChange(h: PremiseHarness, message: string): Promise<void> {
-  await h.writeFile("CHANGE.txt", `${message}\n`);
-  await h.git(["add", "CHANGE.txt"]);
-  await h.git(["commit", "--quiet", "-m", message]);
-}
-
-describe("CI checks and staging", () => {
+describe("CI checks and staging", { tags: ["e2e", "cli", "ci", "replay"] }, () => {
   const harness = usePremiseHarness({ env: { PM_RELEASE: "A" } });
 
   describe("given a git workspace at v1.0.0 on a feature branch", () => {
+    beforeEach(async () => {
+      await setupCIWorkspace(harness());
+    });
+
     it(
       "when checks pass on a [publish-rc] commit, then tasks run in order, migrations schedule, and RC artifacts stage locally",
-      { tags: ["e2e", "cli", "smoke", "ci", "replay"] },
+      { tags: ["smoke"] },
       async () => {
         // Arrange
         const h = harness();
-        await setupCIWorkspace(h);
         await h.git(["switch", "-c", "feature/example"]);
         await commitChange(h, "feat: add static page [publish-rc]");
 
-        const versionRes = await h.pm(["version", "rc", "--identifier", "1"]);
-        const version = versionRes.stdout.trim();
+        const version = (await h.pm(["version", "rc", "--identifier", "1"])).stdout.trim();
         const artifactsDir = join(h.outputDir, "artifacts-rc");
         const eventsFile = join(h.outputDir, "events.log");
         await mkdir(artifactsDir, { recursive: true });
@@ -102,167 +80,151 @@ describe("CI checks and staging", () => {
       },
     );
 
-    it(
-      "when a check task fails, then execution halts before release:build with no staged artifacts",
-      { tags: ["e2e", "cli", "ci", "replay"] },
-      async () => {
-        // Arrange
-        const h = harness();
-        await setupCIWorkspace(h);
-        await h.git(["switch", "-c", "feature/failing-check"]);
-        await commitChange(h, "feat: broken test [publish-rc]");
-        const version = (await h.pm(["version", "rc", "--identifier", "1"])).stdout.trim();
-        const failedArtifacts = join(h.outputDir, "artifacts-failed-check");
-        await mkdir(failedArtifacts, { recursive: true });
-        const platform = hostCIPlatform();
+    it("when a check task fails, then execution halts before release:build with no staged artifacts", async () => {
+      // Arrange
+      const h = harness();
+      await h.git(["switch", "-c", "feature/failing-check"]);
+      await commitChange(h, "feat: broken test [publish-rc]");
+      const version = (await h.pm(["version", "rc", "--identifier", "1"])).stdout.trim();
+      const failedArtifacts = join(h.outputDir, "artifacts-failed-check");
+      await mkdir(failedArtifacts, { recursive: true });
 
-        // Act
-        const failure = await h.pmFail(
-          [
-            "ci",
-            "flow",
-            "on-commit",
-            "--release",
-            "none",
-            "--project",
-            "web",
-            "--platform",
-            platform,
-            "--channel",
-            "rc",
-            "--version",
-            version,
-            "--output-dir",
-            failedArtifacts,
-          ],
-          {
-            env: {
-              PREMISE_TEST_FAIL_TASK: "test",
-              PREMISE_ARTIFACT_DIR: failedArtifacts,
-              PREMISE_RELEASE_CHANNEL: "rc",
-              RELEASE_VERSION: version.replace(/^v/, ""),
-            },
+      // Act
+      const failure = await h.pmFail(
+        [
+          "ci",
+          "flow",
+          "on-commit",
+          "--release",
+          "none",
+          "--project",
+          "web",
+          "--platform",
+          hostCIPlatform(),
+          "--channel",
+          "rc",
+          "--version",
+          version,
+          "--output-dir",
+          failedArtifacts,
+        ],
+        {
+          env: {
+            PREMISE_TEST_FAIL_TASK: "test",
+            PREMISE_ARTIFACT_DIR: failedArtifacts,
+            PREMISE_RELEASE_CHANNEL: "rc",
+            RELEASE_VERSION: version.replace(/^v/, ""),
           },
-        );
+        },
+      );
 
-        // Assert
-        expect(failure.code).not.toBe(0);
-        expect(failure.combined).toContain("requested test failure");
-        expect(await pathExists(join(failedArtifacts, "index.html"))).toBe(false);
-        await h.writeManifest();
-      },
-    );
+      // Assert
+      expect(failure.code).not.toBe(0);
+      expect(failure.combined).toContain("requested test failure");
+      expect(await pathExists(join(failedArtifacts, "index.html"))).toBe(false);
+      await h.writeManifest();
+    });
 
-    it(
-      "when release:build fails, then execution fails without creating git tags",
-      { tags: ["e2e", "cli", "ci", "replay"] },
-      async () => {
-        // Arrange
-        const h = harness();
-        await setupCIWorkspace(h);
-        await h.git(["switch", "-c", "feature/failing-stage"]);
-        await commitChange(h, "feat: broken stage [publish-rc]");
-        const version = (await h.pm(["version", "rc", "--identifier", "1"])).stdout.trim();
-        const failedArtifacts = join(h.outputDir, "artifacts-failed-stage");
-        await mkdir(failedArtifacts, { recursive: true });
-        const platform = hostCIPlatform();
+    it("when release:build fails, then execution fails without creating git tags", async () => {
+      // Arrange
+      const h = harness();
+      await h.git(["switch", "-c", "feature/failing-stage"]);
+      await commitChange(h, "feat: broken stage [publish-rc]");
+      const version = (await h.pm(["version", "rc", "--identifier", "1"])).stdout.trim();
+      const failedArtifacts = join(h.outputDir, "artifacts-failed-stage");
+      await mkdir(failedArtifacts, { recursive: true });
 
-        // Act
-        const failure = await h.pmFail(
-          [
-            "ci",
-            "flow",
-            "on-commit",
-            "--release",
-            "none",
-            "--project",
-            "web",
-            "--platform",
-            platform,
-            "--channel",
-            "rc",
-            "--version",
-            version,
-            "--output-dir",
-            failedArtifacts,
-          ],
-          {
-            env: {
-              PREMISE_TEST_FAIL_TASK: "release:build",
-              PREMISE_ARTIFACT_DIR: failedArtifacts,
-              PREMISE_RELEASE_CHANNEL: "rc",
-              RELEASE_VERSION: version.replace(/^v/, ""),
-            },
+      // Act
+      const failure = await h.pmFail(
+        [
+          "ci",
+          "flow",
+          "on-commit",
+          "--release",
+          "none",
+          "--project",
+          "web",
+          "--platform",
+          hostCIPlatform(),
+          "--channel",
+          "rc",
+          "--version",
+          version,
+          "--output-dir",
+          failedArtifacts,
+        ],
+        {
+          env: {
+            PREMISE_TEST_FAIL_TASK: "release:build",
+            PREMISE_ARTIFACT_DIR: failedArtifacts,
+            PREMISE_RELEASE_CHANNEL: "rc",
+            RELEASE_VERSION: version.replace(/^v/, ""),
           },
-        );
+        },
+      );
 
-        // Assert
-        expect(failure.code).not.toBe(0);
-        expect(failure.combined).toContain("stage native artifacts");
-        const tags = (await h.git(["tag", "--list"])).stdout.trim();
-        expect(tags).toBe("v1.0.0");
-        await h.writeManifest();
-      },
-    );
+      // Assert
+      expect(failure.code).not.toBe(0);
+      expect(failure.combined).toContain("stage native artifacts");
+      expect((await h.git(["tag", "--list"])).stdout.trim()).toBe("v1.0.0");
+      await h.writeManifest();
+    });
 
-    it(
-      "when merging to main, then conventional commits bump to v1.1.0 and stage stable artifacts",
-      { tags: ["e2e", "cli", "ci", "replay"] },
-      async () => {
-        // Arrange
-        const h = harness();
-        await setupCIWorkspace(h);
-        await commitChange(h, "feat: add stable page");
-        const version = (await h.pm(["version", "next"])).stdout.trim();
-        const artifactsDir = join(h.outputDir, "artifacts-stable");
-        await mkdir(artifactsDir, { recursive: true });
-        const platform = hostCIPlatform();
+    it("when merging to main, then conventional commits bump to v1.1.0 and stage stable artifacts", async () => {
+      // Arrange
+      const h = harness();
+      await commitChange(h, "feat: add stable page");
+      const version = (await h.pm(["version", "next"])).stdout.trim();
+      const artifactsDir = join(h.outputDir, "artifacts-stable");
+      await mkdir(artifactsDir, { recursive: true });
 
-        // Act
-        await h.pm(
-          [
-            "ci",
-            "flow",
-            "on-merge",
-            "--release",
-            "none",
-            "--project",
-            "web",
-            "--platform",
-            platform,
-            "--channel",
-            "stable",
-            "--version",
-            version,
-            "--output-dir",
-            artifactsDir,
-          ],
-          {
-            env: {
-              PREMISE_ARTIFACT_DIR: artifactsDir,
-              PREMISE_RELEASE_CHANNEL: "stable",
-              RELEASE_VERSION: version.replace(/^v/, ""),
-            },
+      // Act
+      await h.pm(
+        [
+          "ci",
+          "flow",
+          "on-merge",
+          "--release",
+          "none",
+          "--project",
+          "web",
+          "--platform",
+          hostCIPlatform(),
+          "--channel",
+          "stable",
+          "--version",
+          version,
+          "--output-dir",
+          artifactsDir,
+        ],
+        {
+          env: {
+            PREMISE_ARTIFACT_DIR: artifactsDir,
+            PREMISE_RELEASE_CHANNEL: "stable",
+            RELEASE_VERSION: version.replace(/^v/, ""),
           },
-        );
+        },
+      );
 
-        // Assert
-        expect(version).toBe("v1.1.0");
-        expect(await readFile(join(artifactsDir, "index.html"), "utf8")).toContain("Release A");
-        expect(await readFile(join(artifactsDir, "version.txt"), "utf8")).toBe("stable:1.1.0\n");
-        await h.writeManifest();
-      },
-    );
+      // Assert
+      expect(version).toBe("v1.1.0");
+      expect(await readFile(join(artifactsDir, "index.html"), "utf8")).toContain("Release A");
+      expect(await readFile(join(artifactsDir, "version.txt"), "utf8")).toBe("stable:1.1.0\n");
+      await h.writeManifest();
+    });
   });
 
   describe("given a multi-platform workspace (linux, macos, windows)", () => {
+    beforeEach(async () => {
+      await setupCIWorkspace(harness());
+    });
+
     it.skip(
       "when planning CI, then mode=matrix emits per-platform rows and generated workflows match canonical assets [CLO-236]",
-      { tags: ["e2e", "cli", "ci", "known-bug", "replay"] },
+      { tags: ["known-bug"] },
       async () => {
         // Tracked by CLO-236: template registries have workflow & action-version drift.
         const h = harness();
-        await setupCIWorkspace(h);
         const manifestPath = join(h.workspace, "premise.yaml");
         const updated = (await readFile(manifestPath, "utf8")).replace(
           /release_platforms:[\s\S]*?(?=\n\w|\n\s{2,4}\w+:|$)/,
@@ -279,3 +241,36 @@ describe("CI checks and staging", () => {
     );
   });
 });
+
+// Private helpers ------------------------------------------------------------
+
+function hostCIPlatform(): string {
+  if (process.platform === "darwin") return "macos";
+  if (process.platform === "win32") return "windows";
+  return "linux";
+}
+
+async function setupCIWorkspace(h: PremiseHarness): Promise<void> {
+  await copyScaffold(join(TESTDATA_ROOT, "pulumi/client"), h.workspace);
+  await h.writeFile(
+    "mise.toml",
+    "monorepo_root = true\n[monorepo]\nconfig_roots = ['apps/*', 'libs/*']\n",
+  );
+  const manifestPath = join(h.workspace, "premise.yaml");
+  const manifest = await readFile(manifestPath, "utf8");
+  const platform = hostCIPlatform();
+  const updated = manifest.includes("release_platforms:")
+    ? manifest.replace(/release_platforms:.*$/m, `release_platforms: [${platform}]`)
+    : manifest.replace(
+        "path: apps/web",
+        `path: apps/web\n      ci:\n        release_platforms:\n          - ${platform}`,
+      );
+  await writeFile(manifestPath, updated, "utf8");
+  await h.initGit("chore: initial project", "v1.0.0");
+}
+
+async function commitChange(h: PremiseHarness, message: string): Promise<void> {
+  await h.writeFile("CHANGE.txt", `${message}\n`);
+  await h.git(["add", "CHANGE.txt"]);
+  await h.git(["commit", "--quiet", "-m", message]);
+}
