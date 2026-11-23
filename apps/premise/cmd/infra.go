@@ -37,14 +37,14 @@ func InfraSetupCommand(scaffold core.WorkspaceScaffold) *cobra.Command {
 	var setup core.InfrastructureSetup
 	command := &cobra.Command{
 		Use:   "setup",
-		Short: "Add infrastructure, or prepare an existing program with --env",
+		Short: "Add infrastructure, or prepare an existing program with --env or --shared",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			root, err := premiseRoot()
 			if err != nil {
 				return err
 			}
-			if cmd.Flags().Changed("env") {
+			if cmd.Flags().Changed("env") || cmd.Flags().Changed("shared") {
 				environment, _ := cmd.Flags().GetString("env")
 				branch, _ := cmd.Flags().GetString("branch")
 				shared, _ := cmd.Flags().GetBool("shared")
@@ -328,6 +328,7 @@ func InfraExistsCommand() *cobra.Command {
 	}
 	command.Flags().StringVar(&options.Environment, "env", "", "Environment: dev, stage, prod, or preview")
 	command.Flags().StringVar(&options.Branch, "branch", "", "Preview branch identity")
+	command.Flags().BoolVar(&options.Shared, "shared", false, "Select only shared infrastructure")
 	command.Flags().StringVar(&options.Backend, "backend", "", "Named saved backend override")
 	return command
 }

@@ -32,6 +32,8 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
       native: ${{ steps.plan.outputs.native }}
       has_infra: ${{ steps.plan.outputs.has_infra }}
+      has_env_infra: ${{ steps.plan.outputs.has_env_infra }}
+      has_shared_infra: ${{ steps.plan.outputs.has_shared_infra }}
       version: ${{ steps.plan.outputs.release_version }}
     steps:
       - uses: actions/checkout@v6
@@ -88,7 +90,7 @@ jobs:
 
   matrix:
     needs: plan
-    if: github.event_name == 'push' && needs.plan.outputs.mode != 'single'
+    if: github.event_name == 'push' && needs.plan.outputs.mode == 'matrix'
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
@@ -130,7 +132,7 @@ jobs:
       needs.plan.result == 'success' &&
       ((needs.plan.outputs.mode == 'single' &&
         needs.single.result == 'success') ||
-       (needs.plan.outputs.mode != 'single' &&
+       (needs.plan.outputs.mode == 'matrix' &&
         needs.matrix.result == 'success'))
     runs-on: ubuntu-22.04
     permissions:
@@ -213,7 +215,7 @@ jobs:
       contents: read
       id-token: write
     if: >-
-      needs.plan.outputs.has_infra == 'true' &&
+      needs.plan.outputs.has_env_infra == 'true' &&
       ((github.event_name == 'pull_request' && github.event.pull_request.merged == true &&
         github.event.pull_request.head.repo.full_name == github.repository) ||
        (github.event_name == 'delete' && github.event.ref_type == 'branch' && github.event.ref != 'main'))
@@ -238,12 +240,44 @@ jobs:
           branch: ${{ github.event.pull_request.head.ref || github.event.ref }}
           install-premise: skip
 
+  deploy-shared:
+    needs: [plan, single, matrix, publish-release, publish-packages]
+    if: >-
+      always() && !cancelled() && needs.plan.outputs.has_shared_infra == 'true' &&
+      github.event_name == 'push' && needs.plan.result == 'success' &&
+      (needs.plan.outputs.mode == 'none' || needs.single.result == 'success' || needs.matrix.result == 'success') &&
+      needs.single.result != 'failure' && needs.matrix.result != 'failure' &&
+      needs.publish-release.result != 'failure' && needs.publish-release.result != 'cancelled' &&
+      needs.publish-packages.result != 'failure' && needs.publish-packages.result != 'cancelled'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-shared-persistent
+      cancel-in-progress: false
+    environment: shared
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./
+        with:
+          setup-only: true
+          install-premise: build
+      - name: Authenticate infrastructure providers
+        run: mise exec -- pm infra auth --ci --env-file "$GITHUB_ENV"
+      - name: Prepare shared infrastructure
+        run: pm infra setup --shared
+      - name: Preview shared infrastructure
+        run: pm infra plan --shared
+      - name: Apply shared infrastructure
+        run: pm infra apply --shared --yes
+
   deploy-dev:
     needs: [plan, single, matrix, publish-release, publish-packages]
     if: >-
-      always() && !cancelled() && needs.plan.outputs.has_infra == 'true' &&
+      always() && !cancelled() && needs.plan.outputs.has_env_infra == 'true' &&
       github.event_name == 'push' && needs.plan.result == 'success' &&
-      (needs.single.result == 'success' || needs.matrix.result == 'success') &&
+      (needs.plan.outputs.mode == 'none' || needs.single.result == 'success' || needs.matrix.result == 'success') &&
       needs.single.result != 'failure' && needs.matrix.result != 'failure' &&
       needs.publish-release.result != 'failure' && needs.publish-release.result != 'cancelled' &&
       needs.publish-packages.result != 'failure' && needs.publish-packages.result != 'cancelled'

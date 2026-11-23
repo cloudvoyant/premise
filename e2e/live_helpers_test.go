@@ -63,7 +63,7 @@ func configureLiveClient(t *testing.T, binary, root string) *liveClient {
 		"primary": {URL: backend}, "alternate": {URL: backend + "/alternate"},
 	}
 	manifest.Workspace.Infra.Environments = map[string]core.InfraEnvironment{}
-	for _, environment := range []string{"dev", "stage", "prod", "preview"} {
+	for _, environment := range []string{"shared", "dev", "stage", "prod", "preview"} {
 		selected := "primary"
 		if environment == "prod" || environment == "preview" {
 			selected = "alternate"
@@ -83,6 +83,9 @@ func configureLiveClient(t *testing.T, binary, root string) *liveClient {
 }
 
 func (client *liveClient) scope(environment string) []string {
+	if environment == "shared" {
+		return []string{"--shared"}
+	}
 	args := []string{"--env", environment}
 	if environment == "preview" {
 		args = append(args, "--branch", client.branch)
@@ -150,7 +153,7 @@ func (client *liveClient) assertSavedBackend(t *testing.T, environment string) {
 // cleanup is a safety net. Scenario assertions exercise preview deletion explicitly.
 func (client *liveClient) cleanup(t *testing.T) {
 	t.Helper()
-	for _, environment := range []string{"dev", "stage", "prod", "preview"} {
+	for _, environment := range []string{"dev", "stage", "prod", "preview", "shared"} {
 		if !client.touched[environment] {
 			continue
 		}
@@ -169,7 +172,11 @@ func (client *liveClient) cleanup(t *testing.T) {
 		if environment != "preview" {
 			// Only test-owned persistent stacks bypass the CLI's human confirmation.
 			command = exec.CommandContext(ctx, "mise", "exec", "--", "pulumi", "destroy", "--stack", environment, "--yes", "--non-interactive")
-			command.Dir = filepath.Join(client.root, "infra")
+			infraDir := filepath.Join(client.root, "infra/env")
+			if environment == "shared" {
+				infraDir = filepath.Join(client.root, "infra/shared")
+			}
+			command.Dir = infraDir
 			selected := client.manifest.Workspace.Infra.Environments[environment].Backend
 			command.Env = append(os.Environ(), "MISE_TRUSTED_CONFIG_PATHS="+client.root, "PULUMI_BACKEND_URL="+client.manifest.Workspace.Infra.Backends[selected].URL)
 		}

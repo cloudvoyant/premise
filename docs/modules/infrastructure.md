@@ -9,12 +9,10 @@ Premise runs client-owned Pulumi code and application tasks in a defined order. 
 ```sh
 pm init --infra --pulumi-lang go
 pm init --infra --pulumi-lang typescript --pulumi-version 3.268.0
-# Adopt an existing infra/Pulumi.yaml without changing its source files.
-pm init --infra
 mise run infra:install
 ```
 
-Interactive initialization asks whether you need infrastructure and which language you use. A new program uses an official empty Pulumi starter. Initialization creates no resources or stack. Existing programs retain their runtime and files. A conflicting language stops initialization before writes.
+Interactive initialization asks whether you need infrastructure and which language you use. New workspaces scaffold two official empty Pulumi starters: `infra/env` (`<workspace>`) for environment stacks and `infra/shared` (`<workspace>-shared`) for shared resources. Initialization creates no cloud resources or stacks. If anything already exists under `infra/`, initialization and `pm infra setup` stop without modifying files.
 
 Root `mise.toml` owns the Pulumi version. Initialization preserves existing tool pins unless you pass an explicit version. Change `[tools].pulumi` to select another version later. Premise runs every Pulumi command through `mise exec`. The action uses the same workspace configuration.
 
@@ -23,12 +21,18 @@ client/
 ├── premise.yaml
 ├── mise.toml                  Pulumi pin, runtime tools, infra:install
 ├── infra/
-│   ├── Pulumi.yaml            Project name and runtime: go
-│   ├── go.mod
-│   ├── go.sum
-│   ├── main.go                Connect resources and export task-facing values
-│   ├── database.go            Client resource declarations
-│   └── storage.go             Shared by every environment stack
+│   ├── shared/
+│   │   ├── Pulumi.yaml        Project <workspace>-shared, stack: shared
+│   │   ├── go.mod
+│   │   └── main.go            Shared clusters, IAM, registries, SaaS projects
+│   ├── env/
+│   │   ├── Pulumi.yaml        Project <workspace>, stacks: dev, stage, prod, preview-*
+│   │   ├── go.mod
+│   │   ├── go.sum
+│   │   ├── main.go            Connect resources and export task-facing values
+│   │   ├── database.go        Client resource declarations
+│   │   └── storage.go         Shared by every environment stack
+│   └── components/            Optional repo-local Pulumi components (no Pulumi.yaml)
 └── apps/
     ├── api/mise.toml          migrate, health, rollback
     ├── worker/mise.toml       migrate, health, rollback
@@ -89,12 +93,15 @@ Add this configuration under `workspace` in `premise.yaml`:
 
 ```yaml
 infra:
-  directory: infra
+  directory: infra/env
+  shared_directory: infra/shared
   backend: team
   backends:
     team:
       url: gs://existing-state-bucket/product
   environments:
+    shared:
+      config: {gcp:project: my-project}
     dev:
       config: {gcp:project: my-project}
     stage:
@@ -141,7 +148,7 @@ pm infra destroy --env preview --branch feature/login
 
 If you omit `--branch`, Premise reads the current feature branch. The branch produces a stable stack name with a hash. For `feature/login`, the stack is `preview-login-<hash>` and `premise:environmentName` is `login`. Premise removes the first branch type prefix and normalizes the remainder to a slug. Use the environment name for resource suffixes such as `storage-dev`, `storage-prod`, or `storage-login`. Keep provider auto-naming when names must be globally unique; the resulting bucket name also includes a random suffix. Stack hashes still use the full branch name, so `feature/login` and `fix/login` keep separate state. No new source code or environment declaration is required. Preview destruction removes that stack and can run again safely. Persistent stack destruction requires interactive confirmation.
 
-Use `--shared` explicitly for a shared stack. An optional `shared_directory` selects another client-owned program. The environment program can read shared outputs with Pulumi's normal stack references. Environment updates and preview cleanup do not select shared stacks.
+Use `--shared` explicitly for the shared stack in `infra/shared` (or the configured `shared_directory`). Environment programs in `infra/env` read shared outputs with Pulumi's normal `StackReference`. `pm ci plan` emits `has_env_infra` and `has_shared_infra` independently based on `Pulumi.yaml` presence, and emits `mode=none` for shared-only platform repositories with no declared projects. On push to `main`, `on-merge.yml` runs `deploy-shared` (in GitHub Environment `shared`, where teams can require manual approvals) in parallel with `deploy-dev`. Feature-branch previews and preview cleanup never modify or destroy the `shared` stack. New shared outputs must be deployed before `preview` or `infra/env` consumes them; teams can package shared logic as Pulumi components (for example in `infra/components/`) and test them in `preview` before merging to `main`.
 
 ### Query saved state
 

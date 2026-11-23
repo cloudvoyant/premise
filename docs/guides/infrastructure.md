@@ -2,9 +2,9 @@
 
 ## Add infrastructure
 
-A Pulumi program declares your resources. A stack holds one environment’s state. Use one program with separate `dev`, `stage`, `prod`, and feature-branch preview stacks.
+A Pulumi program declares your resources. A stack holds one environment’s state. Premise organizes infrastructure into `infra/env` for per-environment stacks (`dev`, `stage`, `prod`, and feature-branch previews) and `infra/shared` for project-wide or organization-wide assets shared across stacks. Custom repo-local Pulumi components can live in an optional `infra/components/` directory.
 
-Create a client-owned program during workspace initialization:
+Create both client-owned programs during workspace initialization:
 
 ```sh
 pm init --infra --pulumi-lang go
@@ -13,17 +13,15 @@ pm init --infra --pulumi-lang typescript --pulumi-version 3.268.0
 mise run infra:install
 ```
 
-If `infra/Pulumi.yaml` already exists, use `pm init --infra` to adopt it. If you already initialized Premise without infrastructure, add it later:
+If you already initialized Premise without infrastructure, add it later:
 
 ```sh
 pm infra setup --pulumi-lang go
-# Adopt an existing program instead:
-pm infra setup
 ```
 
-Setup adds the missing `on-deploy.yml`, preserves existing files and tool pins, and leaves backend configuration to you. Without infrastructure, initialization omits that manual deployment workflow. `infra/Pulumi.yaml` selects the language runtime. Root `mise.toml` selects Pulumi and runtime versions. Use ordinary language imports to share resource declarations across environment stacks.
+Setup creates `infra/env` and `infra/shared`, adds the missing `on-deploy.yml`, preserves existing workspace files and tool pins, and leaves backend configuration to you. If anything already exists under `infra/`, setup stops without modifying files. Without infrastructure, initialization omits the manual deployment workflow. Each program's `Pulumi.yaml` selects its language runtime, and root `mise.toml` pins Pulumi and runtime versions. Use ordinary language imports (for example from `infra/components/`) to share code across stacks.
 
-Declare `workspace.infra.directory`, backend choices, and environment values in `premise.yaml`. Supply an existing remote backend through a named selection or `PULUMI_BACKEND_URL`:
+Declare `workspace.infra.directory`, `workspace.infra.shared_directory`, backend choices, and environment values in `premise.yaml`. Platform repositories that manage only organization-wide shared resources can omit `infra/env` and declare only `shared_directory: infra/shared`. Supply an existing remote backend through a named selection or `PULUMI_BACKEND_URL`:
 
 ```sh
 export PULUMI_BACKEND_URL=gs://YOUR_STATE_BUCKET/product
@@ -55,4 +53,4 @@ Destroy this preview when you finish:
 pm infra destroy --env preview
 ```
 
-When premise.yaml declares infrastructure and provider credentials are configured, `on-commit.yml` deploys feature-branch previews. `on-merge.yml` deploys dev on main and cleans up previews after a same-repository PR merge or branch deletion. `on-deploy.yml` runs only when started manually. Persistent environments require interactive confirmation for destruction. Publishing a library on merge does not create a GitHub deployment or select a `production` environment. Publication tokens belong in repository or organization secrets.
+When `premise.yaml` declares infrastructure and provider credentials are configured, `on-commit.yml` deploys feature-branch previews when `infra/env/Pulumi.yaml` exists. `on-merge.yml` applies `infra/shared` and `dev` in parallel on `main` and cleans up previews after a same-repository PR merge or branch deletion. `on-deploy.yml` runs only when started manually and supports `shared`, `dev`, `stage`, `prod`, and `preview`. Persistent environments (including `shared`) require interactive confirmation for destruction. Publishing a library on merge does not create a GitHub deployment or select a `production` environment. Publication tokens belong in repository or organization secrets.
