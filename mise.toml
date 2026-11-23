@@ -15,6 +15,7 @@ config_roots = ["apps/*", "libs/*"]
 [tools]
 # Matches the `go` directive in go.mod (testscript/go-internal requires 1.25+).
 go = "1.25"
+bun = "1.4.2"
 golangci-lint = "2.15.0"
 node = "lts"
 "npm:prettier" = "latest"
@@ -55,15 +56,54 @@ run = "go test ./..."
 PREMISE_TEST_FNOX = "1"
 
 [tasks.e2e]
-description = "Run end-to-end tests"
-run = "go test ./e2e"
+description = "Run CLI E2E BDD suite in offline replay mode"
+depends = ["build"]
+dir = "e2e"
+run = "bun install --frozen-lockfile 2>/dev/null || bun install; bun x vitest run --config cli/vitest.config.ts"
+
+[tasks."e2e:cli:smoke"]
+description = "Run representative smoke CLI E2E flows"
+depends = ["build"]
+dir = "e2e"
+run = "bun x vitest run --config cli/vitest.config.ts --tags-filter=smoke --hideSkippedTests"
+
+[tasks."e2e:cli:list"]
+description = "List all CLI E2E BDD journeys without running them"
+dir = "e2e"
+run = "bun x vitest list --config cli/vitest.config.ts"
+
+[tasks."e2e:cli:run"]
+description = "Run selected CLI E2E spec(s) against the built pm binary"
+dir = "e2e"
+run = "bun x vitest run --config cli/vitest.config.ts"
+
+[tasks."e2e:record"]
+description = "Run selected CLI E2E spec(s) live against real providers and refresh redacted cassettes"
+depends = ["build"]
+dir = "e2e"
+run = "PREMISE_E2E_MODE=record bun x vitest run --config cli/vitest.config.ts"
+
+[tasks."e2e:live"]
+description = "Run selected CLI E2E spec(s) live against real providers without updating cassettes"
+depends = ["build"]
+dir = "e2e"
+run = "PREMISE_E2E_MODE=live bun x vitest run --config cli/vitest.config.ts"
+
+[tasks."e2e:cleanup"]
+description = "Clean up remote cloud/GitHub resources recorded in an e2e/outputs/**/artifacts.json manifest"
+dir = "e2e"
+run = "bun common/cleanup.ts"
+
+[tasks."e2e:typecheck"]
+description = "Type-check E2E TypeScript specs and harness"
+dir = "e2e"
+run = "bun x tsc --noEmit -p tsconfig.json"
 
 [tasks."e2e:infra"]
-description = "Run live scaffold, infrastructure, and CI scenarios against GCS"
-run = "go test ./e2e -run '^(TestScaffold|TestInfra|TestCI)$' -count=1 -timeout 45m -v"
-
-[tasks."e2e:infra".env]
-PREMISE_TEST_GCS = "1"
+description = "Run live deploy & infrastructure CLI E2E scenarios against cloudvoyant-premise GCS"
+depends = ["build"]
+dir = "e2e"
+run = "PREMISE_E2E_MODE=live bun x vitest run --config cli/vitest.config.ts cli/deploy.spec.ts"
 
 [tasks.dev]
 description = "Watch sources and rebuild bin/premise (and pm) on change"

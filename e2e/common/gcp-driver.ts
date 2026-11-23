@@ -1,0 +1,71 @@
+import { execProcess } from "./premise-harness.js";
+
+export const DEFAULT_GCP_PROJECT = "cloudvoyant-premise";
+export const DEFAULT_PULUMI_STATE_BUCKET = "gs://cloudvoyant-premise-pulumi-state-547304404433";
+export const DEFAULT_GAR_LOCATION = "us-central1";
+
+export interface LiveGcpConfig {
+  project: string;
+  backendUrl: string;
+  garLocation: string;
+}
+
+export function resolveLiveGcpConfig(): LiveGcpConfig {
+  const project = process.env.PREMISE_TEST_GCP_PROJECT?.trim() || DEFAULT_GCP_PROJECT;
+  const backendUrl = process.env.PULUMI_BACKEND_URL?.trim() || DEFAULT_PULUMI_STATE_BUCKET;
+  if (!backendUrl.startsWith("gs://")) {
+    throw new Error(`PULUMI_BACKEND_URL must start with gs://, got "${backendUrl}"`);
+  }
+  return {
+    project,
+    backendUrl,
+    garLocation: process.env.PREMISE_TEST_GAR_LOCATION?.trim() || DEFAULT_GAR_LOCATION,
+  };
+}
+
+export async function destroyPulumiStack(options: {
+  infraDir: string;
+  stack: string;
+  backendUrl: string;
+  env: NodeJS.ProcessEnv;
+}): Promise<void> {
+  const res = await execProcess(
+    "mise",
+    ["exec", "--", "pulumi", "destroy", "--stack", options.stack, "--yes", "--non-interactive"],
+    {
+      cwd: options.infraDir,
+      env: {
+        ...options.env,
+        PULUMI_BACKEND_URL: options.backendUrl,
+        PULUMI_CONFIG_PASSPHRASE: "",
+      },
+      timeoutMs: 300_000,
+    },
+  );
+  if (res.code !== 0) {
+    throw new Error(`Failed to destroy Pulumi stack ${options.stack}: ${res.combined}`);
+  }
+}
+
+export async function assertGcsBucketDeleted(bucket: string, cwd: string): Promise<void> {
+  const res = await execProcess("gcloud", ["storage", "buckets", "describe", `gs://${bucket}`], {
+    cwd,
+    env: process.env,
+    timeoutMs: 30_000,
+  });
+  if (res.code === 0 || !res.combined.includes("404")) {
+    throw new Error(`Expected bucket gs://${bucket} to be deleted (404), got: ${res.combined}`);
+  }
+}
+
+export async function readGcsObject(bucket: string, object: string, cwd: string): Promise<string> {
+  const res = await execProcess("gcloud", ["storage", "cat", `gs://${bucket}/${object}`], {
+    cwd,
+    env: process.env,
+    timeoutMs: 30_000,
+  });
+  if (res.code !== 0) {
+    throw new Error(`Failed to read gs://${bucket}/${object}: ${res.combined}`);
+  }
+  return res.stdout;
+}

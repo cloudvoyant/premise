@@ -125,3 +125,7 @@ test-results/
 .pulumi/
 .pulumi-state/
 .premise-releases/
+
+# Verifiable CLI E2E outputs (git-ignored, kept locally for inspection)
+e2e/outputs/
+e2e/node_modules/
