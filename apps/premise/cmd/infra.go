@@ -44,10 +44,10 @@ func InfraSetupCommand(scaffold core.WorkspaceScaffold) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if cmd.Flags().Changed("env") || cmd.Flags().Changed("shared") {
+			shared, _ := cmd.Flags().GetBool("shared")
+			if cmd.Flags().Changed("env") || shared {
 				environment, _ := cmd.Flags().GetString("env")
 				branch, _ := cmd.Flags().GetString("branch")
-				shared, _ := cmd.Flags().GetBool("shared")
 				backend, _ := cmd.Flags().GetString("backend")
 				yes, _ := cmd.Flags().GetBool("yes")
 				options, err := core.ResolveInfraOptions(cmd.Context(), root, core.InfraOptions{Environment: environment, Branch: branch, Shared: shared, Backend: backend, Yes: yes})
