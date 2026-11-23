@@ -151,10 +151,9 @@ func TestCI(t *testing.T) {
 			devBucket := client.bucket(t, "dev")
 
 			// Act.
-			client.flow(t, "on-merge", "shared", "B")
+			client.flow(t, "on-merge", "dev", "B")
 			sharedBucket := client.bucket(t, "shared")
 			client.flow(t, "on-merge", "preview", "A")
-			client.flow(t, "on-merge", "dev", "B")
 
 			// Assert.
 			t.Run("it destroys the merged preview environment while preserving shared", func(t *testing.T) {

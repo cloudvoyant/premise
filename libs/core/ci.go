@@ -205,11 +205,7 @@ func PlanWorkspaceCISchedule(ctx context.Context, root string, manifest Config, 
 				return CISchedule{}, err
 			}
 		}
-		infraOptions := InfraOptions{Environment: environment, Branch: branch}
-		if environment == "shared" {
-			infraOptions = InfraOptions{Shared: true}
-		}
-		if _, err := ResolveStackName(infraOptions); err != nil {
+		if _, err := ResolveStackName(InfraOptions{Environment: environment, Branch: branch}); err != nil {
 			return CISchedule{}, err
 		}
 	}
@@ -363,7 +359,7 @@ func RunCIFlowWithOptions(ctx context.Context, root string, flow CIFlow, environ
 			return errors.New("environment CI flows require workspace.infra")
 		}
 		if target == "shared" {
-			return runSharedCIFlow(ctx, root, InfraOptions{Shared: true, Backend: options.Backend}, nil, stdout, stderr)
+			return runSharedCIFlow(ctx, root, InfraOptions{Environment: "shared", Backend: options.Backend}, nil, stdout, stderr)
 		}
 		branch := options.Branch
 		if branch == "" {
@@ -378,6 +374,17 @@ func RunCIFlowWithOptions(ctx context.Context, root string, flow CIFlow, environ
 		infrastructure := InfraOptions{Environment: target, Branch: branch, Backend: options.Backend}
 		if flow == CIFlowOnMerge && target == "preview" {
 			return RunInfra(ctx, root, "destroy", infrastructure, nil, stdout, stderr)
+		}
+		if flow == CIFlowOnMerge && target == "dev" {
+			hasEnv, hasShared := InfrastructurePresence(root, manifest.Workspace.Infra)
+			if hasShared {
+				if err := runSharedCIFlow(ctx, root, InfraOptions{Environment: "shared", Backend: options.Backend}, nil, stdout, stderr); err != nil {
+					return err
+				}
+			}
+			if !hasEnv {
+				return nil
+			}
 		}
 		release := ReadReleaseEnvironment(ReleaseEnvironment{})
 		return runEnvironmentCIFlow(ctx, root, DeployOptions{InfraOptions: infrastructure, Release: release.Release}, nil, stdout, stderr)

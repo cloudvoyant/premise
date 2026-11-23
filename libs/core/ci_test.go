@@ -682,7 +682,7 @@ func TestCIPlanAndSharedOnMergeFlows(t *testing.T) {
 			}
 		})
 
-		t.Run("given --environment dev, then dev runs independently without touching shared", func(t *testing.T) {
+		t.Run("given --environment dev with infra/shared present, then shared applies first before dev", func(t *testing.T) {
 			// Arrange.
 			root := t.TempDir()
 			writePulumiYAML(t, filepath.Join(root, "infra/shared"), "app-shared")
@@ -720,13 +720,10 @@ func TestCIPlanAndSharedOnMergeFlows(t *testing.T) {
 				t.Fatal(err)
 			}
 			logged := string(data)
-			for _, want := range []string{"infra/env|install", "infra/env|stack select dev", "infra/env|preview --stack dev", "infra/env|up --stack dev --yes"} {
-				if !strings.Contains(logged, want) {
-					t.Fatalf("missing %q in pulumi log:\n%s", want, logged)
-				}
-			}
-			if strings.Contains(logged, "infra/shared") || strings.Contains(logged, "--stack shared") {
-				t.Fatalf("dev flow touched shared environment:\n%s", logged)
+			sharedUp := strings.Index(logged, "infra/shared|up --stack shared --yes")
+			devUp := strings.Index(logged, "infra/env|up --stack dev --yes")
+			if sharedUp == -1 || devUp == -1 || sharedUp >= devUp {
+				t.Fatalf("expected shared apply before dev apply, got:\n%s", logged)
 			}
 		})
 	})

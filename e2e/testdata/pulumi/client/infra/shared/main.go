@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+
 	"github.com/pulumi/pulumi-gcp/sdk/v9/go/gcp/storage"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi/config"
@@ -10,6 +12,10 @@ import (
 
 func main() {
 	pulumi.Run(func(ctx *pulumi.Context) error {
+		revision := os.Getenv("PREMISE_TEST_REVISION")
+		if revision == "" {
+			revision = "a"
+		}
 		bucket, err := storage.NewBucket(ctx, "storage-shared", &storage.BucketArgs{
 			Versioning:               &storage.BucketVersioningArgs{Enabled: pulumi.Bool(true)},
 			ForceDestroy:             pulumi.Bool(true),
@@ -17,7 +23,7 @@ func main() {
 			Location:                 pulumi.String("US"),
 			UniformBucketLevelAccess: pulumi.Bool(true),
 			PublicAccessPrevention:   pulumi.String("enforced"),
-			Labels:                   pulumi.StringMap{"premise-e2e": pulumi.String("true"), "scope": pulumi.String("shared")},
+			Labels:                   pulumi.StringMap{"premise-e2e": pulumi.String("true"), "scope": pulumi.String("shared"), "revision": pulumi.String(revision)},
 		})
 		if err != nil {
 			return err

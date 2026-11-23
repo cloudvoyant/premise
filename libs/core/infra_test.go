@@ -21,10 +21,10 @@ func TestStackNamesSeparateEnvironmentsAndAvoidPreviewCollisions(t *testing.T) {
 		{"development", InfraOptions{Environment: "dev"}, "dev", true},
 		{"staging", InfraOptions{Environment: "stage"}, "stage", true},
 		{"production", InfraOptions{Environment: "prod"}, "prod", true},
-		{"shared", InfraOptions{Shared: true}, "shared", true},
+		{"shared", InfraOptions{Environment: "shared"}, "shared", true},
 		{"missing preview branch", InfraOptions{Environment: "preview"}, "", false},
 		{"branch on production", InfraOptions{Environment: "prod", Branch: "feature/a"}, "", false},
-		{"shared with environment", InfraOptions{Environment: "prod", Shared: true}, "", false},
+		{"branch on shared", InfraOptions{Environment: "shared", Branch: "feature/a"}, "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := ResolveStackName(tc.options)
@@ -255,7 +255,7 @@ func TestInfrastructureScaffoldingAndPathResolution(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			sharedRes, err := ResolveInfrastructure(root, InfraOptions{Shared: true})
+			sharedRes, err := ResolveInfrastructure(root, InfraOptions{Environment: "shared"})
 			if err != nil {
 				t.Fatal(err)
 			}

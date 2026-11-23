@@ -83,9 +83,6 @@ func configureLiveClient(t *testing.T, binary, root string) *liveClient {
 }
 
 func (client *liveClient) scope(environment string) []string {
-	if environment == "shared" {
-		return []string{"--shared"}
-	}
 	args := []string{"--env", environment}
 	if environment == "preview" {
 		args = append(args, "--branch", client.branch)
@@ -146,7 +143,11 @@ func (client *liveClient) assertSavedBackend(t *testing.T, environment string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state := client.manifest.Workspace.Infra.Backends[settings.Backend].URL + "/.pulumi/stacks/premise-gcs-fixture/" + stack + ".json"
+	project := "premise-gcs-fixture"
+	if environment == "shared" {
+		project = "premise-gcs-fixture-shared"
+	}
+	state := client.manifest.Workspace.Infra.Backends[settings.Backend].URL + "/.pulumi/stacks/" + project + "/" + stack + ".json"
 	runCommand(t, client.root, "gcloud", "storage", "objects", "describe", state, "--format=value(name)")
 }
 

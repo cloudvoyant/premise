@@ -62,15 +62,6 @@ jobs:
           install-premise: build
       - name: Authenticate infrastructure providers
         run: mise exec -- pm infra auth --ci --env-file "$GITHUB_ENV"
-      - name: Prepare shared infrastructure
-        if: inputs.environment == 'shared'
-        run: pm infra setup --shared
-      - name: Preview shared infrastructure
-        if: inputs.environment == 'shared'
-        run: pm infra plan --shared
-      - name: Apply shared infrastructure
-        if: inputs.environment == 'shared'
-        run: pm infra apply --shared --yes
       - name: Inspect environment
         if: inputs.environment != 'shared'
         id: infrastructure
@@ -78,16 +69,13 @@ jobs:
           echo "exists=$(pm infra exists --env "$PM_ENV" --branch "$PM_BRANCH")" >> "$GITHUB_OUTPUT"
           echo "PM_RELEASE=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
       - name: Prepare infrastructure
-        if: inputs.environment != 'shared'
         run: pm infra setup --env "$PM_ENV" --branch "$PM_BRANCH"
       - name: Migrate existing environment
         if: inputs.environment != 'shared' && steps.infrastructure.outputs.exists == 'true'
         run: pm migrate --env "$PM_ENV" --branch "$PM_BRANCH"
       - name: Preview infrastructure
-        if: inputs.environment != 'shared'
         run: pm infra plan --env "$PM_ENV" --branch "$PM_BRANCH"
       - name: Apply infrastructure
-        if: inputs.environment != 'shared'
         run: pm infra apply --env "$PM_ENV" --branch "$PM_BRANCH" --yes
       - name: Migrate new environment
         if: inputs.environment != 'shared' && steps.infrastructure.outputs.exists != 'true'

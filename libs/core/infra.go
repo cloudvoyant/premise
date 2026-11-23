@@ -28,7 +28,6 @@ type InfraOptions struct {
 	Backend     string
 	Branch      string
 	Yes         bool
-	Shared      bool
 }
 
 // InfraResolution is a pure, validated destination for an infrastructure operation.
@@ -72,9 +71,6 @@ func ResolveInfrastructure(root string, options InfraOptions) (InfraResolution, 
 		return InfraResolution{}, fmt.Errorf("workspace.infra is not configured; initialize client infrastructure with pm init --infra")
 	}
 	env := options.Environment
-	if options.Shared {
-		env = "shared"
-	}
 	settings := infra.Environments[env]
 	name := options.Backend
 	if name == "" {
@@ -97,7 +93,7 @@ func ResolveInfrastructure(root string, options InfraOptions) (InfraResolution, 
 		return InfraResolution{}, err
 	}
 	relative := infra.Directory
-	if options.Shared {
+	if options.Environment == "shared" {
 		relative = infra.SharedDirectory
 		if relative == "" {
 			relative = defaultSharedInfraDirectory
@@ -160,14 +156,8 @@ func RunInfra(ctx context.Context, root, operation string, options InfraOptions,
 // ResolveStackName returns the Pulumi stack name for an environment and preview branch.
 // Preview branches receive stable, collision-resistant names across processes.
 func ResolveStackName(options InfraOptions) (string, error) {
-	if options.Shared {
-		if options.Branch != "" || (options.Environment != "" && options.Environment != "shared") {
-			return "", fmt.Errorf("--shared cannot be combined with a branch or non-shared environment")
-		}
-		return "shared", nil
-	}
 	switch options.Environment {
-	case "dev", "stage", "prod":
+	case "shared", "dev", "stage", "prod":
 		if options.Branch != "" {
 			return "", fmt.Errorf("--branch is only valid for preview environments")
 		}
@@ -180,7 +170,7 @@ func ResolveStackName(options InfraOptions) (string, error) {
 		digest := sha256.Sum256([]byte(options.Branch))
 		return fmt.Sprintf("preview-%s-%x", slug, digest[:5]), nil
 	default:
-		return "", fmt.Errorf("--env must be dev, stage, prod, or preview; select shared with --shared")
+		return "", fmt.Errorf("--env must be shared, dev, stage, prod, or preview")
 	}
 }
 
@@ -623,9 +613,7 @@ func environmentProgramConfig(declared map[string]string, options InfraOptions, 
 	}
 	result["premise:environment"] = options.Environment
 	name := options.Environment
-	if options.Shared {
-		name = "shared"
-	} else if options.Environment == "preview" {
+	if options.Environment == "preview" {
 		name = previewBranchSlug(options.Branch)
 	}
 	result["premise:environmentName"] = name
