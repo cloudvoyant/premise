@@ -105,15 +105,18 @@ describe("premise scaffolding", { tags: ["e2e", "cli", "scaffolding", "replay"] 
 
         // Assert
         await assertScaffoldWorkflows(h.workspace, true);
-        expect(await h.readFile("infra/Pulumi.yaml")).toContain("runtime: go");
+        expect(await h.readFile("infra/env/Pulumi.yaml")).toContain("runtime: go");
+        expect(await h.readFile("infra/shared/Pulumi.yaml")).toContain("runtime: go");
         expect(await h.readFile(".github/workflows/on-commit.yml")).toBe(onCommitBefore);
         expect(await h.readFile("apps/example/main.go")).toContain('fmt.Println("example")');
 
-        // Act: run infra setup a second time
+        // Act: run infra setup a second time when infra already exists
         const miseBefore = await h.readFile("mise.toml");
-        await h.pm(["infra", "setup"]);
+        const repeated = await h.pmFail(["infra", "setup", "--pulumi-lang", "go"]);
 
-        // Assert tool pins remain unchanged
+        // Assert repeated setup is rejected and tool pins remain unchanged
+        expect(repeated.code).not.toBe(0);
+        expect(repeated.combined).toContain("already exists");
         expect(await h.readFile("mise.toml")).toBe(miseBefore);
         await h.writeManifest();
       },

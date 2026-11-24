@@ -168,7 +168,7 @@ async function setupLiveDeployClient(h: PremiseHarness) {
     for (const env of ctx.touched) {
       const backendUrl = env === "prod" ? alternateBackend : primaryBackend;
       await destroyPulumiStack({
-        infraDir: join(h.workspace, "infra"),
+        infraDir: join(h.workspace, "infra/env"),
         stack: env,
         backendUrl,
         env: h.env,

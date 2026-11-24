@@ -414,7 +414,7 @@ async function configureLivePreviewBackend(h: PremiseHarness) {
       await assertGcsBucketDeleted(state.bucket, h.workspace);
     }
     await destroyPulumiStack({
-      infraDir: join(h.workspace, "infra"),
+      infraDir: join(h.workspace, "infra/env"),
       stack: "dev",
       backendUrl: runBackend,
       env: h.env,

@@ -115,15 +115,24 @@ describe("premise on-merge", { tags: ["e2e", "cli", "ci", "on-merge"] }, () => {
         ctx.devBucket = devBucket;
 
         // Act
-        await h.pm(["ci", "flow", "on-merge", "--environment", "preview", "--branch", ctx.branch], {
-          env: { PM_RELEASE: "A" },
-        });
         await h.pm(["ci", "flow", "on-merge", "--environment", "dev"], {
           env: { PM_RELEASE: "B" },
         });
+        const sharedBucket = (
+          await h.pm(["infra", "query", "--env", "shared", "--output", "bucketName"])
+        ).stdout.trim();
+        ctx.sharedBucket = sharedBucket;
+        await h.pm(["ci", "flow", "on-merge", "--environment", "preview", "--branch", ctx.branch], {
+          env: { PM_RELEASE: "A" },
+        });
 
-        // Assert preview destroyed (idempotent) and dev updated in-place to B
+        // Assert preview destroyed (idempotent) while shared is preserved and dev updated in-place to B
         await assertGcsBucketDeleted(previewBucket, h.workspace);
+        expect(
+          (
+            await h.pm(["infra", "query", "--env", "shared", "--output", "bucketName"])
+          ).stdout.trim(),
+        ).toBe(sharedBucket);
         await h.pm(["ci", "flow", "on-merge", "--environment", "preview", "--branch", ctx.branch], {
           env: { PM_RELEASE: "A" },
         });
@@ -298,17 +307,26 @@ async function configureLiveMergeBackends(h: PremiseHarness) {
   });
   await writeFile(manifestPath, updated, "utf8");
 
-  const state = { branch, gcpProject, devBucket: "" };
+  const state = { branch, gcpProject, devBucket: "", sharedBucket: "" };
   h.registerRemoteCleanup(async () => {
     await h.pmFail(["ci", "flow", "on-merge", "--environment", "preview", "--branch", branch]);
     await destroyPulumiStack({
-      infraDir: join(h.workspace, "infra"),
+      infraDir: join(h.workspace, "infra/env"),
       stack: "dev",
       backendUrl: runBackend,
       env: h.env,
     }).catch(() => {});
     if (state.devBucket) {
       await assertGcsBucketDeleted(state.devBucket, h.workspace);
+    }
+    await destroyPulumiStack({
+      infraDir: join(h.workspace, "infra/shared"),
+      stack: "shared",
+      backendUrl: runBackend,
+      env: h.env,
+    }).catch(() => {});
+    if (state.sharedBucket) {
+      await assertGcsBucketDeleted(state.sharedBucket, h.workspace);
     }
   });
   return state;

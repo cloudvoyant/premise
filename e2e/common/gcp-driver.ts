@@ -57,7 +57,8 @@ export function patchManifestInfra(
   const i4 = i3 + indent;
   const block = [
     `${indent}infra:`,
-    `${i2}directory: infra`,
+    `${i2}directory: infra/env`,
+    `${i2}shared_directory: infra/shared`,
     `${i2}backend: primary`,
     `${i2}backends:`,
     `${i3}primary:`,
@@ -65,6 +66,10 @@ export function patchManifestInfra(
     `${i3}alternate:`,
     `${i4}url: ${options.alternateBackend}`,
     `${i2}environments:`,
+    `${i3}shared:`,
+    `${i4}backend: primary`,
+    `${i4}config:`,
+    `${i4}${indent}gcp:project: ${options.gcpProject}`,
     `${i3}dev:`,
     `${i4}backend: primary`,
     `${i4}config:`,

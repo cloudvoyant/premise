@@ -154,9 +154,11 @@ printf '{"type":"external_account","credential_source":{"file":"%s"}}\n' "$CI_OI
           await h.pm(["infra", "setup", "--pulumi-lang", "typescript"]);
 
           // Assert
-          const pulumiYaml = await h.readFile("infra/Pulumi.yaml");
-          expect(pulumiYaml).toContain("runtime:");
-          expect(pulumiYaml).toContain("nodejs");
+          const envPulumiYaml = await h.readFile("infra/env/Pulumi.yaml");
+          const sharedPulumiYaml = await h.readFile("infra/shared/Pulumi.yaml");
+          expect(envPulumiYaml).toContain("runtime:");
+          expect(envPulumiYaml).toContain("nodejs");
+          expect(sharedPulumiYaml).toContain("nodejs");
           await h.writeManifest();
         },
       );
@@ -176,15 +178,20 @@ printf '{"type":"external_account","credential_source":{"file":"%s"}}\n' "$CI_OI
           await h.pm(["generate", `${registry}:app`, "--answer", "name=example"]);
           const ctx = await configureLiveInfraManifest(h);
           ctx.touched.add("dev");
+          ctx.touched.add("shared");
 
           // Act
           await h.pm(["infra", "setup", "--env", "dev"]);
           await h.pm(["infra", "plan", "--env", "dev"]);
           await h.pm(["infra", "apply", "--env", "dev", "--yes"]);
           const output = (await h.pm(["infra", "output", "--env", "dev"])).stdout.trim();
+          await h.pm(["infra", "setup", "--env", "shared"]);
+          await h.pm(["infra", "plan", "--env", "shared"]);
+          await h.pm(["infra", "apply", "--env", "shared", "--yes"]);
 
           // Assert
-          expect(await h.readFile("infra/Pulumi.yaml")).toContain("runtime: go");
+          expect(await h.readFile("infra/env/Pulumi.yaml")).toContain("runtime: go");
+          expect(await h.readFile("infra/shared/Pulumi.yaml")).toContain("runtime: go");
           expect(output).toBe("{}");
           h.updateRemoteManifest({ gcpProject: ctx.gcpProject });
           await h.writeManifest();
@@ -226,7 +233,7 @@ printf '{"type":"external_account","credential_source":{"file":"%s"}}\n' "$CI_OI
           const ctx = await setupLiveInfraClient(h);
 
           // Act & Assert
-          for (const env of ["dev", "stage", "prod", "preview"] as const) {
+          for (const env of ["shared", "dev", "stage", "prod", "preview"] as const) {
             ctx.touched.add(env);
             await h.pm(["infra", "setup", ...envScopeArgs(ctx, env)]);
             await h.pm(["infra", "apply", ...envScopeArgs(ctx, env), "--yes"], {
@@ -412,8 +419,11 @@ printf '{"type":"external_account","credential_source":{"file":"%s"}}\n' "$CI_OI
           await h.pm(["infra", "destroy", ...envScopeArgs(ctx, "preview"), "--yes"]);
           await assertGcsBucketDeleted(bucket, h.workspace);
           await h.pm(["infra", "destroy", ...envScopeArgs(ctx, "preview"), "--yes"]);
+          const sharedDestroy = await h.pmFail(["infra", "destroy", "--env", "shared", "--yes"]);
 
           // Assert
+          expect(sharedDestroy.code).not.toBe(0);
+          expect(sharedDestroy.combined).toContain("interactive confirmation");
           ctx.touched.delete("preview");
           ctx.buckets.delete("preview");
           h.updateRemoteManifest({ gcpProject: ctx.gcpProject });
@@ -475,7 +485,7 @@ async function configureLiveInfraManifest(h: PremiseHarness): Promise<LiveInfraC
         await h.pmFail(["ci", "flow", "on-merge", "--environment", "preview", "--branch", branch]);
       } else {
         await destroyPulumiStack({
-          infraDir: join(h.workspace, "infra"),
+          infraDir: join(h.workspace, env === "shared" ? "infra/shared" : "infra/env"),
           stack: env,
           backendUrl,
           env: h.env,
@@ -506,15 +516,16 @@ async function queryBucket(h: PremiseHarness, ctx: LiveInfraContext, env: string
 async function assertSavedBackend(
   h: PremiseHarness,
   ctx: LiveInfraContext,
-  env: "dev" | "stage" | "prod" | "preview",
+  env: "shared" | "dev" | "stage" | "prod" | "preview",
 ): Promise<void> {
   const backendUrl =
     env === "prod" || env === "preview" ? ctx.alternateBackend : ctx.primaryBackend;
+  const project = env === "shared" ? "premise-gcs-fixture-shared" : "premise-gcs-fixture";
   const stack =
     env === "preview"
       ? `preview-${ctx.branch.replace(/^feature\//, "")}-${createHash("sha256").update(ctx.branch).digest("hex").slice(0, 10)}`
       : env;
-  const statePath = `${backendUrl}/.pulumi/stacks/premise-gcs-fixture/${stack}.json`;
+  const statePath = `${backendUrl}/.pulumi/stacks/${project}/${stack}.json`;
   await h.run("gcloud", ["storage", "objects", "describe", statePath, "--format=value(name)"], {
     expectSuccess: true,
   });
