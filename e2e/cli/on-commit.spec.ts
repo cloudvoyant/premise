@@ -9,6 +9,7 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   commitChange,
   configureLiveInfraWorkspace,
+  copyScaffold,
   setupGenericInfraWorkspace,
   usePremiseHarness,
   useSuiteHarness,
@@ -16,8 +17,8 @@ import {
 } from "../../libs/testutils/fixtures.js";
 import { isLiveOrRecordMode } from "../../libs/testutils/mode.js";
 import { TESTDATA_ROOT } from "../../libs/testutils/premise-harness.js";
-import { copyScaffold, hostCIPlatform, pathExists } from "../../libs/tsutils/fs.js";
-import { assertSavedPulumiState, readGcsObject } from "../../libs/tsutils/gcs.js";
+import { hostCIPlatform, pathExists } from "../../libs/tsutils/fs.js";
+import { assertSavedPulumiState, readGcsObject } from "../../libs/tsutils/gcsx.js";
 
 // Fixtures -------------------------------------------------------------------
 

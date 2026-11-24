@@ -8,13 +8,14 @@ import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
   configureLiveInfraWorkspace,
+  copyScaffold,
   useSuiteHarness,
   type LiveInfraContext,
 } from "../../libs/testutils/fixtures.js";
 import { isLiveOrRecordMode } from "../../libs/testutils/mode.js";
 import { TESTDATA_ROOT } from "../../libs/testutils/premise-harness.js";
-import { copyScaffold, hostCIPlatform } from "../../libs/tsutils/fs.js";
-import { assertSavedPulumiState, readGcsObject } from "../../libs/tsutils/gcs.js";
+import { hostCIPlatform } from "../../libs/tsutils/fs.js";
+import { assertSavedPulumiState, readGcsObject } from "../../libs/tsutils/gcsx.js";
 
 // Tests ----------------------------------------------------------------------
 

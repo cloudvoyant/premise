@@ -17,7 +17,7 @@
 - Keep infra setup and querying in `libs/core/infra.go`, app deploy and rollback in `libs/core/deploy.go`, and CI sequencing in `libs/core/ci.go`.
 - Put provider interfaces and implementations in `libs/core/providers`. Keep provider behavior independent of the CI runner; put runner identity exchange and output formatting in CI adapters.
 - Put new external-tool wrappers in `libs/core/extensions`. Move existing wrappers in a separate follow-up.
-- Put shared TypeScript utilities (such as GCS and GitHub helpers) in `libs/tsutils/` and shared E2E test harness, fixture, and cassette utilities in `libs/testutils/`.
+- Put shared TypeScript utilities in `libs/tsutils/` and shared E2E test harness, fixture, shim, and cassette utilities in `libs/testutils/`. Name CLI and simple SDK wrapper modules with an `x` suffix (such as `ghx.ts`, `gcsx.ts`, `pulumix.go`, `fnoxx.go`) to indicate they are extensions.
 - Define application tasks in `mise.toml`. Do not add standalone task dispatcher scripts.
 - [Proposed] Keep `templates/premise-app` and `templates/premise-lib` registered under `template_registry` in `premise.yaml` so `cloudvoyant/premise` continues to serve its language-agnostic official templates alongside the monorepo workspace.
 - Keep reusable test files in fixtures. Process doubles may replace tools for module failure tests.

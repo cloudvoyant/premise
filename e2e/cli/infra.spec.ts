@@ -3,22 +3,32 @@
  * @module-tag cli
  * @module-tag infra
  */
-import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   configureLiveInfraWorkspace,
+  copyScaffold,
   usePremiseHarness,
   type LiveInfraContext,
 } from "../../libs/testutils/fixtures.js";
 import { isLiveOrRecordMode, isReplayMode } from "../../libs/testutils/mode.js";
 import { TESTDATA_ROOT, type PremiseHarness } from "../../libs/testutils/premise-harness.js";
-import { copyScaffold } from "../../libs/tsutils/fs.js";
+import { installGcloudOidcReplayShim } from "../../libs/testutils/shims.js";
 import {
   assertGcsBucketDeleted,
   assertSavedPulumiState,
   readGcsBucketLabel,
-} from "../../libs/tsutils/gcs.js";
+} from "../../libs/tsutils/gcsx.js";
+
+// Fixtures -------------------------------------------------------------------
+
+const PULUMI_SETUP_LANGUAGES = [
+  { lang: "typescript", runtime: "nodejs" },
+  { lang: "go", runtime: "go" },
+  { lang: "python", runtime: "python" },
+  { lang: "yaml", runtime: "yaml" },
+] as const;
 
 // Tests ----------------------------------------------------------------------
 
@@ -58,24 +68,7 @@ describe("premise infra", { tags: ["e2e", "cli", "infra", "pulumi"] }, () => {
           };
 
           if (isReplayMode()) {
-            const shimBin = join(h.outputDir, "gcloud-shim");
-            await mkdir(shimBin, { recursive: true });
-            await writeFile(
-              join(shimBin, "gcloud"),
-              `#!/bin/sh
-set -eu
-out=""
-for arg in "$@"; do
-  case "$arg" in
-    --output-file=*) out="\${arg#--output-file=}" ;;
-  esac
-done
-[ -n "$out" ]
-printf '{"type":"external_account","credential_source":{"file":"%s"}}\n' "$CI_OIDC_TOKEN_FILE" > "$out"
-`,
-              { mode: 0o755 },
-            );
-            await chmod(join(shimBin, "gcloud"), 0o755);
+            const shimBin = await installGcloudOidcReplayShim(h);
             env.PATH = `${shimBin}:${process.env.PATH ?? ""}`;
           }
 
@@ -134,26 +127,28 @@ printf '{"type":"external_account","credential_source":{"file":"%s"}}\n' "$CI_OI
     });
 
     describe("When setting up", () => {
-      it(
-        "It configures nodejs runtime in infra/Pulumi.yaml for TypeScript",
-        { tags: ["replay"] },
-        async () => {
-          // Arrange
-          const h = harness();
-          await h.pm(["init"]);
+      for (const { lang, runtime } of PULUMI_SETUP_LANGUAGES) {
+        it(
+          `It configures ${runtime} runtime in Pulumi.yaml for ${lang}`,
+          { tags: ["replay"] },
+          async () => {
+            // Arrange
+            const h = harness();
+            await h.pm(["init"]);
 
-          // Act
-          await h.pm(["infra", "setup", "--pulumi-lang", "typescript"]);
+            // Act
+            await h.pm(["infra", "setup", "--pulumi-lang", lang]);
 
-          // Assert
-          const envPulumiYaml = await h.readFile("infra/env/Pulumi.yaml");
-          const sharedPulumiYaml = await h.readFile("infra/shared/Pulumi.yaml");
-          expect(envPulumiYaml).toContain("runtime:");
-          expect(envPulumiYaml).toContain("nodejs");
-          expect(sharedPulumiYaml).toContain("nodejs");
-          await h.writeManifest();
-        },
-      );
+            // Assert
+            const envPulumiYaml = await h.readFile("infra/env/Pulumi.yaml");
+            const sharedPulumiYaml = await h.readFile("infra/shared/Pulumi.yaml");
+            expect(envPulumiYaml).toContain("runtime:");
+            expect(envPulumiYaml).toContain(runtime);
+            expect(sharedPulumiYaml).toContain(runtime);
+            await h.writeManifest();
+          },
+        );
+      }
 
       it.skipIf(!isLiveOrRecordMode())(
         "It prepares empty Go starter state via pm init --infra without provisioning resources",

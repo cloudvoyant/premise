@@ -1,8 +1,9 @@
 import { existsSync } from "node:fs";
 import { appendFile, chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
-import { collectLocalFiles, copyScaffold, slugify } from "../tsutils/fs.js";
+import { slugify } from "../tsutils/fs.js";
 import { execProcess, type CommandResult } from "../tsutils/process.js";
+import { collectLocalFiles, copyScaffold } from "./fixtures.js";
 import { e2eMode, shouldKeepRemote, type E2EMode } from "./mode.js";
 
 // Public API -----------------------------------------------------------------

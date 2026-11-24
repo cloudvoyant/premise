@@ -6,11 +6,10 @@
 import { chmod, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { usePremiseHarness } from "../../libs/testutils/fixtures.js";
+import { copyScaffold, usePremiseHarness } from "../../libs/testutils/fixtures.js";
 import { isLiveOrRecordMode } from "../../libs/testutils/mode.js";
 import { TESTDATA_ROOT, type PremiseHarness } from "../../libs/testutils/premise-harness.js";
-import { copyScaffold } from "../../libs/tsutils/fs.js";
-import { resolveLiveGcpConfig } from "../../libs/tsutils/gcs.js";
+import { resolveLiveGcpConfig } from "../../libs/tsutils/gcsx.js";
 
 // Fixtures -------------------------------------------------------------------
 

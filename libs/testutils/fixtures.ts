@@ -1,17 +1,69 @@
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { cp, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { join, relative } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach } from "vitest";
-import { copyScaffold, hostCIPlatform } from "../tsutils/fs.js";
+import { hostCIPlatform, sha256 } from "../tsutils/fs.js";
 import {
   assertGcsBucketDeleted,
   destroyPulumiStack,
   patchManifestInfra,
   resolveLiveGcpConfig,
-} from "../tsutils/gcs.js";
+} from "../tsutils/gcsx.js";
 import type { E2EMode } from "./mode.js";
 import { PremiseHarness, TESTDATA_ROOT, type TestTaskMeta } from "./premise-harness.js";
+import { installPmShim } from "./shims.js";
 
 // Public API -----------------------------------------------------------------
+
+/** Copy a testdata scaffold directory while excluding VCS, dependency, and Pulumi stack state. */
+export async function copyScaffold(source: string, destination: string): Promise<void> {
+  await mkdir(destination, { recursive: true });
+  await cp(source, destination, {
+    recursive: true,
+    filter: (src) => {
+      const name = src.split("/").at(-1) ?? "";
+      if (name === ".pulumi" || name === "node_modules" || name === ".git") return false;
+      if (name.startsWith("Pulumi.") && name !== "Pulumi.yaml") return false;
+      return true;
+    },
+  });
+}
+
+/** Collect deterministic path, SHA-256, and byte-size entries for a test workspace manifest. */
+export async function collectLocalFiles(
+  root: string,
+  base = root,
+): Promise<Array<{ path: string; sha256: string; bytes: number }>> {
+  const results: Array<{ path: string; sha256: string; bytes: number }> = [];
+  let entries;
+  try {
+    entries = await readdir(root, { withFileTypes: true });
+  } catch {
+    return results;
+  }
+  for (const entry of entries) {
+    if (
+      entry.name === ".git" ||
+      entry.name === "node_modules" ||
+      entry.name === "target" ||
+      entry.name === ".pulumi"
+    )
+      continue;
+    const full = join(root, entry.name);
+    if (entry.isDirectory()) {
+      results.push(...(await collectLocalFiles(full, base)));
+    } else if (entry.isFile()) {
+      const data = await readFile(full);
+      const info = await stat(full);
+      results.push({
+        path: relative(base, full).replaceAll("\\", "/"),
+        sha256: sha256(data),
+        bytes: info.size,
+      });
+    }
+  }
+  results.sort((a, b) => a.path.localeCompare(b.path));
+  return results;
+}
 
 export interface LiveInfraContext {
   branch: string;
@@ -134,10 +186,7 @@ export async function configureLiveInfraWorkspace(
   const alternateBackend = `${runBackend}/alternate`;
   const branch = `feature/static-${h.runId}`;
 
-  const shimBin = join(h.outputDir, "pm-bin");
-  await mkdir(shimBin, { recursive: true });
-  await writeFile(join(shimBin, "pm"), `#!/bin/sh\nexec "${h.binary}" "$@"\n`, { mode: 0o755 });
-  await chmod(join(shimBin, "pm"), 0o755);
+  const shimBin = await installPmShim(h);
   h.env.PATH = `${shimBin}:${h.env.PATH ?? process.env.PATH ?? ""}`;
   h.env.PULUMI_CONFIG_PASSPHRASE = "";
   h.env.PM_RELEASE = "A";

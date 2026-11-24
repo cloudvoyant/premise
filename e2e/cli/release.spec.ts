@@ -7,7 +7,7 @@ import { chmod, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/pr
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { HttpCassetteProxy } from "../../libs/testutils/cassette-proxy.js";
-import { usePremiseHarness } from "../../libs/testutils/fixtures.js";
+import { copyScaffold, usePremiseHarness } from "../../libs/testutils/fixtures.js";
 import { isReplayMode } from "../../libs/testutils/mode.js";
 import {
   RECORDINGS_ROOT,
@@ -15,8 +15,9 @@ import {
   TESTDATA_ROOT,
   type PremiseHarness,
 } from "../../libs/testutils/premise-harness.js";
-import { copyScaffold, pathExists } from "../../libs/tsutils/fs.js";
-import { assertPrivateFixtureRepo, fixtureGithubRepo } from "../../libs/tsutils/github.js";
+import { installSourceReleaseShims } from "../../libs/testutils/shims.js";
+import { pathExists } from "../../libs/tsutils/fs.js";
+import { assertPrivateFixtureRepo, fixtureGithubRepo } from "../../libs/tsutils/ghx.js";
 
 // Fixtures -------------------------------------------------------------------
 
@@ -439,56 +440,6 @@ describe("premise release", { tags: ["e2e", "cli", "release"] }, () => {
 });
 
 // Private helpers ------------------------------------------------------------
-
-async function installSourceReleaseShims(h: PremiseHarness): Promise<string> {
-  const shimBin = join(h.outputDir, "shim-bin");
-  await mkdir(shimBin, { recursive: true });
-  await writeFile(join(shimBin, "pm"), `#!/bin/sh\nexec "${h.binary}" "$@"\n`, { mode: 0o755 });
-  await chmod(join(shimBin, "pm"), 0o755);
-  await writeFile(
-    join(shimBin, "mise"),
-    `#!/bin/sh
-set -eu
-[ -z "\${GITHUB_TOKEN:-}" ]
-[ -z "\${GH_TOKEN:-}" ]
-[ -z "\${NODE_AUTH_TOKEN:-}" ]
-[ -z "\${CRATES_TOKEN:-}" ]
-case "$*" in
- exec\\ goreleaser@2.18.1\\ --\\ env\\ -0) /usr/bin/env -0 ;;
- *) echo "unexpected mise invocation: $*" >&2; exit 1 ;;
-esac
-`,
-    { mode: 0o755 },
-  );
-  await chmod(join(shimBin, "mise"), 0o755);
-  await writeFile(
-    join(shimBin, "goreleaser"),
-    `#!/bin/sh
-set -eu
-[ -n "\${GITHUB_TOKEN:-}" ]
-[ -z "\${GH_TOKEN:-}" ]
-[ -z "\${NODE_AUTH_TOKEN:-}" ]
-[ -z "\${CRATES_TOKEN:-}" ]
-[ "$1" = release ]
-while [ "$#" -gt 0 ]; do
- case "$1" in
-  -f) shift; configuration=$1 ;;
-  --snapshot) echo "source-only build should skip artifact tools" >&2; exit 1 ;;
- esac
- shift
-done
-[ "$(pwd -P)" = "$EXPECTED_RELEASE_ROOT" ]
-grep -q 'skip: true' "$configuration"
-grep -q 'disable: true' "$configuration"
-! grep -q 'extra_files:' "$configuration"
-printf 'publish\\n' >> "$RELEASE_CAPTURE"
-[ "\${FAIL_PUBLICATION:-false}" != true ]
-`,
-    { mode: 0o755 },
-  );
-  await chmod(join(shimBin, "goreleaser"), 0o755);
-  return shimBin;
-}
 
 async function runActionStep(
   h: PremiseHarness,

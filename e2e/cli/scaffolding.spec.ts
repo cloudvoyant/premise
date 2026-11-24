@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
+  copyScaffold,
   createNativeRegistry,
   usePremiseHarness,
   useSuiteHarness,
@@ -17,7 +18,7 @@ import {
   TESTDATA_ROOT,
   type PremiseHarness,
 } from "../../libs/testutils/premise-harness.js";
-import { copyScaffold, pathExists } from "../../libs/tsutils/fs.js";
+import { pathExists } from "../../libs/tsutils/fs.js";
 
 // Fixtures -------------------------------------------------------------------
 
