@@ -47,11 +47,13 @@
 
 ## Tests
 
-- Use `// Fixtures -------------------------------------------------------------------`, `// Tests ----------------------------------------------------------------------`, then `// Private helpers ------------------------------------------------------------` in Go test files. Omit empty sections and keep related test groups together.
+- Use `// Fixtures -------------------------------------------------------------------`, `// Tests ----------------------------------------------------------------------`, then `// Private helpers ------------------------------------------------------------` in Go test files and TypeScript `e2e/cli/*.spec.ts` specs. Omit empty sections and keep related test groups together.
 - Prefer command E2E tests, then module integration tests. Avoid tests that mirror implementation.
 - Separate Arrange, Act, and Assert with blank lines. Name the behavior and expected outcome.
 - [Proposed] Keep test names short and behavioral (such as "it applies shared first then dev"); keep exact flag or output invariants in assertions rather than test names.
-- Use Scaffold, Infra, Secrets, and CI suites. Nest `when ...` contexts and `it ...` outcomes.
+- Organize CLI E2E specs under `e2e/cli/` by command and major flow: `scaffolding.spec.ts`, `secrets.spec.ts`, `infra.spec.ts`, `release.spec.ts`, `on-commit.spec.ts`, `on-merge.spec.ts`, and `on-deploy.spec.ts`. Nest `Given ...`, `When ...`, and `It ...` scopes with hoisted `beforeEach` setup.
+- Store real, inspectable scaffolded workspaces and registries under `e2e/testdata/` and copy them into `e2e/outputs/cli/<spec>/<test-slug>/workspace/` alongside `cli.log` and `artifacts.json` on every run; avoid assembling workspaces inline in spec files.
+- Matrix provider-backed E2E specs (such as secret backends and per-ecosystem `bun`, `rust`, and `go` variants) over supported providers instead of duplicating separate blocks.
 - Keep actions and assertions visible. Put reusable setup and process execution in helpers.
-- Each context must work with `go test -run`. Do not depend on sibling scenarios.
-- Assert cleanup explicitly; keep `t.Cleanup` as the resource safety net.
+- Each test case must run standalone without depending on sibling scenarios.
+- Assert cleanup explicitly; keep `t.Cleanup` or harness disposal as the resource safety net.

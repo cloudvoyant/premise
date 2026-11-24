@@ -1,25 +1,27 @@
 # End-to-end tests
 
-The CLI end-to-end suite lives under `e2e/cli/` using TypeScript and Vitest with hoisted `given ...` / `when ..., then ...` BDD specs. Every test runs the real `pm` binary against runnable workspace fixtures and retains its full transcript (`cli.log`), final workspace tree (`workspace/`), and manifest (`artifacts.json`) under git-ignored `e2e/outputs/cli/<spec>/<test-slug>/` for human and agent verification.
+The CLI end-to-end suite lives under `e2e/cli/` using TypeScript and Vitest with hoisted `Given ...` / `When ...` / `It ...` BDD specs. Every test copies a real scaffolded workspace from `e2e/testdata/` into git-ignored `e2e/outputs/cli/<spec>/<test-slug>/workspace/`, runs the real `pm` binary, and retains `cli.log` and `artifacts.json` alongside the final workspace tree for human and agent verification.
 
-| Spec                | Lifecycle stage & coverage                                                                                    |
-| ------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `workspace.spec.ts` | `pm init`, `pm generate` (Go, Cargo, Bun, polyglot, standalone Cargo), `pm install`, `pm template`, rollbacks |
-| `secrets.spec.ts`   | Local JSON `fnox` profiles (`dev`, `stage`, `prod`, `preview`), missing-profile safety, `pm run`, GCP live    |
-| `ci-checks.spec.ts` | `pm ci plan`, `on-commit` / `on-merge` task order, check and build failure gates, multi-OS matrix planning    |
-| `release.spec.ts`   | Source-only releases, major action tags, private GitHub fixture proxy, release-destination permutations       |
-| `deploy.spec.ts`    | `pm infra auth --ci` (GCP WIF + Azure `ci:auth`), Pulumi setup/plan/apply/query, preview rollback & promotion |
+| Spec                  | Command or flow coverage                                                                                           |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `scaffolding.spec.ts` | `pm init`, `pm generate` (Go, Cargo, Bun, polyglot, shared root merges), `pm install`, `pm template`, rollbacks    |
+| `secrets.spec.ts`     | `pm secrets` matrixed over secret providers (`local-json` and `gcp-secret-manager`), 0600 `.env.local`, `pm run`   |
+| `infra.spec.ts`       | `pm infra` (`auth`, `setup`, `plan`, `apply`, `query`, `destroy`) branched by `Given no prior infra` / `existing`  |
+| `release.spec.ts`     | `pm release` (source-only dry-run/build/retry/RC/action steps, major action tags, private repo, pkg permutations)  |
+| `on-commit.spec.ts`   | `on-commit` flow across generic (with/without infra) and `bun`, `rust`, `go` workspaces (checks, staging, preview) |
+| `on-merge.spec.ts`    | `on-merge` flow across generic (with/without infra) and `bun`, `rust`, `go` workspaces (version bump, cleanup)     |
+| `on-deploy.spec.ts`   | `on-deploy` flow (immutable release promotion across `dev`, `stage`, `prod` with migrate -> deploy -> health)      |
 
 ## Usage
 
 ```sh
-mise run e2e                               # Offline replay suite (default for CI and local runs)
-mise run e2e:cli:smoke                     # Fast representative smoke slice
-mise run e2e:cli:list                      # List all BDD journeys without executing them
-mise run e2e:cli:run -- workspace.spec.ts  # Run one spec file against bin/premise
-mise run e2e:record -- release.spec.ts     # Run live against real providers and refresh redacted cassettes
-mise run e2e:live -- deploy.spec.ts        # Run live against real providers without updating cassettes
-mise run e2e:cleanup -- <artifacts.json>   # Tear down remote resources kept via PREMISE_E2E_KEEP_REMOTE
+mise run e2e                                 # Offline replay suite (default for CI and local runs)
+mise run e2e:cli:smoke                       # Fast representative smoke slice
+mise run e2e:cli:list                        # List all BDD journeys without executing them
+mise run e2e:cli:run -- scaffolding.spec.ts  # Run one spec file against bin/premise
+mise run e2e:record -- release.spec.ts       # Run live against real providers and refresh redacted cassettes
+mise run e2e:live -- infra.spec.ts           # Run live against real providers without updating cassettes
+mise run e2e:cleanup -- <artifacts.json>     # Tear down remote resources kept via PREMISE_E2E_KEEP_REMOTE
 ```
 
 ## Execution modes
@@ -35,7 +37,7 @@ mise run e2e:cleanup -- <artifacts.json>   # Tear down remote resources kept via
 After any passing or failing run, inspect `e2e/outputs/cli/<spec>/<test-slug>/`:
 
 - `cli.log`: Every `$ pm ...`, `$ mise ...`, and `$ git ...` command with working directory, exit code, stdout, and stderr.
-- `workspace/`: The exact files left on disk after CLI operations finished.
+- `workspace/`: The exact scaffold copied from `e2e/testdata/` after CLI operations finished.
 - `artifacts.json`: SHA256 hashes of workspace files, remote resource metadata, consumer verification output, and the exact cleanup command when `PREMISE_E2E_KEEP_REMOTE` is set.
 
 ## Live provider fixtures

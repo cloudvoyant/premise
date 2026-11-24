@@ -19,9 +19,11 @@ import { copyScaffold, isReplayMode, pathExists } from "../common/test-utils.js"
 
 // Fixtures -------------------------------------------------------------------
 
+const SOURCE_ONLY_FIXTURE = join(TESTDATA_ROOT, "workspaces/source-only");
+
 const ACTION_TAG_SCENARIOS = [
   {
-    name: "advances an existing major tag on a stable release",
+    name: "advances an existing v<major> tag on stable releases",
     version: "v0.6.0",
     existing: "true",
     failure: "",
@@ -29,7 +31,7 @@ const ACTION_TAG_SCENARIOS = [
     fails: false,
   },
   {
-    name: "creates a new major tag on the first release",
+    name: "creates a new v<major> tag on the first release",
     version: "v1.0.0",
     existing: "false",
     failure: "",
@@ -37,7 +39,7 @@ const ACTION_TAG_SCENARIOS = [
     fails: false,
   },
   {
-    name: "rejects an RC release attempting to update a major tag",
+    name: "rejects RC versions from updating major tags",
     version: "v0.6.0-rc.1",
     existing: "",
     failure: "",
@@ -45,7 +47,7 @@ const ACTION_TAG_SCENARIOS = [
     fails: true,
   },
   {
-    name: "fails safely when the release tag cannot be read",
+    name: "stops safely when the release tag lookup fails",
     version: "v0.6.0",
     existing: "",
     failure: "release",
@@ -53,7 +55,7 @@ const ACTION_TAG_SCENARIOS = [
     fails: true,
   },
   {
-    name: "fails safely when updating the remote major tag fails",
+    name: "reports failure when updating the remote major tag fails",
     version: "v0.6.0",
     existing: "true",
     failure: "update",
@@ -64,243 +66,222 @@ const ACTION_TAG_SCENARIOS = [
 
 // Tests ----------------------------------------------------------------------
 
-describe("release lifecycle", { tags: ["e2e", "cli", "release"] }, () => {
+describe("premise release", { tags: ["e2e", "cli", "release"] }, () => {
   const harness = usePremiseHarness();
 
-  describe(
-    "given a source-only workspace with failing publish traps",
-    { tags: ["github", "replay"] },
-    () => {
-      it(
-        "when releasing via split-cli, full-cli, and action steps, then dry-run, build skip, tag retry, RC, and tag-conflict guards all hold",
-        { tags: ["smoke"] },
-        async () => {
-          // Arrange: install shims enforcing secret isolation and source-only GoReleaser config
-          const h = harness();
-          const shimBin = await installSourceReleaseShims(h);
-          const captureFile = join(h.outputDir, "release-capture.log");
-          const scripts = await loadActionScripts();
-          for (const required of [
-            "Plan stable release",
-            "Plan release candidate",
-            "Plan runner schedule",
-            "Run Premise operation",
-          ]) {
-            expect(scripts[required]).toBeTruthy();
-          }
+  describe("Given a source-only project", { tags: ["github", "replay"] }, () => {
+    let remote: string;
+    let shimEnv: Record<string, string>;
+    let captureFile: string;
 
-          const baseEnv = {
-            PATH: `${shimBin}:${process.env.PATH ?? ""}`,
-            GITHUB_TOKEN: "test-token",
-            GH_TOKEN: "test-alias",
-            NODE_AUTH_TOKEN: "registry-secret",
-            CRATES_TOKEN: "registry-secret",
-            RELEASE_CAPTURE: captureFile,
-          };
+    beforeEach(async () => {
+      const h = harness();
+      await copyScaffold(SOURCE_ONLY_FIXTURE, h.workspace);
+      await h.initGit("feat: add Lua plugin");
+      remote = join(h.outputDir, "origin.git");
+      await h.git(["init", "--bare", "-q", remote], { cwd: h.outputDir });
+      await h.git(["remote", "add", "origin", remote]);
+      await h.git(["push", "-q", "origin", "HEAD"]);
 
-          // Act & Assert across split-cli, full-cli, and action modes
-          for (const mode of ["split-cli", "full-cli", "action"] as const) {
-            const { workspace, remote } = await createSourceReleaseFixture(h, mode);
-            const physical = await realpath(workspace);
-            const modeEnv = { ...baseEnv, EXPECTED_RELEASE_ROOT: physical };
+      const shimBin = await installSourceReleaseShims(h);
+      captureFile = join(h.outputDir, "release-capture.log");
+      shimEnv = {
+        PATH: `${shimBin}:${process.env.PATH ?? ""}`,
+        GITHUB_TOKEN: "test-token",
+        GH_TOKEN: "test-alias",
+        NODE_AUTH_TOKEN: "registry-secret",
+        CRATES_TOKEN: "registry-secret",
+        RELEASE_CAPTURE: captureFile,
+        EXPECTED_RELEASE_ROOT: await realpath(h.workspace),
+      };
+    });
 
-            const plan = await h.pm(["release", "--dry-run"], { cwd: workspace, env: modeEnv });
-            expect(plan.stdout).toContain("version=0.1.0\nshould_publish=true");
+    it(
+      "It plans a stable release on --dry-run and skips artifact builds without creating tags",
+      { tags: ["smoke"] },
+      async () => {
+        // Arrange
+        const h = harness();
 
-            const buildOut = await h.pm(["release", "--build"], {
-              cwd: workspace,
-              env: { ...modeEnv, GITHUB_TOKEN: "", GH_TOKEN: "" },
-            });
-            expect(buildOut.combined).toContain(
-              "skip: workspace has no downloadable release artifacts",
-            );
-            expect((await h.git(["tag"], { cwd: remote })).stdout.trim()).toBe("");
+        // Act
+        const plan = await h.pm(["release", "--dry-run"], { env: shimEnv });
+        const build = await h.pm(["release", "--build"], {
+          env: { ...shimEnv, GITHUB_TOKEN: "", GH_TOKEN: "" },
+        });
 
-            const runAction = (
-              scriptName: string,
-              operation: string,
-              channel: string,
-              version: string,
-              extraEnv: Record<string, string> = {},
-            ) =>
-              h.run("bash", ["-c", scripts[scriptName]], {
-                cwd: workspace,
-                expectSuccess: true,
-                env: {
-                  ...modeEnv,
-                  COMMAND: operation,
-                  FLOW: channel === "rc" ? "on-commit" : "on-merge",
-                  RELEASE_MODE: "auto",
-                  CHANNEL: channel,
-                  VERSION: version,
-                  DEPLOY_ENVIRONMENT: "",
-                  PREVIEW_BRANCH: "",
-                  PROJECT: "",
-                  PLATFORM: "",
-                  OUTPUT_DIR: "",
-                  FILES_DIR: "",
-                  ROOT_ONLY: "",
-                  SKIP_ROOT: "",
-                  ...extraEnv,
-                },
-              });
+        // Assert
+        expect(plan.stdout).toContain("version=0.1.0\nshould_publish=true");
+        expect(build.combined).toContain("skip: workspace has no downloadable release artifacts");
+        expect((await h.git(["tag"], { cwd: remote })).stdout.trim()).toBe("");
+        await h.writeManifest();
+      },
+    );
 
-            const publish = async (channel: string, version: string) => {
-              if (mode === "action") {
-                await runAction("Run Premise operation", "release", channel, version);
-                return;
-              }
-              if (mode === "full-cli" && channel === "stable") {
-                await h.pm(["release"], { cwd: workspace, env: modeEnv });
-                return;
-              }
-              await h.pm(
-                ["release", "publish", "--channel", channel, "--expected-version", version],
-                { cwd: workspace, env: modeEnv },
-              );
-            };
+    it("It pushes the stable tag, recovers cleanly on retry after GoReleaser failure, and skips language packages", async () => {
+      // Arrange
+      const h = harness();
 
-            const packages = async (channel: string, version: string) => {
-              const res =
-                mode === "action"
-                  ? await runAction("Run Premise operation", "packages", channel, version)
-                  : await h.pm(
-                      ["release", "packages", "--channel", channel, "--expected-version", version],
-                      { cwd: workspace, env: modeEnv },
-                    );
-              expect(res.combined).toContain(
-                "skip: workspace package managers do not publish language packages",
-              );
-            };
+      // Act: first publish fails after pushing tag
+      const failed = await h.pmFail(
+        ["release", "publish", "--channel", "stable", "--expected-version", "v0.1.0"],
+        { env: { ...shimEnv, FAIL_PUBLICATION: "true" } },
+      );
+      const head = (await h.git(["rev-parse", "HEAD"])).stdout.trim();
+      const remoteTag = (
+        await h.git(["rev-parse", "refs/tags/v0.1.0"], { cwd: remote })
+      ).stdout.trim();
 
-            const ghOutput = join(h.outputDir, `github-output-${mode}.txt`);
-            if (mode === "action") {
-              await writeFile(ghOutput, "", "utf8");
-              await runAction("Plan stable release", "plan", "stable", "", {
-                GITHUB_OUTPUT: ghOutput,
-              });
-              await runAction("Plan runner schedule", "plan", "stable", "", {
-                GITHUB_OUTPUT: ghOutput,
-              });
-              const outContent = await readFile(ghOutput, "utf8");
-              expect(outContent).toContain("should_publish=true");
-              expect(outContent).toContain("native=false");
-            }
+      // Act: retry succeeds idempotently and skips package hooks
+      await h.pm(["release", "publish", "--channel", "stable", "--expected-version", "v0.1.0"], {
+        env: shimEnv,
+      });
+      const packages = await h.pm(
+        ["release", "packages", "--channel", "stable", "--expected-version", "v0.1.0"],
+        { env: shimEnv },
+      );
+      await h.pm(["release"], { env: shimEnv });
 
-            // First publication fails, leaving tag pushed for safe retry
-            const failArgs =
-              mode === "full-cli"
-                ? ["release"]
-                : ["release", "publish", "--channel", "stable", "--expected-version", "v0.1.0"];
-            const failedPub = await h.pmFail(failArgs, {
-              cwd: workspace,
-              env: { ...modeEnv, FAIL_PUBLICATION: "true" },
-            });
-            expect(failedPub.code).not.toBe(0);
-            expect(failedPub.combined).toContain("run GoReleaser");
-            const head = (await h.git(["rev-parse", "HEAD"], { cwd: workspace })).stdout.trim();
-            const remoteTag = (
-              await h.git(["rev-parse", "refs/tags/v0.1.0"], { cwd: remote })
-            ).stdout.trim();
-            expect(remoteTag).toBe(head);
+      // Assert
+      expect(failed.code).not.toBe(0);
+      expect(failed.combined).toContain("run GoReleaser");
+      expect(remoteTag).toBe(head);
+      expect(packages.combined).toContain(
+        "skip: workspace package managers do not publish language packages",
+      );
+      expect((await readFile(captureFile, "utf8")).split("publish\n").length - 1).toBe(3);
+      await h.writeManifest();
+    });
 
-            // Retry succeeds and is idempotent
-            await publish("stable", "v0.1.0");
-            await packages("stable", "v0.1.0");
-            await publish("stable", "v0.1.0");
+    it("It publishes RC releases on [publish-rc] commits and rejects tags pointing away from HEAD", async () => {
+      // Arrange
+      const h = harness();
+      await h.pm(["release", "publish", "--channel", "stable", "--expected-version", "v0.1.0"], {
+        env: shimEnv,
+      });
+      await h.git(["commit", "--allow-empty", "-qm", "fix: next release [publish-rc]"]);
+      const rc = (
+        await h.pm(["version", "rc", "--identifier", "42"], { env: shimEnv })
+      ).stdout.trim();
 
-            // RC channel
-            await h.git(["commit", "--allow-empty", "-qm", "fix: next release [publish-rc]"], {
-              cwd: workspace,
-            });
-            const rc = (
-              await h.pm(["version", "rc", "--identifier", "42"], { cwd: workspace, env: modeEnv })
-            ).stdout.trim();
-            expect(rc).toBe("v0.1.0-rc.42");
+      // Act: publish RC twice idempotently, then commit and re-attempt same RC tag
+      await h.pm(["release", "publish", "--channel", "rc", "--expected-version", rc], {
+        env: shimEnv,
+      });
+      await h.pm(["release", "publish", "--channel", "rc", "--expected-version", rc], {
+        env: shimEnv,
+      });
+      const rcTag = (await h.git(["rev-parse", `refs/tags/${rc}`], { cwd: remote })).stdout.trim();
+      const rcHead = (await h.git(["rev-parse", "HEAD"])).stdout.trim();
 
-            if (mode === "action") {
-              await writeFile(ghOutput, "", "utf8");
-              await runAction("Plan release candidate", "plan", "rc", rc, {
-                GITHUB_OUTPUT: ghOutput,
-                MARKED_PUSH: "false",
-                GITHUB_RUN_NUMBER: "42",
-              });
-              expect(await readFile(ghOutput, "utf8")).toContain("should_publish_rc=false");
-
-              await writeFile(ghOutput, "", "utf8");
-              await runAction("Plan release candidate", "plan", "rc", rc, {
-                GITHUB_OUTPUT: ghOutput,
-                MARKED_PUSH: "true",
-                GITHUB_RUN_NUMBER: "42",
-              });
-              expect(await readFile(ghOutput, "utf8")).toContain("should_publish_rc=true");
-            }
-
-            await publish("rc", rc);
-            await packages("rc", rc);
-            await publish("rc", rc);
-            const rcRemoteTag = (
-              await h.git(["rev-parse", `refs/tags/${rc}`], { cwd: remote })
-            ).stdout.trim();
-            const rcHead = (await h.git(["rev-parse", "HEAD"], { cwd: workspace })).stdout.trim();
-            expect(rcRemoteTag).toBe(rcHead);
-
-            // Existing RC tag away from HEAD must fail
-            await h.git(["commit", "--allow-empty", "-qm", "fix: another change"], {
-              cwd: workspace,
-            });
-            const conflict = await h.pmFail(
-              ["release", "publish", "--channel", "rc", "--expected-version", rc],
-              { cwd: workspace, env: modeEnv },
-            );
-            expect(conflict.code).not.toBe(0);
-            expect(conflict.combined).toContain("exists away from HEAD");
-          }
-
-          const captured = await readFile(captureFile, "utf8");
-          expect(captured.split("publish\n").length - 1).toBe(15);
-          await h.writeManifest();
-        },
+      await h.git(["commit", "--allow-empty", "-qm", "fix: another change"]);
+      const conflict = await h.pmFail(
+        ["release", "publish", "--channel", "rc", "--expected-version", rc],
+        { env: shimEnv },
       );
 
-      it.skipIf(!process.env.PREMISE_TEST_GORELEASER)(
-        "when validating generated config with pinned GoReleaser 2.18.1, then snapshot produces no checksums or git tags",
-        async () => {
-          // Arrange
-          const h = harness();
-          const goreleaserBin = process.env.PREMISE_TEST_GORELEASER!;
-          const version = await h.run(goreleaserBin, ["--version"], { expectSuccess: true });
-          expect(version.combined).toContain("2.18.1");
-          const { workspace } = await createSourceReleaseFixture(h, "goreleaser-snapshot");
-          const configPath = join(h.outputDir, "goreleaser.yml");
-          const rendered = await h.pm(["release", "config"], { cwd: workspace });
-          await writeFile(configPath, rendered.stdout, { mode: 0o600 });
+      // Assert
+      expect(rc).toBe("v0.1.0-rc.42");
+      expect(rcTag).toBe(rcHead);
+      expect(conflict.code).not.toBe(0);
+      expect(conflict.combined).toContain("exists away from HEAD");
+      await h.writeManifest();
+    });
 
-          // Act
-          await h.run(goreleaserBin, ["check", "-f", configPath], {
-            cwd: workspace,
-            expectSuccess: true,
-          });
-          await h.run(goreleaserBin, ["release", "--snapshot", "--clean", "-f", configPath], {
-            cwd: workspace,
-            expectSuccess: true,
-            env: { GITHUB_TOKEN: "", GH_TOKEN: "" },
-          });
+    it("It executes the root GitHub Action release steps for stable and RC channels", async () => {
+      // Arrange
+      const h = harness();
+      const scripts = await loadActionScripts();
+      const ghOutput = join(h.outputDir, "github-output.txt");
+      await writeFile(ghOutput, "", "utf8");
 
-          // Assert
-          const distEntries = (await pathExists(join(workspace, "dist")))
-            ? await readdir(join(workspace, "dist"))
-            : [];
-          expect(distEntries.filter((f) => f.includes("checksums"))).toEqual([]);
-          expect((await h.git(["tag"], { cwd: workspace })).stdout.trim()).toBe("");
-          await h.writeManifest();
-        },
+      // Act: stable plan + publish via action.yml scripts
+      await runActionStep(h, scripts["Plan stable release"], "plan", "stable", "", shimEnv, {
+        GITHUB_OUTPUT: ghOutput,
+      });
+      await runActionStep(h, scripts["Plan runner schedule"], "plan", "stable", "", shimEnv, {
+        GITHUB_OUTPUT: ghOutput,
+      });
+      await runActionStep(
+        h,
+        scripts["Run Premise operation"],
+        "release",
+        "stable",
+        "v0.1.0",
+        shimEnv,
       );
-    },
-  );
+      const pkgOut = await runActionStep(
+        h,
+        scripts["Run Premise operation"],
+        "packages",
+        "stable",
+        "v0.1.0",
+        shimEnv,
+      );
+
+      // Assert stable outputs
+      const stableOutput = await readFile(ghOutput, "utf8");
+      expect(stableOutput).toContain("should_publish=true");
+      expect(stableOutput).toContain("native=false");
+      expect(pkgOut.combined).toContain(
+        "skip: workspace package managers do not publish language packages",
+      );
+
+      // Act: RC plan (unmarked vs marked)
+      await h.git(["commit", "--allow-empty", "-qm", "fix: rc via action [publish-rc]"]);
+      const rc = (
+        await h.pm(["version", "rc", "--identifier", "42"], { env: shimEnv })
+      ).stdout.trim();
+      await writeFile(ghOutput, "", "utf8");
+      await runActionStep(h, scripts["Plan release candidate"], "plan", "rc", rc, shimEnv, {
+        GITHUB_OUTPUT: ghOutput,
+        MARKED_PUSH: "false",
+        GITHUB_RUN_NUMBER: "42",
+      });
+      expect(await readFile(ghOutput, "utf8")).toContain("should_publish_rc=false");
+
+      await writeFile(ghOutput, "", "utf8");
+      await runActionStep(h, scripts["Plan release candidate"], "plan", "rc", rc, shimEnv, {
+        GITHUB_OUTPUT: ghOutput,
+        MARKED_PUSH: "true",
+        GITHUB_RUN_NUMBER: "42",
+      });
+      expect(await readFile(ghOutput, "utf8")).toContain("should_publish_rc=true");
+      await h.writeManifest();
+    });
+
+    it.skipIf(!process.env.PREMISE_TEST_GORELEASER)(
+      "It passes pinned GoReleaser 2.18.1 check and snapshot without checksums or tags",
+      async () => {
+        // Arrange
+        const h = harness();
+        const goreleaserBin = process.env.PREMISE_TEST_GORELEASER!;
+        expect(
+          (await h.run(goreleaserBin, ["--version"], { expectSuccess: true })).combined,
+        ).toContain("2.18.1");
+        const configPath = join(h.outputDir, "goreleaser.yml");
+        const rendered = await h.pm(["release", "config"]);
+        await writeFile(configPath, rendered.stdout, { mode: 0o600 });
+
+        // Act
+        await h.run(goreleaserBin, ["check", "-f", configPath], { expectSuccess: true });
+        await h.run(goreleaserBin, ["release", "--snapshot", "--clean", "-f", configPath], {
+          expectSuccess: true,
+          env: { GITHUB_TOKEN: "", GH_TOKEN: "" },
+        });
+
+        // Assert
+        const distEntries = (await pathExists(join(h.workspace, "dist")))
+          ? await readdir(join(h.workspace, "dist"))
+          : [];
+        expect(distEntries.filter((f) => f.includes("checksums"))).toEqual([]);
+        expect((await h.git(["tag"])).stdout.trim()).toBe("");
+        await h.writeManifest();
+      },
+    );
+  });
 
   describe(
-    "given a repository with major GitHub Action tags",
+    "Given a repository with GitHub Action major tags",
     { tags: ["github", "replay"] },
     () => {
       beforeEach(async () => {
@@ -310,7 +291,7 @@ describe("release lifecycle", { tags: ["e2e", "cli", "release"] }, () => {
       });
 
       for (const s of ACTION_TAG_SCENARIOS) {
-        it(`when running publish:update-action-tags (${s.name}), then only valid stable major refs update`, async () => {
+        it(`It ${s.name}`, async () => {
           // Arrange
           const h = harness();
           const callsFile = join(h.workspace, "calls");
@@ -345,10 +326,10 @@ describe("release lifecycle", { tags: ["e2e", "cli", "release"] }, () => {
   );
 
   describe(
-    "given the private GitHub fixture repository (cloudvoyant/premise-e2e)",
+    "Given a private GitHub fixture repository (cloudvoyant/premise-e2e)",
     { tags: ["github", "replay", "live"] },
     () => {
-      it("when verifying private visibility guard via HTTP cassette proxy, then replay/record/live enforces private: true", async () => {
+      it("It enforces private visibility before writing via the HTTP cassette proxy", async () => {
         // Arrange
         const h = harness();
         const cassettePath = join(RECORDINGS_ROOT, "cli/release-github-fixture-visibility.json");
@@ -403,66 +384,57 @@ describe("release lifecycle", { tags: ["e2e", "cli", "release"] }, () => {
     },
   );
 
-  describe(
-    "given a checked client monorepo (release destination permutations)",
-    { tags: ["known-bug"] },
-    () => {
-      it.skip(
-        "when releasing local-only libs + internal app without registry tokens, then checks pass with zero releases or registry writes [CLO-228]",
-        { tags: ["cargo", "replay"] },
-        async () => {
-          // Tracked by CLO-228: generated client on-merge.yml unconditionally fails without CRATES_TOKEN.
-          const h = harness();
-          await h.pm(["init"]);
-          await h.writeManifest();
-        },
-      );
+  describe("Given a project with publishable packages", { tags: ["known-bug"] }, () => {
+    it.skip(
+      "It passes without registry tokens when all projects are local-only [CLO-228]",
+      { tags: ["cargo", "replay"] },
+      async () => {
+        const h = harness();
+        await copyScaffold(join(TESTDATA_ROOT, "workspaces/cargo"), h.workspace);
+        await h.writeManifest();
+      },
+    );
 
-      it.skip(
-        "when a publishable package depends on a local-only sibling lib, then preflight rejects before tagging [CLO-231]",
-        { tags: ["bun", "cargo", "replay"] },
-        async () => {
-          // Tracked by CLO-231: PublicationTargets publishes apps before libs and ignores workspace dependency order.
-          const h = harness();
-          await h.pm(["init"]);
-          await h.writeManifest();
-        },
-      );
+    it.skip(
+      "It rejects a publishable package depending on a local-only sibling before tagging [CLO-231]",
+      { tags: ["bun", "cargo", "replay"] },
+      async () => {
+        const h = harness();
+        await copyScaffold(join(TESTDATA_ROOT, "workspaces/bun"), h.workspace);
+        await h.writeManifest();
+      },
+    );
 
-      it.skip(
-        "when releasing GitHub Release-only (Go, Cargo, Bun), then multi-OS archives + checksums publish and run in a clean consumer [CLO-228, CLO-230, CLO-235]",
-        { tags: ["github", "go", "cargo", "bun", "live"] },
-        async () => {
-          // Tracked by CLO-228, CLO-230 (Cargo GoReleaser drops binaries), CLO-235 (CI release DAG).
-          const h = harness();
-          await h.pm(["init"]);
-          await h.writeManifest();
-        },
-      );
+    it.skip(
+      "It publishes GitHub Release archives and checksums and runs them in a clean consumer [CLO-228, CLO-230, CLO-235]",
+      { tags: ["github", "go", "cargo", "bun", "live"] },
+      async () => {
+        const h = harness();
+        await copyScaffold(join(TESTDATA_ROOT, "workspaces/go"), h.workspace);
+        await h.writeManifest();
+      },
+    );
 
-      it.skip(
-        "when releasing Artifact Registry-only (Bun GAR npm, Go GAR Go/GOPRIVATE, Cargo sparse), then sibling chains publish topologically without a GH Release and install in a clean consumer [CLO-229, CLO-231..CLO-235]",
-        { tags: ["gcp", "go", "cargo", "bun", "live"] },
-        async () => {
-          // Tracked by CLO-229, CLO-231, CLO-232, CLO-233, CLO-234, CLO-235.
-          const h = harness();
-          await h.pm(["init"]);
-          await h.writeManifest();
-        },
-      );
+    it.skip(
+      "It publishes private Artifact Registry packages in dependency order without a GitHub Release [CLO-229, CLO-231..CLO-235]",
+      { tags: ["gcp", "go", "cargo", "bun", "live"] },
+      async () => {
+        const h = harness();
+        await copyScaffold(join(TESTDATA_ROOT, "workspaces/bun"), h.workspace);
+        await h.writeManifest();
+      },
+    );
 
-      it.skip(
-        "when releasing Both GH Release + Artifact Registry, then both publish, verify in a clean consumer, and record in artifacts.json [CLO-228..CLO-236]",
-        { tags: ["github", "gcp", "go", "cargo", "bun", "live"] },
-        async () => {
-          // Tracked by CLO-228..CLO-236.
-          const h = harness();
-          await h.pm(["init"]);
-          await h.writeManifest();
-        },
-      );
-    },
-  );
+    it.skip(
+      "It publishes both GitHub Releases and Artifact Registry packages and records proofs in artifacts.json [CLO-228..CLO-236]",
+      { tags: ["github", "gcp", "go", "cargo", "bun", "live"] },
+      async () => {
+        const h = harness();
+        await copyScaffold(join(TESTDATA_ROOT, "workspaces/go"), h.workspace);
+        await h.writeManifest();
+      },
+    );
+  });
 });
 
 // Private helpers ------------------------------------------------------------
@@ -517,6 +489,37 @@ printf 'publish\\n' >> "$RELEASE_CAPTURE"
   return shimBin;
 }
 
+async function runActionStep(
+  h: PremiseHarness,
+  script: string,
+  operation: string,
+  channel: string,
+  version: string,
+  baseEnv: Record<string, string>,
+  extraEnv: Record<string, string> = {},
+) {
+  return h.run("bash", ["-c", script], {
+    expectSuccess: true,
+    env: {
+      ...baseEnv,
+      COMMAND: operation,
+      FLOW: channel === "rc" ? "on-commit" : "on-merge",
+      RELEASE_MODE: "auto",
+      CHANNEL: channel,
+      VERSION: version,
+      DEPLOY_ENVIRONMENT: "",
+      PREVIEW_BRANCH: "",
+      PROJECT: "",
+      PLATFORM: "",
+      OUTPUT_DIR: "",
+      FILES_DIR: "",
+      ROOT_ONLY: "",
+      SKIP_ROOT: "",
+      ...extraEnv,
+    },
+  });
+}
+
 async function loadActionScripts(): Promise<Record<string, string>> {
   const raw = await readFile(join(REPO_ROOT, "action.yml"), "utf8");
   const lines = raw.split("\n");
@@ -561,41 +564,4 @@ async function loadActionScripts(): Promise<Record<string, string>> {
   }
   flush();
   return scripts;
-}
-
-async function createSourceReleaseFixture(h: PremiseHarness, subdir: string) {
-  const workspace = join(h.workspace, subdir);
-  const remote = join(h.outputDir, `${subdir}-origin.git`);
-  await mkdir(join(workspace, "libs/lua-plugin/lua"), { recursive: true });
-  await writeFile(
-    join(workspace, "premise.yaml"),
-    `workspace:
-  name: lua-plugin
-  kind: monorepo
-  schema-version: "0.2"
-  package_managers: []
-  providers: {ci: github}
-  projects:
-    - name: lua-plugin
-      template: cloudvoyant/premise:premise-lib
-      version: 0.1.0
-      path: libs/lua-plugin
-`,
-    "utf8",
-  );
-  await writeFile(join(workspace, "libs/lua-plugin/lua/init.lua"), "return {}\n", "utf8");
-  await writeFile(
-    join(workspace, "mise.toml"),
-    "[tasks.publish]\nrun = 'exit 1'\n[tasks.\"publish:rc\"]\nrun = 'exit 1'\n",
-    "utf8",
-  );
-  await h.git(["init", "-q", "--initial-branch=main"], { cwd: workspace });
-  await h.git(["config", "user.email", "test@example.invalid"], { cwd: workspace });
-  await h.git(["config", "user.name", "Test"], { cwd: workspace });
-  await h.git(["add", "."], { cwd: workspace });
-  await h.git(["commit", "-qm", "feat: add Lua plugin"], { cwd: workspace });
-  await h.git(["init", "--bare", "-q", remote], { cwd: h.outputDir });
-  await h.git(["remote", "add", "origin", remote], { cwd: workspace });
-  await h.git(["push", "-q", "origin", "HEAD"], { cwd: workspace });
-  return { workspace, remote };
 }

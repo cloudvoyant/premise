@@ -1,0 +1,12 @@
+workspace:
+  name: lua-plugin
+  kind: monorepo
+  schema-version: "0.2"
+  package_managers: []
+  providers:
+    ci: github
+  projects:
+    - name: lua-plugin
+      template: cloudvoyant/premise:premise-lib
+      version: 0.1.0
+      path: libs/lua-plugin

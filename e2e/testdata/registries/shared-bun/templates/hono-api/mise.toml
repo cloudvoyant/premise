@@ -1,0 +1,50 @@
+[tools]
+bun = '1.1'
+
+[env]
+APP_KIND = 'hono-api'
+
+[tasks.install]
+run = 'bun install --ignore-scripts'
+
+[tasks.build]
+run = 'bun build src/index.ts'
+
+[tasks.clean]
+run = 'rm -rf dist'
+
+[tasks.test]
+run = 'bun test'
+
+[tasks.lint]
+run = 'echo "lint ok"'
+
+[tasks."lint:fix"]
+run = 'echo "lint:fix ok"'
+
+[tasks.format]
+run = 'echo "format ok"'
+
+[tasks."format:check"]
+run = 'echo "format:check ok"'
+
+[tasks."env-pull"]
+run = 'echo "env-pull ok"'
+
+[tasks."publish:rc"]
+run = 'echo "publish:rc ok"'
+
+[tasks.publish]
+run = 'echo "publish ok"'
+
+[tasks.run]
+run = 'bun run src/index.ts'
+
+[tasks.dev]
+run = 'bun run src/index.ts'
+
+[tasks.deploy]
+run = 'echo "deploy ok"'
+
+[tasks.e2e]
+run = 'bun test'

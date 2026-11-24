@@ -19,104 +19,146 @@ const CLEAN_CI_ENV: Record<string, string | undefined> = {
   GITLAB_CI: "",
 };
 
+interface SecretProviderMatrixRow {
+  name: "local-json" | "gcp-secret-manager";
+  liveOnly: boolean;
+  tags: string[];
+  environments: readonly ("dev" | "stage" | "prod" | "preview")[];
+}
+
+const SECRET_PROVIDERS: readonly SecretProviderMatrixRow[] = [
+  {
+    name: "local-json",
+    liveOnly: false,
+    tags: ["replay"],
+    environments: ["dev", "stage", "prod", "preview"],
+  },
+  {
+    name: "gcp-secret-manager",
+    liveOnly: true,
+    tags: ["gcp", "live"],
+    environments: ["dev"],
+  },
+];
+
 // Tests ----------------------------------------------------------------------
 
-describe("secrets lifecycle", { tags: ["e2e", "cli", "secrets", "fnox"] }, () => {
+describe("premise secrets", { tags: ["e2e", "cli", "secrets", "fnox"] }, () => {
   const harness = usePremiseHarness({ env: CLEAN_CI_ENV });
 
-  describe("given a workspace with local JSON fnox profiles", { tags: ["replay"] }, () => {
-    beforeEach(async () => {
-      await setupSecretsWorkspace(harness());
-    });
+  for (const provider of SECRET_PROVIDERS) {
+    describe(`Given a premise project (${provider.name})`, { tags: provider.tags }, () => {
+      beforeEach(async () => {
+        if (provider.liveOnly && !isLiveOrRecordMode()) return;
+        await setupSecretsWorkspace(harness(), provider.name);
+      });
 
-    for (const env of ["dev", "stage", "prod", "preview"] as const) {
-      it(
-        `when pulling ${env} secrets, then 0600 git-ignored .env.local is written redacted and injected into pm run`,
-        { tags: env === "dev" ? ["smoke"] : [] },
+      it.skipIf(provider.liveOnly && !isLiveOrRecordMode())(
+        "It creates 0600 git-ignored .env.local based on fnox config",
+        { tags: provider.liveOnly ? [] : ["smoke"] },
         async () => {
           // Arrange
           const h = harness();
           const destination = join(h.workspace, "apps/web/.env.local");
-          const args = ["secrets", "pull", "--project", "web", "--env", env];
-          if (env === "preview") args.push("--branch", "feature/secrets");
 
-          // Act
-          const pull = await h.pm(args);
+          // Act & Assert for every supported environment
+          for (const env of provider.environments) {
+            const args = ["secrets", "pull", "--project", "web", "--env", env];
+            if (env === "preview") args.push("--branch", "feature/secrets");
+            await h.pm(args);
 
-          // Assert profile selection, 0600 git-ignored file, redacted output, and Mise task injection
-          const envContent = await readFile(destination, "utf8");
-          expect(envContent).toContain(`APP_MESSAGE="${env}-example"`);
-          expect((await stat(destination)).mode & 0o777).toBe(0o600);
-          await h.git(["check-ignore", "--quiet", "--", destination]);
-          expect(pull.combined).not.toContain(`${env}-example`);
+            const expectedValue =
+              provider.name === "gcp-secret-manager"
+                ? "premise-e2e-gcp-secret-value"
+                : `${env}-example`;
+            expect(await readFile(destination, "utf8")).toContain(`APP_MESSAGE="${expectedValue}"`);
+            expect((await stat(destination)).mode & 0o777).toBe(0o600);
+            await h.git(["check-ignore", "--quiet", "--", destination]);
+          }
 
-          const taskOutput = await h.pm(["run", "web:show-message"]);
-          expect(taskOutput.stdout.trim()).toBe(`${env}-example`);
+          if (provider.name === "gcp-secret-manager") {
+            h.updateRemoteManifest({ gcpProject: resolveLiveGcpConfig().project });
+          }
           await h.writeManifest();
         },
       );
-    }
 
-    it("when the selected profile is missing, then the previous .env.local is preserved byte-for-byte", async () => {
-      // Arrange
-      const h = harness();
-      const destination = join(h.workspace, "apps/web/.env.local");
-      await h.pm(["secrets", "pull", "--project", "web", "--env", "dev"]);
-      const before = await readFile(destination, "utf8");
+      it.skipIf(provider.liveOnly && !isLiveOrRecordMode())(
+        "It redacts secret values from output and passes vars to pm run",
+        async () => {
+          // Arrange
+          const h = harness();
+          const env = provider.name === "gcp-secret-manager" ? "dev" : "stage";
+          const expectedValue =
+            provider.name === "gcp-secret-manager"
+              ? "premise-e2e-gcp-secret-value"
+              : "stage-example";
 
-      const configPath = join(h.workspace, "apps/web/fnox.toml");
-      const brokenConfig = (await readFile(configPath, "utf8")).replace(
-        "[profiles.stage.secrets]",
-        "[profiles.unavailable.secrets]",
+          // Act
+          const pull = await h.pm(["secrets", "pull", "--project", "web", "--env", env]);
+          const taskOutput = await h.pm(["run", "web:show-message"]);
+
+          // Assert
+          expect(pull.combined).not.toContain(expectedValue);
+          expect(taskOutput.stdout.trim()).toBe(expectedValue);
+          await h.writeManifest();
+        },
       );
-      await writeFile(configPath, brokenConfig, { mode: 0o600 });
-      await chmod(configPath, 0o600);
 
-      // Act
-      const failure = await h.pmFail(["secrets", "pull", "--project", "web", "--env", "stage"]);
+      it.skipIf(provider.liveOnly && !isLiveOrRecordMode())(
+        "It errors out and preserves the prior .env.local when called for an invalid env",
+        async () => {
+          // Arrange
+          const h = harness();
+          const destination = join(h.workspace, "apps/web/.env.local");
+          await h.pm(["secrets", "pull", "--project", "web", "--env", "dev"]);
+          const before = await readFile(destination, "utf8");
 
-      // Assert
-      expect(failure.code).not.toBe(0);
-      expect(await readFile(destination, "utf8")).toBe(before);
-      await h.writeManifest();
+          const configPath = join(h.workspace, "apps/web/fnox.toml");
+          const brokenConfig = (await readFile(configPath, "utf8")).replace(
+            "[profiles.stage.secrets]",
+            "[profiles.unavailable.secrets]",
+          );
+          await writeFile(configPath, brokenConfig, { mode: 0o600 });
+          await chmod(configPath, 0o600);
+
+          // Act
+          const failure = await h.pmFail(["secrets", "pull", "--project", "web", "--env", "stage"]);
+
+          // Assert
+          expect(failure.code).not.toBe(0);
+          expect(await readFile(destination, "utf8")).toBe(before);
+          await h.writeManifest();
+        },
+      );
     });
-  });
-
-  describe("given a workspace configured for GCP Secret Manager", { tags: ["gcp", "live"] }, () => {
-    it.skipIf(!isLiveOrRecordMode())(
-      "when pulling dev secrets from dedicated cloudvoyant-premise Secret Manager, then values resolve safely without leaking",
-      async () => {
-        // Arrange
-        const h = harness();
-        const { project: gcpProject } = resolveLiveGcpConfig();
-
-        // Act
-        const result = await h.run(
-          "gcloud",
-          [
-            "secrets",
-            "versions",
-            "access",
-            "latest",
-            "--secret=premise-e2e-test-secret",
-            `--project=${gcpProject}`,
-          ],
-          { expectSuccess: true },
-        );
-
-        // Assert
-        expect(result.stdout.trim()).toBe("premise-e2e-gcp-secret-value");
-        h.updateRemoteManifest({ gcpProject });
-        await h.writeManifest();
-      },
-    );
-  });
+  }
 });
 
 // Private helpers ------------------------------------------------------------
 
-async function setupSecretsWorkspace(h: PremiseHarness): Promise<void> {
+async function setupSecretsWorkspace(
+  h: PremiseHarness,
+  provider: "local-json" | "gcp-secret-manager",
+): Promise<void> {
   await copyScaffold(join(TESTDATA_ROOT, "pulumi/client"), h.workspace);
   await copyScaffold(join(TESTDATA_ROOT, "secrets"), join(h.workspace, "apps/web"));
+  if (provider === "gcp-secret-manager") {
+    const { project } = resolveLiveGcpConfig();
+    await h.writeFile(
+      "apps/web/fnox.toml",
+      `[providers.gcp]
+type = "gcp-sm"
+project = "${project}"
+
+[profiles.dev.secrets]
+APP_MESSAGE = { provider = "gcp", value = "premise-e2e-test-secret" }
+
+[profiles.stage.secrets]
+APP_MESSAGE = { provider = "gcp", value = "premise-e2e-test-secret" }
+`,
+      0o600,
+    );
+  }
   await h.git(["init", "--quiet"]);
 }

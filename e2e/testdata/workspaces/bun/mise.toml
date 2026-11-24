@@ -1,0 +1,7 @@
+monorepo_root = true
+
+[monorepo]
+config_roots = ['apps/*', 'libs/*']
+
+[tools]
+bun = '1.4.2'

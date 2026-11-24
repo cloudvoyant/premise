@@ -1,0 +1,11 @@
+[tasks.build]
+run = 'if [ -n "${PREMISE_TEST_EVENTS:-}" ]; then printf "shared:build::%s\n" "${PM_RELEASE:-A}" >> "$PREMISE_TEST_EVENTS"; fi'
+
+[tasks.test]
+run = 'if [ -n "${PREMISE_TEST_EVENTS:-}" ]; then printf "shared:test::%s\n" "${PM_RELEASE:-A}" >> "$PREMISE_TEST_EVENTS"; fi'
+
+[tasks."format:check"]
+run = 'if [ -n "${PREMISE_TEST_EVENTS:-}" ]; then printf "shared:format:check::%s\n" "${PM_RELEASE:-A}" >> "$PREMISE_TEST_EVENTS"; fi'
+
+[tasks.lint]
+run = 'if [ -n "${PREMISE_TEST_EVENTS:-}" ]; then printf "shared:lint::%s\n" "${PM_RELEASE:-A}" >> "$PREMISE_TEST_EVENTS"; fi'

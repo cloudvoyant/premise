@@ -1,0 +1,8 @@
+{
+  "name": "bun-fixture",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "libs/*"
+  ]
+}

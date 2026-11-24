@@ -1,0 +1,11 @@
+[tasks.build]
+run = 'echo "cli:build"'
+
+[tasks.test]
+run = 'echo "cli:test"'
+
+[tasks."format:check"]
+run = 'echo "cli:format:check"'
+
+[tasks.lint]
+run = 'echo "cli:lint"'

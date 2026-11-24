@@ -1,0 +1,6 @@
+{
+  "name": "hono-api",
+  "scripts": {
+    "build": "bun build src/index.ts"
+  }
+}

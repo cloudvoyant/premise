@@ -1,0 +1,7 @@
+monorepo_root = true
+
+[monorepo]
+config_roots = ['apps/*', 'libs/*']
+
+[tools]
+rust = '1.88.0'

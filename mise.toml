@@ -100,10 +100,10 @@ dir = "e2e"
 run = "bun x tsc --noEmit -p tsconfig.json"
 
 [tasks."e2e:infra"]
-description = "Run live deploy & infrastructure CLI E2E scenarios against cloudvoyant-premise GCS"
+description = "Run live infrastructure CLI E2E scenarios against cloudvoyant-premise GCS"
 depends = ["build"]
 dir = "e2e"
-run = "PREMISE_E2E_MODE=live bun x vitest run --config cli/vitest.config.ts cli/deploy.spec.ts"
+run = "PREMISE_E2E_MODE=live bun x vitest run --config cli/vitest.config.ts cli/infra.spec.ts"
 
 [tasks.dev]
 description = "Watch sources and rebuild bin/premise (and pm) on change"
