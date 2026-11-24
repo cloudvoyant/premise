@@ -42,9 +42,52 @@ export async function destroyPulumiStack(options: {
       timeoutMs: 300_000,
     },
   );
-  if (res.code !== 0) {
+  if (res.code !== 0 && !res.combined.includes("no stack named")) {
     throw new Error(`Failed to destroy Pulumi stack ${options.stack}: ${res.combined}`);
   }
+}
+
+export function patchManifestInfra(
+  manifest: string,
+  options: { primaryBackend: string; alternateBackend: string; gcpProject: string },
+): string {
+  const indent = manifest.match(/^([ ]+)name:/m)?.[1] ?? "  ";
+  const i2 = indent + indent;
+  const i3 = i2 + indent;
+  const i4 = i3 + indent;
+  const block = [
+    `${indent}infra:`,
+    `${i2}directory: infra`,
+    `${i2}backend: primary`,
+    `${i2}backends:`,
+    `${i3}primary:`,
+    `${i4}url: ${options.primaryBackend}`,
+    `${i3}alternate:`,
+    `${i4}url: ${options.alternateBackend}`,
+    `${i2}environments:`,
+    `${i3}dev:`,
+    `${i4}backend: primary`,
+    `${i4}config:`,
+    `${i4}${indent}gcp:project: ${options.gcpProject}`,
+    `${i3}stage:`,
+    `${i4}backend: primary`,
+    `${i4}config:`,
+    `${i4}${indent}gcp:project: ${options.gcpProject}`,
+    `${i3}prod:`,
+    `${i4}backend: alternate`,
+    `${i4}config:`,
+    `${i4}${indent}gcp:project: ${options.gcpProject}`,
+    `${i3}preview:`,
+    `${i4}backend: alternate`,
+    `${i4}config:`,
+    `${i4}${indent}gcp:project: ${options.gcpProject}`,
+  ].join("\n");
+
+  const existingRe = new RegExp(`^${indent}infra:\\n(?:${indent}[ ].*\\n?)*`, "m");
+  if (existingRe.test(manifest)) {
+    return manifest.replace(existingRe, `${block}\n`);
+  }
+  return `${manifest.trimEnd()}\n${block}\n`;
 }
 
 export async function assertGcsBucketDeleted(bucket: string, cwd: string): Promise<void> {

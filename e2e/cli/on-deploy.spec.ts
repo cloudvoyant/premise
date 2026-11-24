@@ -10,6 +10,7 @@ import { usePremiseHarness } from "../common/fixtures.js";
 import {
   assertGcsBucketDeleted,
   destroyPulumiStack,
+  patchManifestInfra,
   resolveLiveGcpConfig,
 } from "../common/gcp-driver.js";
 import { TESTDATA_ROOT, type PremiseHarness } from "../common/premise-harness.js";
@@ -147,29 +148,11 @@ async function setupLiveDeployClient(h: PremiseHarness) {
 
   const manifestPath = join(h.workspace, "premise.yaml");
   const original = await readFile(manifestPath, "utf8");
-  const infraBlock = `    infra:
-        backend: primary
-        backends:
-            primary:
-                url: ${primaryBackend}
-            alternate:
-                url: ${alternateBackend}
-        environments:
-            dev:
-                backend: primary
-                config:
-                    gcp:project: ${gcpProject}
-            stage:
-                backend: primary
-                config:
-                    gcp:project: ${gcpProject}
-            prod:
-                backend: alternate
-                config:
-                    gcp:project: ${gcpProject}`;
-  const updated = original.includes("infra:")
-    ? original.replace(/[ ]+infra:[\s\S]*?(?=\n[ ]{2,4}[a-z_]+:|\n[a-z_]+:|$)/, infraBlock)
-    : `${original.trimEnd()}\n${infraBlock}\n`;
+  const updated = patchManifestInfra(original, {
+    primaryBackend,
+    alternateBackend,
+    gcpProject,
+  });
   await writeFile(manifestPath, updated, "utf8");
   await h.initGit("chore: initial project", "v1.0.0");
 
