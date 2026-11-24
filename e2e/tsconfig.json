@@ -10,7 +10,11 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "verbatimModuleSyntax": true
+    "verbatimModuleSyntax": true,
+    "paths": {
+      "vitest": ["./node_modules/vitest/dist/index.d.ts"],
+      "vitest/config": ["./node_modules/vitest/config.d.ts"]
+    }
   },
-  "include": ["cli/**/*.ts", "common/**/*.ts"]
+  "include": ["cli/**/*.ts", "../libs/tsutils/**/*.ts", "../libs/testutils/**/*.ts"]
 }

@@ -2,34 +2,7 @@ import { createHash } from "node:crypto";
 import { cp, mkdir, readdir, readFile, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type Json = Record<string, any>;
-
-export type E2EMode = "replay" | "record" | "live";
-
-export function e2eMode(): E2EMode {
-  const raw = (process.env.PREMISE_E2E_MODE ?? "replay").trim().toLowerCase();
-  if (raw === "replay" || raw === "record" || raw === "live") return raw;
-  throw new Error(`Invalid PREMISE_E2E_MODE "${raw}": expected replay, record, or live`);
-}
-
-export function isReplayMode(): boolean {
-  return e2eMode() === "replay";
-}
-
-export function isLiveOrRecordMode(): boolean {
-  const mode = e2eMode();
-  return mode === "live" || mode === "record";
-}
-
-export async function pathExists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
+// Public API -----------------------------------------------------------------
 
 export function sha256(bytes: string | Buffer): string {
   return createHash("sha256").update(bytes).digest("hex");
@@ -43,14 +16,18 @@ export function slugify(value: string): string {
     .slice(0, 96);
 }
 
-export function shouldKeepRemote(testFullName: string): boolean {
-  const filter = (process.env.PREMISE_E2E_KEEP_REMOTE ?? "").trim();
-  if (!filter || filter === "0" || filter === "false") return false;
-  if (filter === "1" || filter === "true" || filter === "all") return true;
+export function hostCIPlatform(): "linux" | "macos" | "windows" {
+  if (process.platform === "darwin") return "macos";
+  if (process.platform === "win32") return "windows";
+  return "linux";
+}
+
+export async function pathExists(path: string): Promise<boolean> {
   try {
-    return new RegExp(filter, "i").test(testFullName);
+    await stat(path);
+    return true;
   } catch {
-    return testFullName.toLowerCase().includes(filter.toLowerCase());
+    return false;
   }
 }
 

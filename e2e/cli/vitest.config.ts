@@ -1,3 +1,4 @@
-import { suiteConfig } from "../common/config.js";
+import { defineConfig } from "vitest/config";
+import { suiteConfig } from "../../libs/testutils/config.js";
 
-export default suiteConfig(import.meta.dirname);
+export default defineConfig(suiteConfig(import.meta.dirname));

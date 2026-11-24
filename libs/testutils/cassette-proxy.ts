@@ -10,7 +10,7 @@ import {
   type ExchangeRequest,
   type ExchangeResponse,
 } from "./cassette.js";
-import type { E2EMode, Json } from "./test-utils.js";
+import type { E2EMode, Json } from "./mode.js";
 
 export type CassetteFile = Record<string, Cassette>;
 

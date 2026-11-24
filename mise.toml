@@ -92,7 +92,7 @@ run = "PREMISE_E2E_MODE=live bun x vitest run --config cli/vitest.config.ts"
 [tasks."e2e:cleanup"]
 description = "Clean up remote cloud/GitHub resources recorded in an e2e/outputs/**/artifacts.json manifest"
 dir = "e2e"
-run = "bun common/cleanup.ts"
+run = "bun ../libs/testutils/cleanup.ts"
 
 [tasks."e2e:typecheck"]
 description = "Type-check E2E TypeScript specs and harness"

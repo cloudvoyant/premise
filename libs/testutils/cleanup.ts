@@ -1,8 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { ArtifactManifest } from "./premise-harness.js";
-import { deleteGithubBranch, deleteGithubReleaseAndTag } from "./github-driver.js";
-import { destroyPulumiStack } from "./gcp-driver.js";
+import { deleteGithubBranch, deleteGithubReleaseAndTag } from "../tsutils/github.js";
+import { destroyPulumiStack } from "../tsutils/gcs.js";
 
 async function main() {
   const target = process.argv[2];

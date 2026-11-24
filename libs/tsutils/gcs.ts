@@ -1,4 +1,7 @@
-import { execProcess } from "./premise-harness.js";
+import { createHash } from "node:crypto";
+import { execProcess } from "./process.js";
+
+// Public API -----------------------------------------------------------------
 
 export const DEFAULT_GCP_PROJECT = "cloudvoyant-premise";
 export const DEFAULT_PULUMI_STATE_BUCKET = "gs://cloudvoyant-premise-pulumi-state-547304404433";
@@ -21,30 +24,6 @@ export function resolveLiveGcpConfig(): LiveGcpConfig {
     backendUrl,
     garLocation: process.env.PREMISE_TEST_GAR_LOCATION?.trim() || DEFAULT_GAR_LOCATION,
   };
-}
-
-export async function destroyPulumiStack(options: {
-  infraDir: string;
-  stack: string;
-  backendUrl: string;
-  env: NodeJS.ProcessEnv;
-}): Promise<void> {
-  const res = await execProcess(
-    "mise",
-    ["exec", "--", "pulumi", "destroy", "--stack", options.stack, "--yes", "--non-interactive"],
-    {
-      cwd: options.infraDir,
-      env: {
-        ...options.env,
-        PULUMI_BACKEND_URL: options.backendUrl,
-        PULUMI_CONFIG_PASSPHRASE: "",
-      },
-      timeoutMs: 300_000,
-    },
-  );
-  if (res.code !== 0 && !res.combined.includes("no stack named")) {
-    throw new Error(`Failed to destroy Pulumi stack ${options.stack}: ${res.combined}`);
-  }
 }
 
 export function patchManifestInfra(
@@ -95,6 +74,30 @@ export function patchManifestInfra(
   return `${manifest.trimEnd()}\n${block}\n`;
 }
 
+export async function destroyPulumiStack(options: {
+  infraDir: string;
+  stack: string;
+  backendUrl: string;
+  env: NodeJS.ProcessEnv;
+}): Promise<void> {
+  const res = await execProcess(
+    "mise",
+    ["exec", "--", "pulumi", "destroy", "--stack", options.stack, "--yes", "--non-interactive"],
+    {
+      cwd: options.infraDir,
+      env: {
+        ...options.env,
+        PULUMI_BACKEND_URL: options.backendUrl,
+        PULUMI_CONFIG_PASSPHRASE: "",
+      },
+      timeoutMs: 300_000,
+    },
+  );
+  if (res.code !== 0 && !res.combined.includes("no stack named")) {
+    throw new Error(`Failed to destroy Pulumi stack ${options.stack}: ${res.combined}`);
+  }
+}
+
 export async function assertGcsBucketDeleted(bucket: string, cwd: string): Promise<void> {
   const res = await execProcess("gcloud", ["storage", "buckets", "describe", `gs://${bucket}`], {
     cwd,
@@ -116,4 +119,45 @@ export async function readGcsObject(bucket: string, object: string, cwd: string)
     throw new Error(`Failed to read gs://${bucket}/${object}: ${res.combined}`);
   }
   return res.stdout;
+}
+
+export async function readGcsBucketLabel(
+  bucket: string,
+  label: string,
+  cwd: string,
+): Promise<string> {
+  const res = await execProcess(
+    "gcloud",
+    ["storage", "buckets", "describe", `gs://${bucket}`, `--format=value(labels.${label})`],
+    { cwd, env: process.env, timeoutMs: 30_000 },
+  );
+  if (res.code !== 0) {
+    throw new Error(`Failed to describe gs://${bucket}: ${res.combined}`);
+  }
+  return res.stdout.trim();
+}
+
+export async function assertSavedPulumiState(options: {
+  backendUrl: string;
+  env: "shared" | "dev" | "stage" | "prod" | "preview";
+  branch?: string;
+  cwd: string;
+}): Promise<void> {
+  const project = options.env === "shared" ? "premise-gcs-fixture-shared" : "premise-gcs-fixture";
+  const stack =
+    options.env === "preview"
+      ? `preview-${(options.branch ?? "").replace(/^feature\//, "")}-${createHash("sha256")
+          .update(options.branch ?? "")
+          .digest("hex")
+          .slice(0, 10)}`
+      : options.env;
+  const statePath = `${options.backendUrl}/.pulumi/stacks/${project}/${stack}.json`;
+  const res = await execProcess(
+    "gcloud",
+    ["storage", "objects", "describe", statePath, "--format=value(name)"],
+    { cwd: options.cwd, env: process.env, timeoutMs: 30_000 },
+  );
+  if (res.code !== 0) {
+    throw new Error(`Expected Pulumi state at ${statePath}: ${res.combined}`);
+  }
 }

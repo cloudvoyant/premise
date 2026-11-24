@@ -17,6 +17,7 @@
 - Keep infra setup and querying in `libs/core/infra.go`, app deploy and rollback in `libs/core/deploy.go`, and CI sequencing in `libs/core/ci.go`.
 - Put provider interfaces and implementations in `libs/core/providers`. Keep provider behavior independent of the CI runner; put runner identity exchange and output formatting in CI adapters.
 - Put new external-tool wrappers in `libs/core/extensions`. Move existing wrappers in a separate follow-up.
+- Put shared TypeScript utilities (such as GCS and GitHub helpers) in `libs/tsutils/` and shared E2E test harness, fixture, and cassette utilities in `libs/testutils/`.
 - Define application tasks in `mise.toml`. Do not add standalone task dispatcher scripts.
 - [Proposed] Keep `templates/premise-app` and `templates/premise-lib` registered under `template_registry` in `premise.yaml` so `cloudvoyant/premise` continues to serve its language-agnostic official templates alongside the monorepo workspace.
 - Keep reusable test files in fixtures. Process doubles may replace tools for module failure tests.
@@ -51,7 +52,7 @@
 - Prefer command E2E tests, then module integration tests. Avoid tests that mirror implementation.
 - Separate Arrange, Act, and Assert with blank lines. Name the behavior and expected outcome.
 - [Proposed] Keep test names short and behavioral (such as "it applies shared first then dev"); keep exact flag or output invariants in assertions rather than test names.
-- Organize CLI E2E specs under `e2e/cli/` by command and major flow: `scaffolding.spec.ts`, `secrets.spec.ts`, `infra.spec.ts`, `release.spec.ts`, `on-commit.spec.ts`, `on-merge.spec.ts`, and `on-deploy.spec.ts`. Nest `Given ...`, `When ...`, and `It ...` scopes with hoisted `beforeEach` setup.
+- Organize CLI E2E specs under `e2e/cli/` by command and major flow: `scaffolding.spec.ts`, `secrets.spec.ts`, `infra.spec.ts`, `release.spec.ts`, `on-commit.spec.ts`, `on-merge.spec.ts`, and `on-deploy.spec.ts`. Nest `Given ...`, `When ...`, and `It ...` scopes; use `beforeAll` inside `When ...` blocks to run expensive CLI actions once and split outcomes into focused `it('It should ...')` assertions.
 - Store real, inspectable scaffolded workspaces and registries under `e2e/testdata/` and copy them into `e2e/outputs/cli/<spec>/<test-slug>/workspace/` alongside `cli.log` and `artifacts.json` on every run; avoid assembling workspaces inline in spec files.
 - Matrix provider-backed E2E specs (such as secret backends and per-ecosystem `bun`, `rust`, and `go` variants) over supported providers instead of duplicating separate blocks.
 - Keep actions and assertions visible. Put reusable setup and process execution in helpers.

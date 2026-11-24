@@ -3,18 +3,20 @@
  * @module-tag cli
  * @module-tag on-merge
  */
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
-import { usePremiseHarness } from "../common/fixtures.js";
+import { beforeAll, describe, expect, it } from "vitest";
 import {
-  assertGcsBucketDeleted,
-  destroyPulumiStack,
-  patchManifestInfra,
-  resolveLiveGcpConfig,
-} from "../common/gcp-driver.js";
-import { TESTDATA_ROOT, type PremiseHarness } from "../common/premise-harness.js";
-import { copyScaffold, isLiveOrRecordMode } from "../common/test-utils.js";
+  commitChange,
+  configureLiveInfraWorkspace,
+  setupGenericInfraWorkspace,
+  useSuiteHarness,
+  type LiveInfraContext,
+} from "../../libs/testutils/fixtures.js";
+import { isLiveOrRecordMode } from "../../libs/testutils/mode.js";
+import { TESTDATA_ROOT } from "../../libs/testutils/premise-harness.js";
+import { copyScaffold, hostCIPlatform } from "../../libs/tsutils/fs.js";
+import { assertGcsBucketDeleted, readGcsObject } from "../../libs/tsutils/gcs.js";
 
 // Fixtures -------------------------------------------------------------------
 
@@ -27,25 +29,22 @@ const ECOSYSTEM_FIXTURES = [
 // Tests ----------------------------------------------------------------------
 
 describe("premise on-merge", { tags: ["e2e", "cli", "ci", "on-merge"] }, () => {
-  const harness = usePremiseHarness({ env: { PM_RELEASE: "A" } });
-
   describe("Given a project with infra and generic apps and libs", () => {
-    beforeEach(async () => {
-      await setupGenericInfraWorkspace(harness());
-    });
+    describe("When merging a feature commit to main", { tags: ["smoke", "replay"] }, () => {
+      const suite = useSuiteHarness("on_merge_generic_infra_stage", import.meta.filename, {
+        env: { PM_RELEASE: "A" },
+      });
+      let version = "";
+      let artifactsDir = "";
 
-    it(
-      "It bumps the version from conventional commits and stages stable release artifacts",
-      { tags: ["smoke", "replay"] },
-      async () => {
-        // Arrange
-        const h = harness();
+      beforeAll(async () => {
+        const h = suite();
+        await setupGenericInfraWorkspace(h);
         await commitChange(h, "feat: add stable page");
-        const version = (await h.pm(["version", "next"])).stdout.trim();
-        const artifactsDir = join(h.outputDir, "artifacts-stable");
+        version = (await h.pm(["version", "next"])).stdout.trim();
+        artifactsDir = join(h.outputDir, "artifacts-stable");
         await mkdir(artifactsDir, { recursive: true });
 
-        // Act
         await h.pm(
           [
             "ci",
@@ -72,148 +71,184 @@ describe("premise on-merge", { tags: ["e2e", "cli", "ci", "on-merge"] }, () => {
             },
           },
         );
+        await h.writeManifest();
+      });
 
-        // Assert
+      it("It should bump the version from conventional commits", () => {
         expect(version).toBe("v1.1.0");
+      });
+
+      it("It should stage stable release artifacts", async () => {
         expect(await readFile(join(artifactsDir, "index.html"), "utf8")).toContain("Release A");
         expect(await readFile(join(artifactsDir, "version.txt"), "utf8")).toBe("stable:1.1.0\n");
-        await h.writeManifest();
-      },
-    );
+      });
+    });
 
-    it.skipIf(!isLiveOrRecordMode())(
-      "It destroys the merged preview environment idempotently and updates dev in-place to release B",
+    describe(
+      "When updating dev and cleaning up preview on merge",
       { tags: ["gcp", "pulumi", "live"] },
-      async () => {
-        // Arrange
-        const h = harness();
-        const ctx = await configureLiveMergeBackends(h);
-        await h.pm(
-          ["ci", "flow", "on-commit", "--environment", "preview", "--branch", ctx.branch],
-          {
+      () => {
+        const suite = useSuiteHarness("on_merge_live_dev_and_preview", import.meta.filename, {
+          env: { PM_RELEASE: "A" },
+          enabled: isLiveOrRecordMode(),
+        });
+        let ctx: LiveInfraContext;
+        let previewBucket = "";
+        let devBucket = "";
+        let sharedBucket = "";
+
+        beforeAll(async () => {
+          if (!isLiveOrRecordMode()) return;
+          const h = suite();
+          ctx = await configureLiveInfraWorkspace(h, { copyFixture: true, initGit: true });
+          ctx.touched.add("preview");
+          ctx.touched.add("dev");
+          ctx.touched.add("shared");
+
+          // Seed preview A and initial dev A via their own lifecycle flows
+          await h.pm(
+            ["ci", "flow", "on-commit", "--environment", "preview", "--branch", ctx.branch],
+            {
+              env: { PM_RELEASE: "A" },
+            },
+          );
+          previewBucket = (
+            await h.pm([
+              "infra",
+              "query",
+              "--env",
+              "preview",
+              "--branch",
+              ctx.branch,
+              "--output",
+              "bucketName",
+            ])
+          ).stdout.trim();
+          await h.pm(["ci", "flow", "on-merge", "--environment", "dev"], {
             env: { PM_RELEASE: "A" },
+          });
+          devBucket = (
+            await h.pm(["infra", "query", "--env", "dev", "--output", "bucketName"])
+          ).stdout.trim();
+          ctx.buckets.set("dev", devBucket);
+
+          // Act: merge release B into dev and destroy the merged preview
+          await h.pm(["ci", "flow", "on-merge", "--environment", "dev"], {
+            env: { PM_RELEASE: "B" },
+          });
+          sharedBucket = (
+            await h.pm(["infra", "query", "--env", "shared", "--output", "bucketName"])
+          ).stdout.trim();
+          ctx.buckets.set("shared", sharedBucket);
+          await h.pm(
+            ["ci", "flow", "on-merge", "--environment", "preview", "--branch", ctx.branch],
+            {
+              env: { PM_RELEASE: "A" },
+            },
+          );
+          h.updateRemoteManifest({ gcpProject: ctx.gcpProject });
+          await h.writeManifest();
+        });
+
+        it.skipIf(!isLiveOrRecordMode())(
+          "It should destroy the merged preview idempotently while preserving shared",
+          async () => {
+            const h = suite();
+            await assertGcsBucketDeleted(previewBucket, h.workspace);
+            await h.pm(
+              ["ci", "flow", "on-merge", "--environment", "preview", "--branch", ctx.branch],
+              {
+                env: { PM_RELEASE: "A" },
+              },
+            );
+            expect(
+              (
+                await h.pm(["infra", "query", "--env", "shared", "--output", "bucketName"])
+              ).stdout.trim(),
+            ).toBe(sharedBucket);
           },
         );
-        const previewBucket = (
-          await h.pm([
-            "infra",
-            "query",
-            "--env",
-            "preview",
-            "--branch",
-            ctx.branch,
-            "--output",
-            "bucketName",
-          ])
-        ).stdout.trim();
-        await h.pm(["ci", "flow", "on-deploy", "--environment", "dev"], {
-          env: { PM_RELEASE: "A" },
-        });
-        const devBucket = (
-          await h.pm(["infra", "query", "--env", "dev", "--output", "bucketName"])
-        ).stdout.trim();
-        ctx.devBucket = devBucket;
 
-        // Act
-        await h.pm(["ci", "flow", "on-merge", "--environment", "dev"], {
-          env: { PM_RELEASE: "B" },
-        });
-        const sharedBucket = (
-          await h.pm(["infra", "query", "--env", "shared", "--output", "bucketName"])
-        ).stdout.trim();
-        ctx.sharedBucket = sharedBucket;
-        await h.pm(["ci", "flow", "on-merge", "--environment", "preview", "--branch", ctx.branch], {
-          env: { PM_RELEASE: "A" },
-        });
-
-        // Assert preview destroyed (idempotent) while shared is preserved and dev updated in-place to B
-        await assertGcsBucketDeleted(previewBucket, h.workspace);
-        expect(
-          (
-            await h.pm(["infra", "query", "--env", "shared", "--output", "bucketName"])
-          ).stdout.trim(),
-        ).toBe(sharedBucket);
-        await h.pm(["ci", "flow", "on-merge", "--environment", "preview", "--branch", ctx.branch], {
-          env: { PM_RELEASE: "A" },
-        });
-        expect(
-          (await h.pm(["infra", "query", "--env", "dev", "--output", "bucketName"])).stdout.trim(),
-        ).toBe(devBucket);
-        expect(
-          (
-            await h.run("gcloud", ["storage", "cat", `gs://${devBucket}/schema-version.txt`], {
-              expectSuccess: true,
-            })
-          ).stdout.trim(),
-        ).toBe("dev:B");
-        expect(
-          (
-            await h.run("gcloud", ["storage", "cat", `gs://${devBucket}/index.html`], {
-              expectSuccess: true,
-            })
-          ).stdout,
-        ).toContain("<h1>Release B</h1>");
-        h.updateRemoteManifest({ gcpProject: ctx.gcpProject });
-        await h.writeManifest();
+        it.skipIf(!isLiveOrRecordMode())(
+          "It should update existing dev in-place to Release B and Migration B",
+          async () => {
+            const h = suite();
+            expect(
+              (
+                await h.pm(["infra", "query", "--env", "dev", "--output", "bucketName"])
+              ).stdout.trim(),
+            ).toBe(devBucket);
+            expect((await readGcsObject(devBucket, "schema-version.txt", h.workspace)).trim()).toBe(
+              "dev:B",
+            );
+            expect(await readGcsObject(devBucket, "index.html", h.workspace)).toContain(
+              "<h1>Release B</h1>",
+            );
+          },
+        );
       },
     );
   });
 
   describe("Given a project without infra and generic apps and libs", { tags: ["replay"] }, () => {
-    beforeEach(async () => {
-      const h = harness();
+    const suite = useSuiteHarness("on_merge_generic_no_infra", import.meta.filename, {
+      env: { PM_RELEASE: "A" },
+    });
+    let nextVersion = "";
+    let events = "";
+
+    beforeAll(async () => {
+      const h = suite();
       await copyScaffold(join(TESTDATA_ROOT, "workspaces/generic-no-infra"), h.workspace);
       await h.initGit("chore: initial generic project", "v1.0.0");
-    });
-
-    it("It bumps version and runs on-merge checks without scheduling infrastructure", async () => {
-      // Arrange
-      const h = harness();
       await commitChange(h, "fix: patch generic app");
       const eventsFile = join(h.outputDir, "events.log");
-
-      // Act
-      const nextVersion = (await h.pm(["version", "next"])).stdout.trim();
+      nextVersion = (await h.pm(["version", "next"])).stdout.trim();
       await h.pm(["ci", "flow", "on-merge", "--release", "none"], {
         env: { PREMISE_TEST_EVENTS: eventsFile },
       });
+      events = await readFile(eventsFile, "utf8");
+      await h.writeManifest();
+    });
 
-      // Assert
+    it("It should compute the next patch version", () => {
       expect(nextVersion).toBe("v1.0.1");
-      const events = await readFile(eventsFile, "utf8");
+    });
+
+    it("It should run checks across generic libs and apps without scheduling infra", () => {
       expect(events).toContain("shared:build::A");
       expect(events).toContain("web:lint::A");
-      await h.writeManifest();
     });
   });
 
   for (const eco of ECOSYSTEM_FIXTURES) {
     describe(`Given a project with ${eco.label} libs`, { tags: [eco.tag] }, () => {
-      beforeEach(async () => {
-        const h = harness();
+      const suite = useSuiteHarness(`on_merge_${eco.label}`, import.meta.filename, {
+        env: { PM_RELEASE: "A" },
+      });
+      let version = "";
+      let planOutput = "";
+      let flowOutput = "";
+
+      beforeAll(async () => {
+        const h = suite();
         await copyScaffold(join(TESTDATA_ROOT, eco.fixture), h.workspace);
         await h.initGit(`chore: initial ${eco.label} project`, "v1.0.0");
+        await commitChange(h, `feat: add ${eco.label} feature`);
+        version = (await h.pm(["version", "next"])).stdout.trim();
+        planOutput = (await h.pm(["ci", "plan", "--ci-output"])).stdout;
+        flowOutput = (await h.pm(["ci", "flow", "on-merge", "--release", "none"])).combined;
+        await h.writeManifest();
       });
 
       it(
-        `It handles multiple platforms, nobuild, and local-only ${eco.label} variants on merge`,
+        `It should handle multiple platforms, nobuild, and local-only ${eco.label} variants on merge`,
         { tags: ["replay"] },
-        async () => {
-          // Arrange
-          const h = harness();
-          await commitChange(h, `feat: add ${eco.label} feature`);
-
-          // Act
-          const version = (await h.pm(["version", "next"])).stdout.trim();
-          const plan = await h.pm(["ci", "plan", "--ci-output"]);
-          const flow = await h.pm(["ci", "flow", "on-merge", "--release", "none"]);
-
-          // Assert
+        () => {
           expect(version).toBe("v1.1.0");
-          expect(plan.stdout).toContain("mode=matrix\n");
-          expect(flow.combined).toContain("nobuild-lib:skip-build");
-          expect(flow.combined).toContain("local-lib:test");
-          await h.writeManifest();
+          expect(planOutput).toContain("mode=matrix\n");
+          expect(flowOutput).toContain("nobuild-lib:skip-build");
+          expect(flowOutput).toContain("local-lib:test");
         },
       );
 
@@ -221,9 +256,7 @@ describe("premise on-merge", { tags: ["e2e", "cli", "ci", "on-merge"] }, () => {
         `It handles public ${eco.label} packages on merge [CLO-228..CLO-234]`,
         { tags: ["known-bug", "live"] },
         async () => {
-          const h = harness();
-          await h.pm(["ci", "plan", "--ci-output"]);
-          await h.writeManifest();
+          expect(planOutput).toContain("mode=matrix\n");
         },
       );
 
@@ -231,9 +264,7 @@ describe("premise on-merge", { tags: ["e2e", "cli", "ci", "on-merge"] }, () => {
         `It handles private ${eco.label} packages for Artifact Registry / alternate registries on merge [CLO-229, CLO-232..CLO-234]`,
         { tags: ["known-bug", "live"] },
         async () => {
-          const h = harness();
-          await h.pm(["ci", "plan", "--ci-output"]);
-          await h.writeManifest();
+          expect(planOutput).toContain("mode=matrix\n");
         },
       );
 
@@ -241,93 +272,9 @@ describe("premise on-merge", { tags: ["e2e", "cli", "ci", "on-merge"] }, () => {
         `It handles stable GitHub Releases for ${eco.label} on merge [CLO-230, CLO-235, CLO-236]`,
         { tags: ["known-bug", "live"] },
         async () => {
-          const h = harness();
-          await h.pm(["ci", "plan", "--ci-output"]);
-          await h.writeManifest();
+          expect(planOutput).toContain("mode=matrix\n");
         },
       );
     });
   }
 });
-
-// Private helpers ------------------------------------------------------------
-
-function hostCIPlatform(): string {
-  if (process.platform === "darwin") return "macos";
-  if (process.platform === "win32") return "windows";
-  return "linux";
-}
-
-async function setupGenericInfraWorkspace(h: PremiseHarness): Promise<void> {
-  await copyScaffold(join(TESTDATA_ROOT, "pulumi/client"), h.workspace);
-  await h.writeFile(
-    "mise.toml",
-    "monorepo_root = true\n[monorepo]\nconfig_roots = ['apps/*', 'libs/*']\n",
-  );
-  const manifestPath = join(h.workspace, "premise.yaml");
-  const manifest = await readFile(manifestPath, "utf8");
-  const platform = hostCIPlatform();
-  const updated = manifest.includes("release_platforms:")
-    ? manifest.replace(/release_platforms:.*$/m, `release_platforms: [${platform}]`)
-    : manifest.replace(
-        "path: apps/web",
-        `path: apps/web\n      ci:\n        release_platforms:\n          - ${platform}`,
-      );
-  await writeFile(manifestPath, updated, "utf8");
-  await h.initGit("chore: initial project", "v1.0.0");
-}
-
-async function commitChange(h: PremiseHarness, message: string): Promise<void> {
-  await h.writeFile("CHANGE.txt", `${message}\n`);
-  await h.git(["add", "CHANGE.txt"]);
-  await h.git(["commit", "--quiet", "-m", message]);
-}
-
-async function configureLiveMergeBackends(h: PremiseHarness) {
-  const { project: gcpProject, backendUrl: baseBackend } = resolveLiveGcpConfig();
-  const runBackend = `${baseBackend.replace(/\/+$/, "")}/run-${h.runId}`;
-  const alternateBackend = `${runBackend}/alternate`;
-  const branch = `feature/static-${h.runId}`;
-
-  const shimBin = join(h.outputDir, "pm-bin");
-  await mkdir(shimBin, { recursive: true });
-  await writeFile(join(shimBin, "pm"), `#!/bin/sh\nexec "${h.binary}" "$@"\n`, { mode: 0o755 });
-  await chmod(join(shimBin, "pm"), 0o755);
-  h.env.PATH = `${shimBin}:${h.env.PATH ?? process.env.PATH ?? ""}`;
-  h.env.PULUMI_CONFIG_PASSPHRASE = "";
-  h.env.PM_RELEASE = "A";
-  h.env.PM_BRANCH = "";
-
-  const manifestPath = join(h.workspace, "premise.yaml");
-  const original = await readFile(manifestPath, "utf8");
-  const updated = patchManifestInfra(original, {
-    primaryBackend: runBackend,
-    alternateBackend,
-    gcpProject,
-  });
-  await writeFile(manifestPath, updated, "utf8");
-
-  const state = { branch, gcpProject, devBucket: "", sharedBucket: "" };
-  h.registerRemoteCleanup(async () => {
-    await h.pmFail(["ci", "flow", "on-merge", "--environment", "preview", "--branch", branch]);
-    await destroyPulumiStack({
-      infraDir: join(h.workspace, "infra/env"),
-      stack: "dev",
-      backendUrl: runBackend,
-      env: h.env,
-    }).catch(() => {});
-    if (state.devBucket) {
-      await assertGcsBucketDeleted(state.devBucket, h.workspace);
-    }
-    await destroyPulumiStack({
-      infraDir: join(h.workspace, "infra/shared"),
-      stack: "shared",
-      backendUrl: runBackend,
-      env: h.env,
-    }).catch(() => {});
-    if (state.sharedBucket) {
-      await assertGcsBucketDeleted(state.sharedBucket, h.workspace);
-    }
-  });
-  return state;
-}

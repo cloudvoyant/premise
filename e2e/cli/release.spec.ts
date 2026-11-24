@@ -6,16 +6,17 @@
 import { chmod, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { HttpCassetteProxy } from "../common/cassette-proxy.js";
-import { usePremiseHarness } from "../common/fixtures.js";
-import { assertPrivateFixtureRepo, fixtureGithubRepo } from "../common/github-driver.js";
+import { HttpCassetteProxy } from "../../libs/testutils/cassette-proxy.js";
+import { usePremiseHarness } from "../../libs/testutils/fixtures.js";
+import { isReplayMode } from "../../libs/testutils/mode.js";
 import {
   RECORDINGS_ROOT,
   REPO_ROOT,
   TESTDATA_ROOT,
   type PremiseHarness,
-} from "../common/premise-harness.js";
-import { copyScaffold, isReplayMode, pathExists } from "../common/test-utils.js";
+} from "../../libs/testutils/premise-harness.js";
+import { copyScaffold, pathExists } from "../../libs/tsutils/fs.js";
+import { assertPrivateFixtureRepo, fixtureGithubRepo } from "../../libs/tsutils/github.js";
 
 // Fixtures -------------------------------------------------------------------
 

@@ -1,18 +1,14 @@
-import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { appendFile, chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
-import { existsSync } from "node:fs";
-import {
-  collectLocalFiles,
-  copyScaffold,
-  e2eMode,
-  shouldKeepRemote,
-  slugify,
-  type E2EMode,
-} from "./test-utils.js";
+import { collectLocalFiles, copyScaffold, slugify } from "../tsutils/fs.js";
+import { execProcess, type CommandResult } from "../tsutils/process.js";
+import { e2eMode, shouldKeepRemote, type E2EMode } from "./mode.js";
+
+// Public API -----------------------------------------------------------------
 
 export const REPO_ROOT = resolve(import.meta.dirname, "../..");
-export const E2E_ROOT = resolve(import.meta.dirname, "..");
+export const E2E_ROOT = join(REPO_ROOT, "e2e");
 export const TESTDATA_ROOT = join(E2E_ROOT, "testdata");
 export const OUTPUTS_ROOT = join(E2E_ROOT, "outputs");
 export const RECORDINGS_ROOT = join(E2E_ROOT, "recordings");
@@ -21,13 +17,6 @@ export interface TestTaskMeta {
   filepath: string;
   name: string;
   fullName: string;
-}
-
-export interface CommandResult {
-  code: number | null;
-  stdout: string;
-  stderr: string;
-  combined: string;
 }
 
 export interface RunOptions {
@@ -60,10 +49,6 @@ export interface ArtifactManifest {
   cleanupCommand?: string;
 }
 
-function formatArg(arg: string): string {
-  return /[\s"']/.test(arg) ? JSON.stringify(arg) : arg;
-}
-
 export function resolvePremiseBinary(): string {
   const explicit = process.env.PREMISE_BIN?.trim();
   if (explicit) return resolve(explicit);
@@ -72,45 +57,6 @@ export function resolvePremiseBinary(): string {
   const fallback = join(REPO_ROOT, "bin", "pm");
   if (existsSync(fallback)) return fallback;
   throw new Error(`Premise binary not found at ${built}. Run "mise run build" or set PREMISE_BIN.`);
-}
-
-export async function execProcess(
-  program: string,
-  args: string[],
-  options: {
-    cwd: string;
-    env: NodeJS.ProcessEnv;
-    input?: string;
-    timeoutMs?: number;
-  },
-): Promise<CommandResult> {
-  const child = spawn(program, args, {
-    cwd: options.cwd,
-    env: options.env,
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-  let stdout = "";
-  let stderr = "";
-  child.stdout.on("data", (chunk) => {
-    stdout += String(chunk);
-  });
-  child.stderr.on("data", (chunk) => {
-    stderr += String(chunk);
-  });
-  if (options.input !== undefined) child.stdin.end(options.input);
-  else child.stdin.end();
-
-  const timeoutMs = options.timeoutMs ?? 600_000;
-  const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
-  try {
-    const code = await new Promise<number | null>((resolveCode, reject) => {
-      child.once("error", reject);
-      child.once("close", (exitCode) => resolveCode(exitCode));
-    });
-    return { code, stdout, stderr, combined: `${stdout}${stderr}` };
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 /**
@@ -160,9 +106,7 @@ export class PremiseHarness {
       workspaceDir: this.workspace,
       cliLogPath: this.cliLogPath,
       localFiles: [],
-      remote: {
-        retained: this.keepRemote,
-      },
+      remote: { retained: this.keepRemote },
     };
   }
 
@@ -196,8 +140,7 @@ export class PremiseHarness {
       "utf8",
     );
     if (options.fixture) {
-      const fixtureDir = join(TESTDATA_ROOT, options.fixture);
-      await copyScaffold(fixtureDir, harness.workspace);
+      await copyScaffold(join(TESTDATA_ROOT, options.fixture), harness.workspace);
     }
     return harness;
   }
@@ -285,23 +228,6 @@ export class PremiseHarness {
     return readFile(join(this.workspace, relPath), "utf8");
   }
 
-  async verifyInCleanConsumer(
-    program: string,
-    args: string[],
-    env?: Record<string, string | undefined>,
-  ): Promise<CommandResult> {
-    const consumerDir = join(this.outputDir, "consumer");
-    await rm(consumerDir, { recursive: true, force: true });
-    await mkdir(consumerDir, { recursive: true });
-    const result = await this.run(program, args, { cwd: consumerDir, env, expectSuccess: false });
-    this.manifestState.consumerVerification = {
-      command: `${program} ${args.join(" ")}`,
-      exitCode: result.code ?? -1,
-      stdout: result.stdout.trim(),
-    };
-    return result;
-  }
-
   registerRemoteCleanup(fn: () => Promise<void>): void {
     this.remoteCleanups.push(fn);
   }
@@ -331,4 +257,10 @@ export class PremiseHarness {
     }
     await this.writeManifest();
   }
+}
+
+// Private helpers ------------------------------------------------------------
+
+function formatArg(arg: string): string {
+  return /[\s"']/.test(arg) ? JSON.stringify(arg) : arg;
 }

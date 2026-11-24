@@ -3,30 +3,22 @@
  * @module-tag cli
  * @module-tag infra
  */
-import { createHash } from "node:crypto";
 import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { usePremiseHarness } from "../common/fixtures.js";
+import {
+  configureLiveInfraWorkspace,
+  usePremiseHarness,
+  type LiveInfraContext,
+} from "../../libs/testutils/fixtures.js";
+import { isLiveOrRecordMode, isReplayMode } from "../../libs/testutils/mode.js";
+import { TESTDATA_ROOT, type PremiseHarness } from "../../libs/testutils/premise-harness.js";
+import { copyScaffold } from "../../libs/tsutils/fs.js";
 import {
   assertGcsBucketDeleted,
-  destroyPulumiStack,
-  patchManifestInfra,
-  resolveLiveGcpConfig,
-} from "../common/gcp-driver.js";
-import { TESTDATA_ROOT, type PremiseHarness } from "../common/premise-harness.js";
-import { copyScaffold, isLiveOrRecordMode, isReplayMode } from "../common/test-utils.js";
-
-// Fixtures -------------------------------------------------------------------
-
-interface LiveInfraContext {
-  branch: string;
-  primaryBackend: string;
-  alternateBackend: string;
-  gcpProject: string;
-  touched: Set<string>;
-  buckets: Map<string, string>;
-}
+  assertSavedPulumiState,
+  readGcsBucketLabel,
+} from "../../libs/tsutils/gcs.js";
 
 // Tests ----------------------------------------------------------------------
 
@@ -326,20 +318,7 @@ printf '{"type":"external_account","credential_source":{"file":"%s"}}\n' "$CI_OI
 
           // Assert in-place update
           expect(await queryBucket(h, ctx, "dev")).toBe(bucket);
-          const revLabel = (
-            await h.run(
-              "gcloud",
-              [
-                "storage",
-                "buckets",
-                "describe",
-                `gs://${bucket}`,
-                "--format=value(labels.revision)",
-              ],
-              { expectSuccess: true },
-            )
-          ).stdout.trim();
-          expect(revLabel).toBe("b");
+          expect(await readGcsBucketLabel(bucket, "revision", h.workspace)).toBe("b");
 
           // Act: failing apply preserves bucket
           const failed = await h.pmFail(["infra", "apply", "--env", "dev", "--yes"], {
@@ -436,69 +415,12 @@ printf '{"type":"external_account","credential_source":{"file":"%s"}}\n' "$CI_OI
 
 // Private helpers ------------------------------------------------------------
 
-async function setupLiveInfraClient(h: PremiseHarness): Promise<LiveInfraContext> {
-  await copyScaffold(join(TESTDATA_ROOT, "pulumi/client"), h.workspace);
-  return configureLiveInfraManifest(h);
+function setupLiveInfraClient(h: PremiseHarness): Promise<LiveInfraContext> {
+  return configureLiveInfraWorkspace(h, { copyFixture: true, initGit: true });
 }
 
-async function configureLiveInfraManifest(h: PremiseHarness): Promise<LiveInfraContext> {
-  const { project: gcpProject, backendUrl: baseBackend } = resolveLiveGcpConfig();
-  const runBackend = `${baseBackend.replace(/\/+$/, "")}/run-${h.runId}`;
-  const primaryBackend = runBackend;
-  const alternateBackend = `${runBackend}/alternate`;
-  const branch = `feature/static-${h.runId}`;
-
-  const shimBin = join(h.outputDir, "pm-bin");
-  await mkdir(shimBin, { recursive: true });
-  await writeFile(join(shimBin, "pm"), `#!/bin/sh\nexec "${h.binary}" "$@"\n`, { mode: 0o755 });
-  await chmod(join(shimBin, "pm"), 0o755);
-  h.env.PATH = `${shimBin}:${h.env.PATH ?? process.env.PATH ?? ""}`;
-  h.env.PULUMI_CONFIG_PASSPHRASE = "";
-  h.env.PM_RELEASE = "A";
-  h.env.PM_BRANCH = "";
-  h.env.PULUMI_BACKEND_URL = `${runBackend}/unselected-fallback`;
-
-  const manifestPath = join(h.workspace, "premise.yaml");
-  const original = await readFile(manifestPath, "utf8");
-  const updated = patchManifestInfra(original, {
-    primaryBackend,
-    alternateBackend,
-    gcpProject,
-  });
-  await writeFile(manifestPath, updated, "utf8");
-  await h.initGit();
-
-  const ctx: LiveInfraContext = {
-    branch,
-    primaryBackend,
-    alternateBackend,
-    gcpProject,
-    touched: new Set(),
-    buckets: new Map(),
-  };
-
-  h.registerRemoteCleanup(async () => {
-    for (const env of ctx.touched) {
-      const backendUrl =
-        env === "prod" || env === "preview" ? ctx.alternateBackend : ctx.primaryBackend;
-      if (env === "preview") {
-        await h.pmFail(["ci", "flow", "on-merge", "--environment", "preview", "--branch", branch]);
-      } else {
-        await destroyPulumiStack({
-          infraDir: join(h.workspace, env === "shared" ? "infra/shared" : "infra/env"),
-          stack: env,
-          backendUrl,
-          env: h.env,
-        });
-      }
-      const bucket = ctx.buckets.get(env);
-      if (bucket) {
-        await assertGcsBucketDeleted(bucket, h.workspace);
-      }
-    }
-  });
-
-  return ctx;
+function configureLiveInfraManifest(h: PremiseHarness): Promise<LiveInfraContext> {
+  return configureLiveInfraWorkspace(h, { copyFixture: false, initGit: true });
 }
 
 function envScopeArgs(ctx: LiveInfraContext, env: string): string[] {
@@ -513,20 +435,15 @@ async function queryBucket(h: PremiseHarness, ctx: LiveInfraContext, env: string
   return bucket;
 }
 
-async function assertSavedBackend(
+function assertSavedBackend(
   h: PremiseHarness,
   ctx: LiveInfraContext,
   env: "shared" | "dev" | "stage" | "prod" | "preview",
 ): Promise<void> {
-  const backendUrl =
-    env === "prod" || env === "preview" ? ctx.alternateBackend : ctx.primaryBackend;
-  const project = env === "shared" ? "premise-gcs-fixture-shared" : "premise-gcs-fixture";
-  const stack =
-    env === "preview"
-      ? `preview-${ctx.branch.replace(/^feature\//, "")}-${createHash("sha256").update(ctx.branch).digest("hex").slice(0, 10)}`
-      : env;
-  const statePath = `${backendUrl}/.pulumi/stacks/${project}/${stack}.json`;
-  await h.run("gcloud", ["storage", "objects", "describe", statePath, "--format=value(name)"], {
-    expectSuccess: true,
+  return assertSavedPulumiState({
+    backendUrl: env === "prod" || env === "preview" ? ctx.alternateBackend : ctx.primaryBackend,
+    env,
+    branch: ctx.branch,
+    cwd: h.workspace,
   });
 }

@@ -6,10 +6,18 @@
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
-import { createNativeRegistry, usePremiseHarness } from "../common/fixtures.js";
-import { REPO_ROOT, TESTDATA_ROOT, type PremiseHarness } from "../common/premise-harness.js";
-import { copyScaffold, pathExists } from "../common/test-utils.js";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  createNativeRegistry,
+  usePremiseHarness,
+  useSuiteHarness,
+} from "../../libs/testutils/fixtures.js";
+import {
+  REPO_ROOT,
+  TESTDATA_ROOT,
+  type PremiseHarness,
+} from "../../libs/testutils/premise-harness.js";
+import { copyScaffold, pathExists } from "../../libs/tsutils/fs.js";
 
 // Fixtures -------------------------------------------------------------------
 
@@ -37,18 +45,24 @@ describe("premise scaffolding", { tags: ["e2e", "cli", "scaffolding", "replay"] 
   const harness = usePremiseHarness();
 
   describe("Given a fresh directory", () => {
-    it(
-      "It scaffolds a runnable lib and app with workflows, substitutions, and contracts",
-      { tags: ["smoke", "go"] },
-      async () => {
-        // Arrange
-        const h = harness();
+    describe("When scaffolding a lib", { tags: ["smoke", "go"] }, () => {
+      const suite = useSuiteHarness("scaffolding_lib", import.meta.filename);
+      let libDir = "";
+      let planOutput = "";
 
-        // Act: scaffold a library
-        const { projectDir: libDir } = await scaffoldProject(h, "lib", false);
+      beforeAll(async () => {
+        const h = suite();
+        const res = await scaffoldProject(h, "lib", false);
+        libDir = res.projectDir;
+        planOutput = (await h.pm(["ci", "plan", "--ci-output"])).stdout;
+        await h.writeManifest();
+      });
 
-        // Assert library workflows, substitutions, build/test, contracts, and no infra plan
-        await assertScaffoldWorkflows(h.workspace, false);
+      it("It should scaffold commit and merge workflows without infra or on-deploy", async () => {
+        await assertScaffoldWorkflows(suite().workspace, false);
+      });
+
+      it("It should substitute template tokens with the project name", async () => {
         expect(await readFile(join(libDir, "go.mod"), "utf8")).toContain(
           "module example.com/example",
         );
@@ -56,40 +70,46 @@ describe("premise scaffolding", { tags: ["e2e", "cli", "scaffolding", "replay"] 
         expect(await readFile(join(libDir, "README.md"), "utf8")).toContain(
           "A runnable example project.",
         );
-        await h.pm(["run", "example:build"]);
-        await h.pm(["run", "example:test"]);
+      });
+
+      it("It should create a buildable and testable library with lib-only contracts", async () => {
+        await suite().pm(["run", "example:build"]);
+        await suite().pm(["run", "example:test"]);
         await assertProjectContracts(libDir, false);
-        const plan = await h.pm(["ci", "plan", "--ci-output"]);
-        expect(plan.stdout).toContain("has_infra=false\n");
+      });
 
-        // Act: scaffold an app without infra in a sibling workspace
-        const appWorkspace = join(h.outputDir, "app-workspace");
-        const appRegistry = join(h.outputDir, "app-registry");
-        await mkdir(appWorkspace, { recursive: true });
-        await mkdir(appRegistry, { recursive: true });
-        await h.pm(["init", "--kind", "template-registry"], { cwd: appRegistry });
-        await h.pm(["template", "init", "app"], { cwd: appRegistry });
-        await copyScaffold(join(TESTDATA_ROOT, "scaffold/app"), join(appRegistry, "templates/app"));
-        await h.pm(["init"], { cwd: appWorkspace });
-        await h.pm(["generate", `${appRegistry}:app`, "--answer", "name=example"], {
-          cwd: appWorkspace,
-        });
+      it("It should not schedule infrastructure deployments", () => {
+        expect(planOutput).toContain("has_infra=false\n");
+      });
+    });
 
-        // Assert app workflows, substitutions, runnable output, contracts, and absent infra
-        const appDir = join(appWorkspace, "apps/example");
-        await assertScaffoldWorkflows(appWorkspace, false);
+    describe("When scaffolding an app without infra", { tags: ["smoke", "go"] }, () => {
+      const suite = useSuiteHarness("scaffolding_app_no_infra", import.meta.filename);
+      let appDir = "";
+
+      beforeAll(async () => {
+        const h = suite();
+        const res = await scaffoldProject(h, "app", false);
+        appDir = res.projectDir;
+        await h.writeManifest();
+      });
+
+      it("It should scaffold commit and merge workflows and omit infra/on-deploy", async () => {
+        const h = suite();
+        await assertScaffoldWorkflows(h.workspace, false);
+        expect(await pathExists(join(h.workspace, "infra"))).toBe(false);
+        expect(await pathExists(join(h.workspace, ".github/workflows/on-deploy.yml"))).toBe(false);
+      });
+
+      it("It should substitute tokens and create a runnable app with app contracts", async () => {
         expect(await readFile(join(appDir, "go.mod"), "utf8")).toContain(
           "module example.com/example",
         );
         expect(await readFile(join(appDir, "main.go"), "utf8")).toContain('fmt.Println("example")');
-        const runResult = await h.pm(["run", "example:run"], { cwd: appWorkspace });
-        expect(runResult.stdout.trim()).toBe("example");
+        expect((await suite().pm(["run", "example:run"])).stdout.trim()).toBe("example");
         await assertProjectContracts(appDir, true);
-        expect(await pathExists(join(appWorkspace, "infra"))).toBe(false);
-        expect(await pathExists(join(appWorkspace, ".github/workflows/on-deploy.yml"))).toBe(false);
-        await h.writeManifest();
-      },
-    );
+      });
+    });
 
     it(
       "It adds Pulumi infra and on-deploy.yml while preserving existing workflows and tool pins",
@@ -129,27 +149,28 @@ describe("premise scaffolding", { tags: ["e2e", "cli", "scaffolding", "replay"] 
     });
 
     for (const manager of ["go", "cargo", "bun"] as const) {
-      it(
-        `It generates a ${manager} lib+app pair that builds, tests, and runs natively`,
-        { tags: [manager] },
-        async () => {
-          // Arrange
-          const h = harness();
-          const registry = await createNativeRegistry(
-            manager,
-            join(h.outputDir, `registry-${manager}`),
-          );
+      describe(`When generating a ${manager} lib+app pair`, { tags: [manager] }, () => {
+        const suite = useSuiteHarness(`scaffolding_native_${manager}`, import.meta.filename);
+        const lockFile = manager === "cargo" ? "Cargo.lock" : manager === "bun" ? "bun.lock" : "";
+        let registry = "";
+        let initialRules = "";
+        let clientRules = "";
+        let lockExistsAfterGen = false;
+
+        beforeAll(async () => {
+          const h = suite();
+          await h.pm(["init"]);
+          registry = await createNativeRegistry(manager, join(h.outputDir, `registry-${manager}`));
           await h.pm([
             "generate",
             `${registry}:lib-template`,
             "--answer",
             "name=helper,library=helper",
           ]);
-          const initialRules = await h.readFile(".editorconfig");
-          const clientRules = `${initialRules}\n# Client quality rules\n`;
+          initialRules = await h.readFile(".editorconfig");
+          clientRules = `${initialRules}\n# Client quality rules\n`;
           await h.writeFile(".editorconfig", clientRules, 0o644);
 
-          const lockFile = manager === "cargo" ? "Cargo.lock" : manager === "bun" ? "bun.lock" : "";
           if (lockFile) {
             await h.writeFile(lockFile, "stale lock fixture", 0o640);
             await writeFile(
@@ -159,34 +180,38 @@ describe("premise scaffolding", { tags: ["e2e", "cli", "scaffolding", "replay"] 
             );
           }
 
-          // Act
           await h.pm([
             "generate",
             `${registry}:app-template`,
             "--answer",
             "name=tool,library=helper",
           ]);
-          const lockExistsAfterGen = lockFile
-            ? await pathExists(join(h.workspace, lockFile))
-            : true;
+          lockExistsAfterGen = lockFile ? await pathExists(join(h.workspace, lockFile)) : true;
           await h.pm(["install"]);
+          await h.writeManifest();
+        });
 
-          // Assert quality rules preserved and not copied into subprojects
-          const baselineRules = await readFile(join(registry, ".editorconfig"), "utf8");
-          expect(initialRules).toBe(baselineRules);
+        it("It should initialize quality rules once and preserve client edits", async () => {
+          const h = suite();
+          expect(initialRules).toBe(await readFile(join(registry, ".editorconfig"), "utf8"));
           expect(await h.readFile(".editorconfig")).toBe(clientRules);
           expect(await pathExists(join(h.workspace, "libs/helper/.editorconfig"))).toBe(false);
           expect(await pathExists(join(h.workspace, "apps/tool/.editorconfig"))).toBe(false);
+        });
 
-          // Assert lockfile regeneration, permissions, and native execution
+        it("It should regenerate stale root lockfiles while preserving permissions", async () => {
+          const h = suite();
           expect(lockExistsAfterGen).toBe(true);
           if (lockFile) {
             expect(await h.readFile(lockFile)).not.toContain("stale");
             expect(await pathExists(join(h.workspace, "apps/tool", lockFile))).toBe(false);
             expect((await stat(join(h.workspace, lockFile))).mode & 0o777).toBe(0o640);
           }
-          expect((await h.pm(["run", "tool:run"])).stdout.trim()).toBe("hello");
+        });
 
+        it(`It should build, test, and run the ${manager} workspace natively`, async () => {
+          const h = suite();
+          expect((await h.pm(["run", "tool:run"])).stdout.trim()).toBe("hello");
           if (manager === "go") {
             await h.run("go", ["test", "./..."], { expectSuccess: true });
             expect(await pathExists(join(h.workspace, "libs/helper/go.mod"))).toBe(false);
@@ -213,14 +238,16 @@ describe("premise scaffolding", { tags: ["e2e", "cli", "scaffolding", "replay"] 
             expect(rootPkg).not.toContain("registry-development");
             expect(rootPkg).not.toContain("templates/");
           }
+        });
 
+        it("It should record project provenance and leave no temporary directories", async () => {
+          const h = suite();
           const manifest = await h.readFile("premise.yaml");
           expect(manifest).toContain("name: helper");
           expect(manifest).toContain("name: tool");
           await assertNoTempDirs(join(h.workspace, "apps"), join(h.workspace, "libs"));
-          await h.writeManifest();
-        },
-      );
+        });
+      });
     }
 
     for (const order of [

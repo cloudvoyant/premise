@@ -1,4 +1,4 @@
-import type { Json } from "./test-utils.js";
+import type { Json } from "./mode.js";
 
 export interface ExchangeRequest {
   provider: "github" | "npm" | "cargo" | "oidc" | "gcp";

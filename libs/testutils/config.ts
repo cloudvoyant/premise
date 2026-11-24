@@ -1,10 +1,10 @@
-import { defineConfig } from "vitest/config";
+import type { ViteUserConfig } from "vitest/config";
 
 export function suiteConfig(
   root: string,
   options: { include?: string[]; exclude?: string[] } = {},
-) {
-  return defineConfig({
+): ViteUserConfig {
+  return {
     test: {
       root,
       tags: [
@@ -47,5 +47,5 @@ export function suiteConfig(
       reporters: ["verbose"],
       retry: 0,
     },
-  });
+  };
 }

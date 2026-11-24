@@ -1,4 +1,6 @@
-import { execProcess } from "./premise-harness.js";
+import { execProcess } from "./process.js";
+
+// Public API -----------------------------------------------------------------
 
 export const DEFAULT_GITHUB_FIXTURE_REPO = "cloudvoyant/premise-e2e";
 

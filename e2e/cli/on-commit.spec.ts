@@ -3,19 +3,21 @@
  * @module-tag cli
  * @module-tag on-commit
  */
-import { createHash } from "node:crypto";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
-import { usePremiseHarness } from "../common/fixtures.js";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
-  assertGcsBucketDeleted,
-  destroyPulumiStack,
-  patchManifestInfra,
-  resolveLiveGcpConfig,
-} from "../common/gcp-driver.js";
-import { TESTDATA_ROOT, type PremiseHarness } from "../common/premise-harness.js";
-import { copyScaffold, isLiveOrRecordMode, pathExists } from "../common/test-utils.js";
+  commitChange,
+  configureLiveInfraWorkspace,
+  setupGenericInfraWorkspace,
+  usePremiseHarness,
+  useSuiteHarness,
+  type LiveInfraContext,
+} from "../../libs/testutils/fixtures.js";
+import { isLiveOrRecordMode } from "../../libs/testutils/mode.js";
+import { TESTDATA_ROOT } from "../../libs/testutils/premise-harness.js";
+import { copyScaffold, hostCIPlatform, pathExists } from "../../libs/tsutils/fs.js";
+import { assertSavedPulumiState, readGcsObject } from "../../libs/tsutils/gcs.js";
 
 // Fixtures -------------------------------------------------------------------
 
@@ -28,75 +30,88 @@ const ECOSYSTEM_FIXTURES = [
 // Tests ----------------------------------------------------------------------
 
 describe("premise on-commit", { tags: ["e2e", "cli", "ci", "on-commit"] }, () => {
-  const harness = usePremiseHarness({ env: { PM_RELEASE: "A" } });
-
   describe("Given a project with infra and generic apps and libs", () => {
-    beforeEach(async () => {
-      await setupGenericInfraWorkspace(harness());
-    });
-
-    it(
-      "It runs checks in order, schedules migrations, and stages RC artifacts on [publish-rc]",
+    describe(
+      "When committing on a feature branch with [publish-rc]",
       { tags: ["smoke", "replay"] },
-      async () => {
-        // Arrange
-        const h = harness();
-        await h.git(["switch", "-c", "feature/example"]);
-        await commitChange(h, "feat: add static page [publish-rc]");
-        const version = (await h.pm(["version", "rc", "--identifier", "1"])).stdout.trim();
-        const artifactsDir = join(h.outputDir, "artifacts-rc");
-        const eventsFile = join(h.outputDir, "events.log");
-        await mkdir(artifactsDir, { recursive: true });
+      () => {
+        const suite = useSuiteHarness("on_commit_generic_infra_rc", import.meta.filename, {
+          env: { PM_RELEASE: "A" },
+        });
+        let artifactsDir = "";
+        let eventsFile = "";
+        let planOutput = "";
 
-        // Act
-        await h.pm(
-          [
-            "ci",
-            "flow",
-            "on-commit",
-            "--release",
-            "none",
-            "--project",
-            "web",
-            "--platform",
-            hostCIPlatform(),
-            "--channel",
-            "rc",
-            "--version",
-            version,
-            "--output-dir",
-            artifactsDir,
-          ],
-          {
-            env: {
-              GITHUB_EVENT_NAME: "push",
-              GITHUB_REF: "refs/heads/feature/example",
-              PREMISE_TEST_EVENTS: eventsFile,
-              PREMISE_ARTIFACT_DIR: artifactsDir,
-              PREMISE_RELEASE_CHANNEL: "rc",
-              RELEASE_VERSION: version.replace(/^v/, ""),
+        beforeAll(async () => {
+          const h = suite();
+          await setupGenericInfraWorkspace(h);
+          await h.git(["switch", "-c", "feature/example"]);
+          await commitChange(h, "feat: add static page [publish-rc]");
+          const version = (await h.pm(["version", "rc", "--identifier", "1"])).stdout.trim();
+          artifactsDir = join(h.outputDir, "artifacts-rc");
+          eventsFile = join(h.outputDir, "events.log");
+          await mkdir(artifactsDir, { recursive: true });
+
+          await h.pm(
+            [
+              "ci",
+              "flow",
+              "on-commit",
+              "--release",
+              "none",
+              "--project",
+              "web",
+              "--platform",
+              hostCIPlatform(),
+              "--channel",
+              "rc",
+              "--version",
+              version,
+              "--output-dir",
+              artifactsDir,
+            ],
+            {
+              env: {
+                GITHUB_EVENT_NAME: "push",
+                GITHUB_REF: "refs/heads/feature/example",
+                PREMISE_TEST_EVENTS: eventsFile,
+                PREMISE_ARTIFACT_DIR: artifactsDir,
+                PREMISE_RELEASE_CHANNEL: "rc",
+                RELEASE_VERSION: version.replace(/^v/, ""),
+              },
             },
-          },
-        );
+          );
+          planOutput = (await h.pm(["ci", "plan", "--ci-output"])).stdout;
+          await h.writeManifest();
+        });
 
-        // Assert
-        expect(await readFile(eventsFile, "utf8")).toBe(
-          "build::A\ntest::A\nformat:check::A\nlint::A\nrelease:build::A\n",
-        );
-        expect(await readFile(join(artifactsDir, "index.html"), "utf8")).toContain("Release A");
-        expect(await readFile(join(artifactsDir, "version.txt"), "utf8")).toBe("rc:1.1.0-rc.1\n");
-        const plan = await h.pm(["ci", "plan", "--ci-output"]);
-        expect(plan.stdout).toContain("has_infra=true\n");
-        expect(plan.stdout).toContain("has_migrations=true\n");
-        expect(plan.stdout).toContain("migration_matrix=");
-        await h.writeManifest();
+        it("It should run build, test, format:check, lint, and release:build in order", async () => {
+          expect(await readFile(eventsFile, "utf8")).toBe(
+            "build::A\ntest::A\nformat:check::A\nlint::A\nrelease:build::A\n",
+          );
+        });
+
+        it("It should stage RC artifacts locally", async () => {
+          expect(await readFile(join(artifactsDir, "index.html"), "utf8")).toContain("Release A");
+          expect(await readFile(join(artifactsDir, "version.txt"), "utf8")).toBe("rc:1.1.0-rc.1\n");
+        });
+
+        it("It should schedule infrastructure and migrations in CI plan", () => {
+          expect(planOutput).toContain("has_infra=true\n");
+          expect(planOutput).toContain("has_migrations=true\n");
+          expect(planOutput).toContain("migration_matrix=");
+        });
       },
     );
 
-    it(
-      "It halts before release:build when a check fails and creates no tags when release:build fails",
-      { tags: ["replay"] },
-      async () => {
+    describe("When a check or release:build fails", { tags: ["replay"] }, () => {
+      const harness = usePremiseHarness({ env: { PM_RELEASE: "A" } });
+
+      beforeEach(async () => {
+        await setupGenericInfraWorkspace(harness());
+      });
+
+      it("It should halt before release:build on test failure and create no tags on release:build failure", async () => {
         // Arrange
         const h = harness();
         await h.git(["switch", "-c", "feature/failing-gates"]);
@@ -107,7 +122,7 @@ describe("premise on-commit", { tags: ["e2e", "cli", "ci", "on-commit"] }, () =>
         await mkdir(failedCheckDir, { recursive: true });
         await mkdir(failedStageDir, { recursive: true });
 
-        // Act: check task fails
+        // Act
         const checkFail = await h.pmFail(
           [
             "ci",
@@ -128,8 +143,6 @@ describe("premise on-commit", { tags: ["e2e", "cli", "ci", "on-commit"] }, () =>
           ],
           { env: { PREMISE_TEST_FAIL_TASK: "test", PREMISE_ARTIFACT_DIR: failedCheckDir } },
         );
-
-        // Act: release:build fails
         const stageFail = await h.pmFail(
           [
             "ci",
@@ -149,7 +162,10 @@ describe("premise on-commit", { tags: ["e2e", "cli", "ci", "on-commit"] }, () =>
             failedStageDir,
           ],
           {
-            env: { PREMISE_TEST_FAIL_TASK: "release:build", PREMISE_ARTIFACT_DIR: failedStageDir },
+            env: {
+              PREMISE_TEST_FAIL_TASK: "release:build",
+              PREMISE_ARTIFACT_DIR: failedStageDir,
+            },
           },
         );
 
@@ -161,151 +177,181 @@ describe("premise on-commit", { tags: ["e2e", "cli", "ci", "on-commit"] }, () =>
         expect(stageFail.combined).toContain("stage native artifacts");
         expect((await h.git(["tag", "--list"])).stdout.trim()).toBe("v1.0.0");
         await h.writeManifest();
-      },
-    );
+      });
+    });
 
-    it.skipIf(!isLiveOrRecordMode())(
-      "It provisions a preview environment, runs migrations and app deploy, combines secrets with Pulumi outputs, and rolls back on health failure",
+    describe(
+      "When deploying a feature preview",
       { tags: ["gcp", "pulumi", "fnox", "live"] },
-      async () => {
-        // Arrange
-        const h = harness();
-        const ctx = await configureLivePreviewBackend(h);
-        await h.git(["switch", "-c", ctx.branch]);
+      () => {
+        const suite = useSuiteHarness("on_commit_live_preview", import.meta.filename, {
+          env: { PM_RELEASE: "A" },
+          enabled: isLiveOrRecordMode(),
+        });
+        let ctx: LiveInfraContext;
+        let bucket = "";
+        let envLocal = "";
+        let failBCombined = "";
+        let failBCode: number | null = 0;
 
-        // Act: deploy Release A to preview
-        await h.pm(
-          ["ci", "flow", "on-commit", "--environment", "preview", "--branch", ctx.branch],
-          {
-            env: { PM_RELEASE: "A" },
-          },
-        );
-        const bucket = (
+        beforeAll(async () => {
+          if (!isLiveOrRecordMode()) return;
+          const h = suite();
+          ctx = await configureLiveInfraWorkspace(h, { copyFixture: true, initGit: true });
+          ctx.touched.add("preview");
+          await h.git(["switch", "-c", ctx.branch]);
+
+          await h.pm(
+            ["ci", "flow", "on-commit", "--environment", "preview", "--branch", ctx.branch],
+            {
+              env: { PM_RELEASE: "A" },
+            },
+          );
+          bucket = (
+            await h.pm([
+              "infra",
+              "query",
+              "--env",
+              "preview",
+              "--branch",
+              ctx.branch,
+              "--output",
+              "bucketName",
+            ])
+          ).stdout.trim();
+          ctx.buckets.set("preview", bucket);
+
           await h.pm([
-            "infra",
-            "query",
+            "secrets",
+            "pull",
+            "--project",
+            "web",
             "--env",
             "preview",
             "--branch",
             ctx.branch,
-            "--output",
-            "bucketName",
-          ])
-        ).stdout.trim();
-        ctx.bucket = bucket;
+          ]);
+          envLocal = await h.readFile("apps/web/.env.local");
 
-        // Assert Release A, Migration A, saved backend, and secrets + Pulumi output combination
-        expect(await readGcs(h, bucket, "index.html")).toContain("<h1>Release A</h1>");
-        expect((await readGcs(h, bucket, "schema-version.txt")).trim()).toBe("preview:A");
-        await assertPreviewBackendState(h, ctx.alternateBackend, ctx.branch);
-        await h.pm([
-          "secrets",
-          "pull",
-          "--project",
-          "web",
-          "--env",
-          "preview",
-          "--branch",
-          ctx.branch,
-        ]);
-        const envLocal = await h.readFile("apps/web/.env.local");
-        expect(envLocal).toContain('APP_MESSAGE="preview-example"');
-        expect(envLocal).toContain(`BUCKET_NAME="${bucket}"`);
+          const failB = await h.pmFail(
+            ["ci", "flow", "on-deploy", "--environment", "preview", "--branch", ctx.branch],
+            { env: { PM_RELEASE: "B", PREMISE_TEST_FAIL_HEALTH: "preview" } },
+          );
+          failBCode = failB.code;
+          failBCombined = failB.combined;
+          h.updateRemoteManifest({ gcpProject: ctx.gcpProject });
+          await h.writeManifest();
+        });
 
-        // Act: deploy Release B with failing health check
-        const failB = await h.pmFail(
-          ["ci", "flow", "on-deploy", "--environment", "preview", "--branch", ctx.branch],
-          { env: { PM_RELEASE: "B", PREMISE_TEST_FAIL_HEALTH: "preview" } },
+        it.skipIf(!isLiveOrRecordMode())(
+          "It should save preview state on the configured alternate backend",
+          async () => {
+            await assertSavedPulumiState({
+              backendUrl: ctx.alternateBackend,
+              env: "preview",
+              branch: ctx.branch,
+              cwd: suite().workspace,
+            });
+          },
         );
 
-        // Assert rollback restores Release A while keeping Migration B
-        expect(failB.code).not.toBe(0);
-        expect(failB.combined).toContain("health");
-        expect(await readGcs(h, bucket, "index.html")).toContain("<h1>Release A</h1>");
-        expect((await readGcs(h, bucket, "schema-version.txt")).trim()).toBe("preview:B");
-        h.updateRemoteManifest({ gcpProject: ctx.gcpProject });
-        await h.writeManifest();
+        it.skipIf(!isLiveOrRecordMode())(
+          "It should combine fnox secrets with queried preview outputs",
+          () => {
+            expect(envLocal).toContain('APP_MESSAGE="preview-example"');
+            expect(envLocal).toContain(`BUCKET_NAME="${bucket}"`);
+          },
+        );
+
+        it.skipIf(!isLiveOrRecordMode())(
+          "It should roll back to Release A on health failure while keeping Migration B",
+          async () => {
+            const h = suite();
+            expect(failBCode).not.toBe(0);
+            expect(failBCombined).toContain("health");
+            expect(await readGcsObject(bucket, "index.html", h.workspace)).toContain(
+              "<h1>Release A</h1>",
+            );
+            expect((await readGcsObject(bucket, "schema-version.txt", h.workspace)).trim()).toBe(
+              "preview:B",
+            );
+          },
+        );
       },
     );
   });
 
   describe("Given a project without infra and generic apps and libs", { tags: ["replay"] }, () => {
-    beforeEach(async () => {
-      const h = harness();
+    const suite = useSuiteHarness("on_commit_generic_no_infra", import.meta.filename, {
+      env: { PM_RELEASE: "A" },
+    });
+    let planOutput = "";
+    let events = "";
+
+    beforeAll(async () => {
+      const h = suite();
       await copyScaffold(join(TESTDATA_ROOT, "workspaces/generic-no-infra"), h.workspace);
       await h.initGit("chore: initial generic project", "v1.0.0");
-    });
-
-    it("It plans has_infra=false and runs build, test, format:check, and lint across generic libs and apps", async () => {
-      // Arrange
-      const h = harness();
       const eventsFile = join(h.outputDir, "events.log");
-
-      // Act
-      const plan = await h.pm(["ci", "plan", "--ci-output"]);
+      planOutput = (await h.pm(["ci", "plan", "--ci-output"])).stdout;
       await h.pm(["ci", "flow", "on-commit", "--release", "none"], {
         env: { PREMISE_TEST_EVENTS: eventsFile },
       });
+      events = await readFile(eventsFile, "utf8");
+      await h.writeManifest();
+    });
 
-      // Assert
-      expect(plan.stdout).toContain("has_infra=false\n");
-      const events = await readFile(eventsFile, "utf8");
+    it("It should plan has_infra=false", () => {
+      expect(planOutput).toContain("has_infra=false\n");
+    });
+
+    it("It should run build, test, format:check, and lint across generic libs and apps", () => {
       expect(events).toContain("shared:build::A");
       expect(events).toContain("shared:test::A");
       expect(events).toContain("web:build::A");
       expect(events).toContain("web:test::A");
       expect(events).toContain("web:lint::A");
-      await h.writeManifest();
     });
   });
 
   for (const eco of ECOSYSTEM_FIXTURES) {
     describe(`Given a project with ${eco.label} libs`, { tags: [eco.tag, "replay"] }, () => {
-      beforeEach(async () => {
-        const h = harness();
+      const suite = useSuiteHarness(`on_commit_${eco.label}`, import.meta.filename, {
+        env: { PM_RELEASE: "A" },
+      });
+      let planOutput = "";
+      let flowOutput = "";
+
+      beforeAll(async () => {
+        const h = suite();
         await copyScaffold(join(TESTDATA_ROOT, eco.fixture), h.workspace);
         await h.initGit(`chore: initial ${eco.label} project`, "v1.0.0");
-      });
-
-      it(`It handles multiple platforms in CI planning (linux, macos, windows)`, async () => {
-        // Arrange
-        const h = harness();
-
-        // Act
-        const plan = await h.pm(["ci", "plan", "--ci-output"]);
-
-        // Assert
-        expect(plan.stdout).toContain("has_infra=false\n");
-        expect(plan.stdout).toContain("mode=matrix\n");
-        expect(plan.stdout).toContain("native=true\n");
-        expect(plan.stdout).toContain('"platform":"linux"');
-        expect(plan.stdout).toContain('"platform":"macos"');
-        expect(plan.stdout).toContain('"platform":"windows"');
+        planOutput = (await h.pm(["ci", "plan", "--ci-output"])).stdout;
+        flowOutput = (await h.pm(["ci", "flow", "on-commit", "--release", "none"])).combined;
         await h.writeManifest();
       });
 
-      it(`It handles nobuild and local-only ${eco.label} projects during on-commit checks`, async () => {
-        // Arrange
-        const h = harness();
+      it("It should handle multiple platforms in CI planning (linux, macos, windows)", () => {
+        expect(planOutput).toContain("has_infra=false\n");
+        expect(planOutput).toContain("mode=matrix\n");
+        expect(planOutput).toContain("native=true\n");
+        expect(planOutput).toContain('"platform":"linux"');
+        expect(planOutput).toContain('"platform":"macos"');
+        expect(planOutput).toContain('"platform":"windows"');
+      });
 
-        // Act
-        const result = await h.pm(["ci", "flow", "on-commit", "--release", "none"]);
-
-        // Assert
-        expect(result.combined).toContain("nobuild-lib:skip-build");
-        expect(result.combined).toContain("local-lib:test");
-        expect(result.combined).toContain("public-lib:test");
-        expect(result.combined).toContain("private-lib:test");
-        await h.writeManifest();
+      it(`It should handle nobuild and local-only ${eco.label} projects during on-commit checks`, () => {
+        expect(flowOutput).toContain("nobuild-lib:skip-build");
+        expect(flowOutput).toContain("local-lib:test");
+        expect(flowOutput).toContain("public-lib:test");
+        expect(flowOutput).toContain("private-lib:test");
       });
 
       it.skip(
         `It handles public packages for the ${eco.label} registry [CLO-228..CLO-234]`,
         { tags: ["known-bug"] },
         async () => {
-          const h = harness();
-          await h.pm(["ci", "plan", "--ci-output"]);
-          await h.writeManifest();
+          expect(planOutput).toContain("mode=matrix\n");
         },
       );
 
@@ -313,9 +359,7 @@ describe("premise on-commit", { tags: ["e2e", "cli", "ci", "on-commit"] }, () =>
         `It handles private packages for Artifact Registry / alternate ${eco.label} registries [CLO-229, CLO-232..CLO-234]`,
         { tags: ["known-bug"] },
         async () => {
-          const h = harness();
-          await h.pm(["ci", "plan", "--ci-output"]);
-          await h.writeManifest();
+          expect(planOutput).toContain("mode=matrix\n");
         },
       );
 
@@ -323,102 +367,9 @@ describe("premise on-commit", { tags: ["e2e", "cli", "ci", "on-commit"] }, () =>
         `It handles RC binary release staging and workflow parity for ${eco.label} [CLO-230, CLO-235, CLO-236]`,
         { tags: ["known-bug"] },
         async () => {
-          const h = harness();
-          await h.pm(["ci", "plan", "--ci-output"]);
-          await h.writeManifest();
+          expect(planOutput).toContain("mode=matrix\n");
         },
       );
     });
   }
 });
-
-// Private helpers ------------------------------------------------------------
-
-function hostCIPlatform(): string {
-  if (process.platform === "darwin") return "macos";
-  if (process.platform === "win32") return "windows";
-  return "linux";
-}
-
-async function setupGenericInfraWorkspace(h: PremiseHarness): Promise<void> {
-  await copyScaffold(join(TESTDATA_ROOT, "pulumi/client"), h.workspace);
-  await h.writeFile(
-    "mise.toml",
-    "monorepo_root = true\n[monorepo]\nconfig_roots = ['apps/*', 'libs/*']\n",
-  );
-  const manifestPath = join(h.workspace, "premise.yaml");
-  const manifest = await readFile(manifestPath, "utf8");
-  const platform = hostCIPlatform();
-  const updated = manifest.includes("release_platforms:")
-    ? manifest.replace(/release_platforms:.*$/m, `release_platforms: [${platform}]`)
-    : manifest.replace(
-        "path: apps/web",
-        `path: apps/web\n      ci:\n        release_platforms:\n          - ${platform}`,
-      );
-  await writeFile(manifestPath, updated, "utf8");
-  await h.initGit("chore: initial project", "v1.0.0");
-}
-
-async function commitChange(h: PremiseHarness, message: string): Promise<void> {
-  await h.writeFile("CHANGE.txt", `${message}\n`);
-  await h.git(["add", "CHANGE.txt"]);
-  await h.git(["commit", "--quiet", "-m", message]);
-}
-
-async function readGcs(h: PremiseHarness, bucket: string, object: string): Promise<string> {
-  return (
-    await h.run("gcloud", ["storage", "cat", `gs://${bucket}/${object}`], { expectSuccess: true })
-  ).stdout;
-}
-
-async function assertPreviewBackendState(
-  h: PremiseHarness,
-  backendUrl: string,
-  branch: string,
-): Promise<void> {
-  const stack = `preview-${branch.replace(/^feature\//, "")}-${createHash("sha256").update(branch).digest("hex").slice(0, 10)}`;
-  const statePath = `${backendUrl}/.pulumi/stacks/premise-gcs-fixture/${stack}.json`;
-  await h.run("gcloud", ["storage", "objects", "describe", statePath, "--format=value(name)"], {
-    expectSuccess: true,
-  });
-}
-
-async function configureLivePreviewBackend(h: PremiseHarness) {
-  const { project: gcpProject, backendUrl: baseBackend } = resolveLiveGcpConfig();
-  const runBackend = `${baseBackend.replace(/\/+$/, "")}/run-${h.runId}`;
-  const alternateBackend = `${runBackend}/alternate`;
-  const branch = `feature/static-${h.runId}`;
-
-  const shimBin = join(h.outputDir, "pm-bin");
-  await mkdir(shimBin, { recursive: true });
-  await writeFile(join(shimBin, "pm"), `#!/bin/sh\nexec "${h.binary}" "$@"\n`, { mode: 0o755 });
-  await chmod(join(shimBin, "pm"), 0o755);
-  h.env.PATH = `${shimBin}:${h.env.PATH ?? process.env.PATH ?? ""}`;
-  h.env.PULUMI_CONFIG_PASSPHRASE = "";
-  h.env.PM_RELEASE = "A";
-  h.env.PM_BRANCH = "";
-
-  const manifestPath = join(h.workspace, "premise.yaml");
-  const original = await readFile(manifestPath, "utf8");
-  const updated = patchManifestInfra(original, {
-    primaryBackend: runBackend,
-    alternateBackend,
-    gcpProject,
-  });
-  await writeFile(manifestPath, updated, "utf8");
-
-  const state = { branch, alternateBackend, gcpProject, bucket: "" };
-  h.registerRemoteCleanup(async () => {
-    await h.pmFail(["ci", "flow", "on-merge", "--environment", "preview", "--branch", branch]);
-    if (state.bucket) {
-      await assertGcsBucketDeleted(state.bucket, h.workspace);
-    }
-    await destroyPulumiStack({
-      infraDir: join(h.workspace, "infra/env"),
-      stack: "dev",
-      backendUrl: runBackend,
-      env: h.env,
-    }).catch(() => {});
-  });
-  return state;
-}

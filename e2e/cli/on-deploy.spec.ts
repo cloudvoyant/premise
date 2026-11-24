@@ -3,182 +3,156 @@
  * @module-tag cli
  * @module-tag on-deploy
  */
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
-import { usePremiseHarness } from "../common/fixtures.js";
+import { beforeAll, describe, expect, it } from "vitest";
 import {
-  assertGcsBucketDeleted,
-  destroyPulumiStack,
-  patchManifestInfra,
-  resolveLiveGcpConfig,
-} from "../common/gcp-driver.js";
-import { TESTDATA_ROOT, type PremiseHarness } from "../common/premise-harness.js";
-import { copyScaffold, isLiveOrRecordMode } from "../common/test-utils.js";
+  configureLiveInfraWorkspace,
+  useSuiteHarness,
+  type LiveInfraContext,
+} from "../../libs/testutils/fixtures.js";
+import { isLiveOrRecordMode } from "../../libs/testutils/mode.js";
+import { TESTDATA_ROOT } from "../../libs/testutils/premise-harness.js";
+import { copyScaffold, hostCIPlatform } from "../../libs/tsutils/fs.js";
+import { assertSavedPulumiState, readGcsObject } from "../../libs/tsutils/gcs.js";
 
 // Tests ----------------------------------------------------------------------
 
 describe("premise on-deploy", { tags: ["e2e", "cli", "ci", "on-deploy"] }, () => {
-  const harness = usePremiseHarness({ env: { PM_RELEASE: "A" } });
-
   describe("Given a project with infra and generic apps and libs", () => {
-    it.skipIf(!isLiveOrRecordMode())(
-      "It promotes one immutable release B across dev, stage, and prod in-place with migrate -> deploy -> health ordering",
+    describe(
+      "When promoting immutable release B across dev, stage, and prod",
       { tags: ["gcp", "pulumi", "live"] },
-      async () => {
-        // Arrange: stage release B once, then promote the exact bytes across dev, stage, and prod
-        const h = harness();
-        const ctx = await setupLiveDeployClient(h);
-        const stagedDir = join(h.outputDir, "staged-release-B");
-        await mkdir(stagedDir, { recursive: true });
-        await h.pm(
-          [
-            "ci",
-            "flow",
-            "on-merge",
-            "--release",
-            "none",
-            "--project",
-            "web",
-            "--platform",
-            hostCIPlatform(),
-            "--channel",
-            "stable",
-            "--version",
-            "v1.1.0",
-            "--output-dir",
-            stagedDir,
-          ],
-          { env: { PM_RELEASE: "B" } },
-        );
-        await copyScaffold(stagedDir, join(h.workspace, "apps/web/releases/B"));
-        const expectedHtml = await readFile(join(stagedDir, "index.html"), "utf8");
+      () => {
+        const suite = useSuiteHarness("on_deploy_promote_live", import.meta.filename, {
+          env: { PM_RELEASE: "A" },
+          enabled: isLiveOrRecordMode(),
+        });
+        let ctx: LiveInfraContext;
+        let expectedHtml = "";
+        const bucketsBefore = new Map<string, string>();
+        const eventsByEnv = new Map<string, string>();
 
-        for (const env of ["dev", "stage", "prod"] as const) {
-          ctx.touched.add(env);
-          await h.pm(["ci", "flow", "on-deploy", "--environment", env], {
-            env: { PM_RELEASE: "A" },
-          });
-          const bucket = (
-            await h.pm(["infra", "query", "--env", env, "--output", "bucketName"])
-          ).stdout.trim();
-          ctx.buckets.set(env, bucket);
-          const eventsFile = join(h.outputDir, `events-${env}.log`);
-
-          // Act
-          await h.pm(["ci", "flow", "on-deploy", "--environment", env], {
-            env: { PM_RELEASE: "B", PREMISE_TEST_EVENTS: eventsFile },
-          });
-
-          // Assert exact bytes, in-place bucket, migrate -> deploy -> health order, and saved backend
-          const deployedHtml = (
-            await h.run("gcloud", ["storage", "cat", `gs://${bucket}/index.html`], {
-              expectSuccess: true,
-            })
-          ).stdout;
-          expect(deployedHtml).toBe(expectedHtml);
-          expect(
-            (await h.pm(["infra", "query", "--env", env, "--output", "bucketName"])).stdout.trim(),
-          ).toBe(bucket);
-          expect(await readFile(eventsFile, "utf8")).toBe(
-            `migrate:${env}:B\ndeploy:${env}:B\nhealth:${env}:B\n`,
-          );
-          const backendUrl = env === "prod" ? ctx.alternateBackend : ctx.primaryBackend;
-          await h.run(
-            "gcloud",
+        beforeAll(async () => {
+          if (!isLiveOrRecordMode()) return;
+          const h = suite();
+          ctx = await configureLiveInfraWorkspace(h, { copyFixture: true, initGit: true });
+          const stagedDir = join(h.outputDir, "staged-release-B");
+          await mkdir(stagedDir, { recursive: true });
+          await h.pm(
             [
-              "storage",
-              "objects",
-              "describe",
-              `${backendUrl}/.pulumi/stacks/premise-gcs-fixture/${env}.json`,
-              "--format=value(name)",
+              "ci",
+              "flow",
+              "on-merge",
+              "--release",
+              "none",
+              "--project",
+              "web",
+              "--platform",
+              hostCIPlatform(),
+              "--channel",
+              "stable",
+              "--version",
+              "v1.1.0",
+              "--output-dir",
+              stagedDir,
             ],
-            { expectSuccess: true },
+            { env: { PM_RELEASE: "B" } },
           );
-        }
+          await copyScaffold(stagedDir, join(h.workspace, "apps/web/releases/B"));
+          expectedHtml = await readFile(join(stagedDir, "index.html"), "utf8");
 
-        h.updateRemoteManifest({ gcpProject: ctx.gcpProject });
-        await h.writeManifest();
+          for (const env of ["dev", "stage", "prod"] as const) {
+            ctx.touched.add(env);
+            await h.pm(["ci", "flow", "on-deploy", "--environment", env], {
+              env: { PM_RELEASE: "A" },
+            });
+            const bucket = (
+              await h.pm(["infra", "query", "--env", env, "--output", "bucketName"])
+            ).stdout.trim();
+            ctx.buckets.set(env, bucket);
+            bucketsBefore.set(env, bucket);
+
+            const eventsFile = join(h.outputDir, `events-${env}.log`);
+            await h.pm(["ci", "flow", "on-deploy", "--environment", env], {
+              env: { PM_RELEASE: "B", PREMISE_TEST_EVENTS: eventsFile },
+            });
+            eventsByEnv.set(env, await readFile(eventsFile, "utf8"));
+          }
+
+          h.updateRemoteManifest({ gcpProject: ctx.gcpProject });
+          await h.writeManifest();
+        });
+
+        it.skipIf(!isLiveOrRecordMode())(
+          "It should promote exact staged bytes in-place to dev, stage, and prod",
+          async () => {
+            const h = suite();
+            for (const env of ["dev", "stage", "prod"] as const) {
+              const bucket = bucketsBefore.get(env)!;
+              expect(await readGcsObject(bucket, "index.html", h.workspace)).toBe(expectedHtml);
+              expect(
+                (
+                  await h.pm(["infra", "query", "--env", env, "--output", "bucketName"])
+                ).stdout.trim(),
+              ).toBe(bucket);
+            }
+          },
+        );
+
+        it.skipIf(!isLiveOrRecordMode())(
+          "It should execute migrate -> deploy -> health in order for each environment",
+          () => {
+            for (const env of ["dev", "stage", "prod"] as const) {
+              expect(eventsByEnv.get(env)).toBe(
+                `migrate:${env}:B\ndeploy:${env}:B\nhealth:${env}:B\n`,
+              );
+            }
+          },
+        );
+
+        it.skipIf(!isLiveOrRecordMode())(
+          "It should save stack state in each environment's configured backend",
+          async () => {
+            const h = suite();
+            for (const env of ["dev", "stage", "prod"] as const) {
+              await assertSavedPulumiState({
+                backendUrl: env === "prod" ? ctx.alternateBackend : ctx.primaryBackend,
+                env,
+                cwd: h.workspace,
+              });
+            }
+          },
+        );
       },
     );
   });
 
   describe("Given a project without infra and generic apps and libs", { tags: ["replay"] }, () => {
-    beforeEach(async () => {
-      const h = harness();
-      await copyScaffold(join(TESTDATA_ROOT, "workspaces/generic-no-infra"), h.workspace);
-      await h.initGit("chore: initial generic project", "v1.0.0");
-    });
+    describe("When running on-deploy for stage", () => {
+      const suite = useSuiteHarness("on_deploy_generic_no_infra", import.meta.filename, {
+        env: { PM_RELEASE: "A" },
+      });
+      let planOutput = "";
+      let deployResult: { code: number | null; combined: string };
 
-    it("It reports has_infra=false in CI plan so manual infra deployment is omitted", async () => {
-      // Arrange
-      const h = harness();
+      beforeAll(async () => {
+        const h = suite();
+        await copyScaffold(join(TESTDATA_ROOT, "workspaces/generic-no-infra"), h.workspace);
+        await h.initGit("chore: initial generic project", "v1.0.0");
+        planOutput = (await h.pm(["ci", "plan", "--ci-output"])).stdout;
+        deployResult = await h.pmFail(["ci", "flow", "on-deploy", "--environment", "stage"]);
+        await h.writeManifest();
+      });
 
-      // Act
-      const plan = await h.pm(["ci", "plan", "--ci-output"]);
+      it("It should report has_infra=false in CI plan", () => {
+        expect(planOutput).toContain("has_infra=false\n");
+      });
 
-      // Assert
-      expect(plan.stdout).toContain("has_infra=false\n");
-      await h.writeManifest();
+      it("It should reject on-deploy because workspace.infra is not configured", () => {
+        expect(deployResult.code).not.toBe(0);
+        expect(deployResult.combined).toContain("environment CI flows require workspace.infra");
+      });
     });
   });
 });
-
-// Private helpers ------------------------------------------------------------
-
-function hostCIPlatform(): string {
-  if (process.platform === "darwin") return "macos";
-  if (process.platform === "win32") return "windows";
-  return "linux";
-}
-
-async function setupLiveDeployClient(h: PremiseHarness) {
-  await copyScaffold(join(TESTDATA_ROOT, "pulumi/client"), h.workspace);
-  const { project: gcpProject, backendUrl: baseBackend } = resolveLiveGcpConfig();
-  const primaryBackend = `${baseBackend.replace(/\/+$/, "")}/run-${h.runId}`;
-  const alternateBackend = `${primaryBackend}/alternate`;
-
-  const shimBin = join(h.outputDir, "pm-bin");
-  await mkdir(shimBin, { recursive: true });
-  await writeFile(join(shimBin, "pm"), `#!/bin/sh\nexec "${h.binary}" "$@"\n`, { mode: 0o755 });
-  await chmod(join(shimBin, "pm"), 0o755);
-  h.env.PATH = `${shimBin}:${h.env.PATH ?? process.env.PATH ?? ""}`;
-  h.env.PULUMI_CONFIG_PASSPHRASE = "";
-  h.env.PM_RELEASE = "A";
-
-  const manifestPath = join(h.workspace, "premise.yaml");
-  const original = await readFile(manifestPath, "utf8");
-  const updated = patchManifestInfra(original, {
-    primaryBackend,
-    alternateBackend,
-    gcpProject,
-  });
-  await writeFile(manifestPath, updated, "utf8");
-  await h.initGit("chore: initial project", "v1.0.0");
-
-  const ctx = {
-    gcpProject,
-    primaryBackend,
-    alternateBackend,
-    touched: new Set<"dev" | "stage" | "prod">(),
-    buckets: new Map<string, string>(),
-  };
-
-  h.registerRemoteCleanup(async () => {
-    for (const env of ctx.touched) {
-      const backendUrl = env === "prod" ? alternateBackend : primaryBackend;
-      await destroyPulumiStack({
-        infraDir: join(h.workspace, "infra/env"),
-        stack: env,
-        backendUrl,
-        env: h.env,
-      }).catch(() => {});
-      const bucket = ctx.buckets.get(env);
-      if (bucket) {
-        await assertGcsBucketDeleted(bucket, h.workspace);
-      }
-    }
-  });
-
-  return ctx;
-}
