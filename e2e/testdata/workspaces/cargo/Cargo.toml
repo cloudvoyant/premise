@@ -1,3 +1,3 @@
 [workspace]
-members = ["libs/core", "apps/cli"]
+members = ["libs/local-lib", "libs/nobuild-lib", "libs/public-lib", "libs/private-lib", "apps/cli"]
 resolver = "2"

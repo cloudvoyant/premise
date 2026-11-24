@@ -1,3 +1,3 @@
 fn main() {
-    println!("{}", core::greeting());
+    println!("{}", public_lib::greet());
 }

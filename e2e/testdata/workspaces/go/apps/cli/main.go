@@ -3,9 +3,9 @@ package main
 import (
 	"fmt"
 
-	"example.com/go-fixture/libs/core"
+	publiclib "example.com/go-fixture/libs/public-lib"
 )
 
 func main() {
-	fmt.Println(core.Greeting())
+	fmt.Println(publiclib.Greet())
 }

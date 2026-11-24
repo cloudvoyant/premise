@@ -2,6 +2,6 @@
   "name": "@premise-e2e/cli",
   "version": "0.1.0",
   "dependencies": {
-    "@premise-e2e/core": "workspace:*"
+    "@premise-e2e/public-lib": "workspace:*"
   }
 }

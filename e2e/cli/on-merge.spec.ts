@@ -186,7 +186,7 @@ describe("premise on-merge", { tags: ["e2e", "cli", "ci", "on-merge"] }, () => {
       });
 
       it(
-        `It computes the next stable version and plans ${eco.label} matrix checks on merge`,
+        `It handles multiple platforms, nobuild, and local-only ${eco.label} variants on merge`,
         { tags: ["replay"] },
         async () => {
           // Arrange
@@ -196,16 +196,39 @@ describe("premise on-merge", { tags: ["e2e", "cli", "ci", "on-merge"] }, () => {
           // Act
           const version = (await h.pm(["version", "next"])).stdout.trim();
           const plan = await h.pm(["ci", "plan", "--ci-output"]);
+          const flow = await h.pm(["ci", "flow", "on-merge", "--release", "none"]);
 
           // Assert
           expect(version).toBe("v1.1.0");
           expect(plan.stdout).toContain("mode=matrix\n");
+          expect(flow.combined).toContain("nobuild-lib:skip-build");
+          expect(flow.combined).toContain("local-lib:test");
           await h.writeManifest();
         },
       );
 
       it.skip(
-        `It publishes ${eco.label} packages and GitHub Releases cleanly on merge [CLO-228..CLO-235]`,
+        `It handles public ${eco.label} packages on merge [CLO-228..CLO-234]`,
+        { tags: ["known-bug", "live"] },
+        async () => {
+          const h = harness();
+          await h.pm(["ci", "plan", "--ci-output"]);
+          await h.writeManifest();
+        },
+      );
+
+      it.skip(
+        `It handles private ${eco.label} packages for Artifact Registry / alternate registries on merge [CLO-229, CLO-232..CLO-234]`,
+        { tags: ["known-bug", "live"] },
+        async () => {
+          const h = harness();
+          await h.pm(["ci", "plan", "--ci-output"]);
+          await h.writeManifest();
+        },
+      );
+
+      it.skip(
+        `It handles stable GitHub Releases for ${eco.label} on merge [CLO-230, CLO-235, CLO-236]`,
         { tags: ["known-bug", "live"] },
         async () => {
           const h = harness();

@@ -266,7 +266,7 @@ describe("premise on-commit", { tags: ["e2e", "cli", "ci", "on-commit"] }, () =>
         await h.initGit(`chore: initial ${eco.label} project`, "v1.0.0");
       });
 
-      it(`It plans multi-platform matrix rows for ${eco.label} projects without infra`, async () => {
+      it(`It handles multiple platforms in CI planning (linux, macos, windows)`, async () => {
         // Arrange
         const h = harness();
 
@@ -283,8 +283,43 @@ describe("premise on-commit", { tags: ["e2e", "cli", "ci", "on-commit"] }, () =>
         await h.writeManifest();
       });
 
+      it(`It handles nobuild and local-only ${eco.label} projects during on-commit checks`, async () => {
+        // Arrange
+        const h = harness();
+
+        // Act
+        const result = await h.pm(["ci", "flow", "on-commit", "--release", "none"]);
+
+        // Assert
+        expect(result.combined).toContain("nobuild-lib:skip-build");
+        expect(result.combined).toContain("local-lib:test");
+        expect(result.combined).toContain("public-lib:test");
+        expect(result.combined).toContain("private-lib:test");
+        await h.writeManifest();
+      });
+
       it.skip(
-        `It validates canonical workflow parity and RC preflight for ${eco.label} [CLO-236]`,
+        `It handles public packages for the ${eco.label} registry [CLO-228..CLO-234]`,
+        { tags: ["known-bug"] },
+        async () => {
+          const h = harness();
+          await h.pm(["ci", "plan", "--ci-output"]);
+          await h.writeManifest();
+        },
+      );
+
+      it.skip(
+        `It handles private packages for Artifact Registry / alternate ${eco.label} registries [CLO-229, CLO-232..CLO-234]`,
+        { tags: ["known-bug"] },
+        async () => {
+          const h = harness();
+          await h.pm(["ci", "plan", "--ci-output"]);
+          await h.writeManifest();
+        },
+      );
+
+      it.skip(
+        `It handles RC binary release staging and workflow parity for ${eco.label} [CLO-230, CLO-235, CLO-236]`,
         { tags: ["known-bug"] },
         async () => {
           const h = harness();

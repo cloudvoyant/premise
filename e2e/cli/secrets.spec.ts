@@ -152,10 +152,10 @@ type = "gcp-sm"
 project = "${project}"
 
 [profiles.dev.secrets]
-APP_MESSAGE = { provider = "gcp", value = "premise-e2e-test-secret" }
+APP_CONFIG = { provider = "gcp", value = "premise-e2e-test-secret", as_file = true }
 
 [profiles.stage.secrets]
-APP_MESSAGE = { provider = "gcp", value = "premise-e2e-test-secret" }
+APP_CONFIG = { provider = "gcp", value = "premise-e2e-test-secret", as_file = true }
 `,
       0o600,
     );

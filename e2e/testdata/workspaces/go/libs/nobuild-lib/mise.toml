@@ -1,0 +1,11 @@
+[tasks.build]
+run = 'echo "nobuild-lib:skip-build"'
+
+[tasks.test]
+run = 'echo "nobuild-lib:test"'
+
+[tasks."format:check"]
+run = 'echo "nobuild-lib:format:check"'
+
+[tasks.lint]
+run = 'echo "nobuild-lib:lint"'

@@ -11,10 +11,22 @@ workspace:
     infra: pulumi
     versioning: svu
   projects:
-    - name: core
+    - name: local-lib
       template: cloudvoyant/premise-cargo:rust-lib
       version: 0.1.0
-      path: libs/core
+      path: libs/local-lib
+    - name: nobuild-lib
+      template: cloudvoyant/premise-cargo:rust-lib
+      version: 0.1.0
+      path: libs/nobuild-lib
+    - name: public-lib
+      template: cloudvoyant/premise-cargo:rust-lib
+      version: 0.1.0
+      path: libs/public-lib
+    - name: private-lib
+      template: cloudvoyant/premise-cargo:rust-lib
+      version: 0.1.0
+      path: libs/private-lib
     - name: cli
       template: cloudvoyant/premise-cargo:rust-cli
       version: 0.1.0

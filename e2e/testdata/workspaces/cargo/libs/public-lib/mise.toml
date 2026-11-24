@@ -1,0 +1,11 @@
+[tasks.build]
+run = 'echo "public-lib:build"'
+
+[tasks.test]
+run = 'echo "public-lib:test"'
+
+[tasks."format:check"]
+run = 'echo "public-lib:format:check"'
+
+[tasks.lint]
+run = 'echo "public-lib:lint"'
