@@ -8,13 +8,15 @@ import (
 // CIPlan contains scheduling values before the runner chooses its output format.
 // Matrix and Migrations are scheduler-owned slices; the adapter owns their shape.
 type CIPlan struct {
-	Mode              string
-	Runner            string
-	HasNative         bool
-	HasInfrastructure bool
-	Matrix            any
-	Migrations        any
-	HasMigrations     bool
+	Mode                    string
+	Runner                  string
+	HasNative               bool
+	HasInfrastructure       bool
+	HasEnvInfrastructure    bool
+	HasSharedInfrastructure bool
+	Matrix                  any
+	Migrations              any
+	HasMigrations           bool
 }
 
 // Public API -----------------------------------------------------------------

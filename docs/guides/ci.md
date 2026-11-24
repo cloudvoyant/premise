@@ -17,13 +17,13 @@ flowchart TD
     Branch[Feature branch push] --> Checks[Checks and RC publication]
     Checks --> Preview[Preview infra, migrations, app deployment]
     Merge[Merge to main] --> Stable[Checks and stable publication]
-    Stable --> Dev[Dev infra, migrations, app deployment]
+    Stable --> Dev[Shared infra, then dev infra, migrations, app deployment]
     Merge --> Cleanup[Destroy merged branch preview]
     Delete[Branch deletion] --> Cleanup
-    Manual[Manual on-deploy] --> Promote[Promote retained artifacts to dev, stage, or prod]
+    Manual[Manual on-deploy] --> Promote[Promote retained artifacts to dev, stage, prod, or apply shared]
 ```
 
-`on-commit.yml` creates or updates previews on feature pushes. Pull requests run checks without publishing. `on-merge.yml` updates dev on main and destroys previews after merge or branch deletion. `on-deploy.yml` is manual-only. Libraries publish artifacts without creating GitHub deployment environments. Workspaces without infrastructure omit the manual deployment workflow; `pm infra setup` adds it later.
+`on-commit.yml` creates or updates previews on feature pushes when `has_env_infra` is `true`. Pull requests run checks without publishing. `on-merge.yml` applies `infra/shared` first and then `dev` inside `deploy-dev` on `main` after checks and publication, and destroys previews after merge or branch deletion when `has_env_infra` is `true`. Shared-only platform repositories with no `apps/` or `libs/` emit `mode=none` and apply `infra/shared` cleanly while skipping preview and `dev` steps. `on-deploy.yml` is manual-only and supports `shared`, `dev`, `stage`, `prod`, and `preview`. Libraries publish artifacts without creating GitHub deployment environments. Workspaces without infrastructure omit the manual deployment workflow; `pm infra setup` adds it later.
 
 For a local environment flow, select an existing release:
 

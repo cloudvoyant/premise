@@ -32,13 +32,15 @@ func WriteCIPlanOutputs(output io.Writer, provider string, plan CISchedule) erro
 		return err
 	}
 	return adapter.WritePlan(output, providers.CIPlan{
-		Mode:              plan.Mode,
-		Runner:            plan.Runner,
-		HasNative:         plan.HasNative,
-		HasInfrastructure: plan.HasInfrastructure,
-		Matrix:            plan.Matrix,
-		Migrations:        plan.Migrations,
-		HasMigrations:     len(plan.Migrations) > 0,
+		Mode:                    plan.Mode,
+		Runner:                  plan.Runner,
+		HasNative:               plan.HasNative,
+		HasInfrastructure:       plan.HasInfrastructure,
+		HasEnvInfrastructure:    plan.HasEnvInfrastructure,
+		HasSharedInfrastructure: plan.HasSharedInfrastructure,
+		Matrix:                  plan.Matrix,
+		Migrations:              plan.Migrations,
+		HasMigrations:           len(plan.Migrations) > 0,
 	})
 }
 
@@ -161,51 +163,61 @@ type CIMatrixRow struct {
 }
 
 type CISchedule struct {
-	Mode              string              `json:"mode"`
-	Runner            string              `json:"runner,omitempty"`
-	HasInfrastructure bool                `json:"has_infra"`
-	HasNative         bool                `json:"has_native"`
-	Matrix            []CIMatrixRow       `json:"matrix"`
-	Excluded          []CIPlatformProject `json:"excluded"`
-	Migrations        []MigrationGroup    `json:"migrations"`
-	Environment       string              `json:"environment,omitempty"`
-	Branch            string              `json:"branch,omitempty"`
+	Mode                    string              `json:"mode"`
+	Runner                  string              `json:"runner,omitempty"`
+	HasInfrastructure       bool                `json:"has_infra"`
+	HasEnvInfrastructure    bool                `json:"has_env_infra"`
+	HasSharedInfrastructure bool                `json:"has_shared_infra"`
+	HasNative               bool                `json:"has_native"`
+	Matrix                  []CIMatrixRow       `json:"matrix"`
+	Excluded                []CIPlatformProject `json:"excluded"`
+	Migrations              []MigrationGroup    `json:"migrations"`
+	Environment             string              `json:"environment,omitempty"`
+	Branch                  string              `json:"branch,omitempty"`
 }
 
-// PlanCISchedule chooses one whole-runner flow or one unified matrix.
-func PlanCISchedule(projects []CIPlatformProject) (CISchedule, error) {
-	plan := CISchedule{Matrix: []CIMatrixRow{}, Excluded: []CIPlatformProject{}, Migrations: []MigrationGroup{}}
-	platforms := make(map[string]bool)
-	for _, project := range projects {
-		if !project.Eligible {
-			plan.Excluded = append(plan.Excluded, project)
+// PlanCISchedule computes the runner schedule and infrastructure presence for a workspace.
+// Infrastructure-only repositories with no declared projects emit mode "none".
+func PlanCISchedule(ctx context.Context, root string, manifest Config, flow CIFlow, environment, branch string) (CISchedule, error) {
+	projects, err := SelectCIProjects(root, manifest, flow)
+	if err != nil {
+		return CISchedule{}, err
+	}
+	hasEnv, hasShared := infrastructurePresence(root, manifest.Workspace.Infra)
+	var plan CISchedule
+	if len(projects) == 0 && (hasEnv || hasShared) {
+		plan = CISchedule{
+			Mode:       "none",
+			Matrix:     []CIMatrixRow{},
+			Excluded:   []CIPlatformProject{},
+			Migrations: []MigrationGroup{},
 		}
-		if len(project.ReleasePlatforms) != 0 {
-			plan.HasNative = true
+	} else {
+		plan, err = planProjectSchedule(projects)
+		if err != nil {
+			return CISchedule{}, err
 		}
-		for _, platform := range project.Platforms() {
-			runner, err := CIRunner(platform)
+	}
+	if environment != "" {
+		if environment == "preview" && branch == "" {
+			branch, err = extensions.CurrentFeatureBranch(ctx, root)
 			if err != nil {
 				return CISchedule{}, err
 			}
-			platforms[platform] = true
-			plan.Matrix = append(plan.Matrix, CIMatrixRow{
-				Project: project.Name, Platform: platform, Runner: runner,
-				Checks:   slices.Contains(project.CheckPlatforms, platform),
-				Native:   slices.Contains(project.ReleasePlatforms, platform),
-				Artifact: project.Name + "-" + platform,
-			})
+		}
+		if _, err := ResolveStackName(InfraOptions{Environment: environment, Branch: branch}); err != nil {
+			return CISchedule{}, err
 		}
 	}
-	if len(platforms) == 0 {
-		return CISchedule{}, errors.New("no selected CI projects")
-	}
-	if len(platforms) == 1 {
-		plan.Mode = "single"
-		plan.Runner = plan.Matrix[0].Runner
-		plan.Matrix = []CIMatrixRow{}
-	} else {
-		plan.Mode = "matrix"
+	plan.Environment, plan.Branch = environment, branch
+	plan.HasEnvInfrastructure = hasEnv
+	plan.HasSharedInfrastructure = hasShared
+	plan.HasInfrastructure = hasEnv || hasShared
+	if manifest.Workspace.Deployment != nil {
+		plan.Migrations, err = PlanMigrations(root, manifest)
+		if err != nil {
+			return CISchedule{}, err
+		}
 	}
 	return plan, nil
 }
@@ -308,6 +320,9 @@ func RunCIFlowWithOptions(ctx context.Context, root string, flow CIFlow, environ
 		if manifest.Workspace.Infra == nil {
 			return errors.New("environment CI flows require workspace.infra")
 		}
+		if target == "shared" {
+			return runSharedCIFlow(ctx, root, InfraOptions{Environment: "shared", Backend: options.Backend}, nil, stdout, stderr)
+		}
 		branch := options.Branch
 		if branch == "" {
 			branch = os.Getenv("PM_BRANCH")
@@ -321,6 +336,17 @@ func RunCIFlowWithOptions(ctx context.Context, root string, flow CIFlow, environ
 		infrastructure := InfraOptions{Environment: target, Branch: branch, Backend: options.Backend}
 		if flow == CIFlowOnMerge && target == "preview" {
 			return RunInfra(ctx, root, "destroy", infrastructure, nil, stdout, stderr)
+		}
+		if flow == CIFlowOnMerge && target == "dev" {
+			hasEnv, hasShared := infrastructurePresence(root, manifest.Workspace.Infra)
+			if hasShared {
+				if err := runSharedCIFlow(ctx, root, InfraOptions{Environment: "shared", Backend: options.Backend}, nil, stdout, stderr); err != nil {
+					return err
+				}
+			}
+			if !hasEnv {
+				return nil
+			}
 		}
 		release := ReadReleaseEnvironment(ReleaseEnvironment{})
 		return runEnvironmentCIFlow(ctx, root, DeployOptions{InfraOptions: infrastructure, Release: release.Release}, nil, stdout, stderr)
@@ -370,6 +396,62 @@ func RunCIFlowWithOptions(ctx context.Context, root string, flow CIFlow, environ
 }
 
 // Private helpers ------------------------------------------------------------
+
+func planProjectSchedule(projects []CIPlatformProject) (CISchedule, error) {
+	plan := CISchedule{
+		Matrix:     []CIMatrixRow{},
+		Excluded:   []CIPlatformProject{},
+		Migrations: []MigrationGroup{},
+	}
+	platforms := make(map[string]bool)
+	for _, project := range projects {
+		if !project.Eligible {
+			plan.Excluded = append(plan.Excluded, project)
+		}
+		if len(project.ReleasePlatforms) != 0 {
+			plan.HasNative = true
+		}
+		for _, platform := range project.Platforms() {
+			runner, err := CIRunner(platform)
+			if err != nil {
+				return CISchedule{}, err
+			}
+			platforms[platform] = true
+			plan.Matrix = append(plan.Matrix, CIMatrixRow{
+				Project:  project.Name,
+				Platform: platform,
+				Runner:   runner,
+				Checks:   slices.Contains(project.CheckPlatforms, platform),
+				Native:   slices.Contains(project.ReleasePlatforms, platform),
+				Artifact: project.Name + "-" + platform,
+			})
+		}
+	}
+	if len(platforms) == 0 {
+		return CISchedule{}, errors.New("no selected CI projects")
+	}
+	if len(platforms) == 1 {
+		plan.Mode = "single"
+		plan.Runner = plan.Matrix[0].Runner
+		plan.Matrix = []CIMatrixRow{}
+	} else {
+		plan.Mode = "matrix"
+	}
+	return plan, nil
+}
+
+// runSharedCIFlow prepares, previews, and applies shared infrastructure without migrations or app deployment.
+func runSharedCIFlow(ctx context.Context, root string, options InfraOptions, stdin io.Reader, stdout, stderr io.Writer) error {
+	if err := PrepareInfrastructure(ctx, root, options, stdin, stdout, stderr); err != nil {
+		return err
+	}
+	if err := RunInfra(ctx, root, "plan", options, stdin, stdout, stderr); err != nil {
+		return err
+	}
+	apply := options
+	apply.Yes = true
+	return RunInfra(ctx, root, "apply", apply, stdin, stdout, stderr)
+}
 
 // runEnvironmentCIFlow runs the local equivalent of the separate hosted CI steps.
 // Infrastructure and migration failures stop execution without compensation.
@@ -885,19 +967,19 @@ func ciTarget(flow CIFlow, environment string) (string, error) {
 		}
 		return "preview", nil
 	case CIFlowOnMerge:
-		if environment != "" && environment != "preview" && environment != "dev" {
-			return "", errors.New("on-merge only accepts dev deployment or preview cleanup")
+		if environment != "" && environment != "preview" && environment != "dev" && environment != "shared" {
+			return "", errors.New("on-merge only accepts shared, dev deployment, or preview cleanup")
 		}
-		if environment == "preview" {
-			return "preview", nil
+		if environment == "preview" || environment == "shared" {
+			return environment, nil
 		}
 		return "dev", nil
 	case CIFlowOnDeploy:
 		if environment == "" {
 			environment = "stage"
 		}
-		if environment != "dev" && environment != "stage" && environment != "prod" && environment != "preview" {
-			return "", fmt.Errorf("invalid deployment environment %q: expected dev, stage, prod, or preview", environment)
+		if environment != "shared" && environment != "dev" && environment != "stage" && environment != "prod" && environment != "preview" {
+			return "", fmt.Errorf("invalid deployment environment %q: expected shared, dev, stage, prod, or preview", environment)
 		}
 		return environment, nil
 	default:

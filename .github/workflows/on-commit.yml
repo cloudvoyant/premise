@@ -31,6 +31,8 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
       native: ${{ steps.plan.outputs.native }}
       has_infra: ${{ steps.plan.outputs.has_infra }}
+      has_env_infra: ${{ steps.plan.outputs.has_env_infra }}
+      has_shared_infra: ${{ steps.plan.outputs.has_shared_infra }}
       version: ${{ steps.plan.outputs.release_version }}
     steps:
       - uses: actions/checkout@v6
@@ -86,7 +88,7 @@ jobs:
 
   matrix:
     needs: plan
-    if: needs.plan.outputs.mode != 'single'
+    if: needs.plan.outputs.mode == 'matrix'
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
@@ -128,7 +130,7 @@ jobs:
       needs.plan.result == 'success' &&
       ((needs.plan.outputs.mode == 'single' &&
         needs.single.result == 'success') ||
-       (needs.plan.outputs.mode != 'single' &&
+       (needs.plan.outputs.mode == 'matrix' &&
         needs.matrix.result == 'success'))
     runs-on: ubuntu-22.04
     permissions:
@@ -203,9 +205,9 @@ jobs:
   deploy:
     needs: [plan, single, matrix, publish-release, publish-packages]
     if: >-
-      always() && !cancelled() && needs.plan.outputs.has_infra == 'true' &&
+      always() && !cancelled() && needs.plan.outputs.has_env_infra == 'true' &&
       github.event_name == 'push' && needs.plan.result == 'success' &&
-      (needs.single.result == 'success' || needs.matrix.result == 'success') &&
+      (needs.plan.outputs.mode == 'none' || needs.single.result == 'success' || needs.matrix.result == 'success') &&
       needs.single.result != 'failure' && needs.matrix.result != 'failure' &&
       needs.publish-release.result != 'failure' && needs.publish-release.result != 'cancelled' &&
       needs.publish-packages.result != 'failure' && needs.publish-packages.result != 'cancelled'

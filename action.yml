@@ -90,8 +90,14 @@ inputs:
 
 outputs:
   has_infra:
-    description: "Whether premise.yaml declares client infrastructure"
+    description: "Whether premise.yaml declares client infrastructure with a Pulumi program"
     value: ${{ steps.schedule.outputs.has_infra }}
+  has_env_infra:
+    description: "Whether the workspace has an environment Pulumi program (infra/env or configured directory)"
+    value: ${{ steps.schedule.outputs.has_env_infra }}
+  has_shared_infra:
+    description: "Whether the workspace has a shared Pulumi program (infra/shared or configured shared_directory)"
+    value: ${{ steps.schedule.outputs.has_shared_infra }}
   has_migrations:
     description: "Whether the CI plan includes application migrations"
     value: ${{ steps.schedule.outputs.has_migrations }}

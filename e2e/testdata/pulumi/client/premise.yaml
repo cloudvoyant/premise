@@ -4,7 +4,8 @@ workspace:
   schema-version: "0.2"
   providers: { ci: github, tools: mise, tasks: mise, infra: pulumi, versioning: svu }
   infra:
-    directory: infra
+    directory: infra/env
+    shared_directory: infra/shared
   projects:
     - name: web
       template: fixture:static-app

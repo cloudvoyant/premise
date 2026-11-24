@@ -56,7 +56,7 @@ func InitCommand(scaffold core.WorkspaceScaffold) *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&projectKind, "kind", "monorepo", "project kind: monorepo or template-registry")
-	command.Flags().BoolVar(&infrastructure, "infra", false, "Initialize or adopt a client-owned Pulumi project in infra/")
+	command.Flags().BoolVar(&infrastructure, "infra", false, "Initialize client-owned Pulumi infrastructure")
 	command.Flags().StringVar(&setup.Language, "pulumi-lang", "", "Official Pulumi language starter, such as go, typescript, or python")
 	command.Flags().StringVar(&setup.PulumiVersion, "pulumi-version", "", "Pulumi version to pin in mise.toml; defaults to the existing pin or tested version")
 	return command

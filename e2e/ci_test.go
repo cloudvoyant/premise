@@ -151,11 +151,17 @@ func TestCI(t *testing.T) {
 			devBucket := client.bucket(t, "dev")
 
 			// Act.
-			client.flow(t, "on-merge", "preview", "A")
 			client.flow(t, "on-merge", "dev", "B")
+			sharedBucket := client.bucket(t, "shared")
+			client.flow(t, "on-merge", "preview", "A")
 
 			// Assert.
-			t.Run("it destroys the merged preview environment", func(t *testing.T) { client.assertBucketDeleted(t, previewBucket) })
+			t.Run("it destroys the merged preview environment while preserving shared", func(t *testing.T) {
+				client.assertBucketDeleted(t, previewBucket)
+				if got := client.bucket(t, "shared"); got != sharedBucket {
+					t.Fatalf("shared bucket changed after preview cleanup: %s", got)
+				}
+			})
 			t.Run("it succeeds when preview cleanup runs again", func(t *testing.T) { client.flow(t, "on-merge", "preview", "A") })
 			t.Run("it updates the existing dev environment", func(t *testing.T) {
 				if got := client.bucket(t, "dev"); got != devBucket {

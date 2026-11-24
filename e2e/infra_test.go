@@ -26,7 +26,7 @@ func TestInfra(t *testing.T) {
 			if !strings.Contains(version, "v3.268.0") {
 				t.Fatalf("unexpected Pulumi version: %s", version)
 			}
-			assertFileContains(t, filepath.Join(client.root, "infra/go.mod"), "pulumi-gcp")
+			assertFileContains(t, filepath.Join(client.root, "infra/env/go.mod"), "pulumi-gcp")
 		})
 		t.Run("it prepares state without provisioning resources", func(t *testing.T) {
 			if strings.TrimSpace(client.infra(t, "exists", "dev")) != "false" {
@@ -58,7 +58,7 @@ func TestInfra(t *testing.T) {
 
 	t.Run("when applying infra updates", func(t *testing.T) {
 		client := newLiveClient(t, binary)
-		for _, environment := range []string{"dev", "stage", "prod", "preview"} {
+		for _, environment := range []string{"shared", "dev", "stage", "prod", "preview"} {
 			t.Run("for "+environment, func(t *testing.T) {
 				// Arrange.
 				t.Setenv("PREMISE_TEST_REVISION", "a")
@@ -162,5 +162,11 @@ func TestInfra(t *testing.T) {
 		// Assert.
 		t.Run("it deletes the preview bucket", func(t *testing.T) { client.assertBucketDeleted(t, bucket) })
 		t.Run("it succeeds when destruction runs again", func(t *testing.T) { client.infra(t, "destroy", "preview", "--yes") })
+		t.Run("it rejects non-interactive destroy for shared", func(t *testing.T) {
+			failure := commandFailure(t, client.root, binary, "infra", "destroy", "--env", "shared", "--yes")
+			if !strings.Contains(failure, "interactive confirmation") {
+				t.Fatalf("unexpected shared destroy failure: %s", failure)
+			}
+		})
 	})
 }

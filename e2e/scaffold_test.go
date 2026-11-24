@@ -76,9 +76,10 @@ func TestScaffold(t *testing.T) {
 		client := configureLiveClient(t, binary, workspace)
 
 		// Assert.
-		t.Run("it scaffolds the program and manual deployment action", func(t *testing.T) {
+		t.Run("it scaffolds the env and shared programs and manual deployment action", func(t *testing.T) {
 			assertScaffoldWorkflows(t, workspace, true)
-			assertFileContains(t, filepath.Join(workspace, "infra/Pulumi.yaml"), "runtime: go")
+			assertFileContains(t, filepath.Join(workspace, "infra/env/Pulumi.yaml"), "runtime: go")
+			assertFileContains(t, filepath.Join(workspace, "infra/shared/Pulumi.yaml"), "runtime: go")
 			assertFileContains(t, filepath.Join(workspace, "mise.toml"), "pulumi")
 		})
 		t.Run("it leaves working infra setup plan and output commands", func(t *testing.T) {
@@ -88,6 +89,9 @@ func TestScaffold(t *testing.T) {
 			if output := strings.TrimSpace(client.infra(t, "output", "dev")); output != "{}" {
 				t.Fatalf("empty starter outputs = %q", output)
 			}
+			client.infra(t, "setup", "shared")
+			client.infra(t, "plan", "shared")
+			client.infra(t, "apply", "shared", "--yes")
 		})
 	})
 
@@ -102,17 +106,21 @@ func TestScaffold(t *testing.T) {
 		runCommand(t, workspace, binary, "infra", "setup", "--pulumi-lang", "go")
 
 		// Assert.
-		t.Run("it adds the infra directory and missing deployment action", func(t *testing.T) {
+		t.Run("it adds the infra directories and missing deployment action", func(t *testing.T) {
 			assertScaffoldWorkflows(t, workspace, true)
-			assertFileContains(t, filepath.Join(workspace, "infra/Pulumi.yaml"), "runtime: go")
+			assertFileContains(t, filepath.Join(workspace, "infra/env/Pulumi.yaml"), "runtime: go")
+			assertFileContains(t, filepath.Join(workspace, "infra/shared/Pulumi.yaml"), "runtime: go")
 		})
 		t.Run("it preserves the app and existing workflow", func(t *testing.T) {
 			assertFileContent(t, workflow, before)
 			assertFileContains(t, filepath.Join(workspace, "apps/example/main.go"), `fmt.Println("example")`)
 		})
-		t.Run("it preserves tool pins when setup runs again", func(t *testing.T) {
+		t.Run("it rejects repeated setup when infra already exists and preserves files", func(t *testing.T) {
 			before := readFile(t, filepath.Join(workspace, "mise.toml"))
-			runCommand(t, workspace, binary, "infra", "setup")
+			failure := commandFailure(t, workspace, binary, "infra", "setup", "--pulumi-lang", "go")
+			if !strings.Contains(failure, "already exists") {
+				t.Fatalf("unexpected repeated setup failure: %s", failure)
+			}
 			assertFileContent(t, filepath.Join(workspace, "mise.toml"), before)
 		})
 		t.Run("it leaves a working environment plan", func(t *testing.T) {

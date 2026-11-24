@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -506,7 +507,7 @@ func TestPlanCIScheduleUsesOneMatrixForAllProjects(t *testing.T) {
 		{Name: "lib", CheckPlatforms: []string{"linux"}, ReleasePlatforms: []string{}},
 		{Name: "tauri", CheckPlatforms: []string{"linux", "macos", "windows"}, ReleasePlatforms: []string{"linux", "macos", "windows"}},
 	}
-	plan, err := PlanCISchedule(projects)
+	plan, err := planProjectSchedule(projects)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -522,16 +523,179 @@ func TestPlanCIScheduleUsesOneMatrixForAllProjects(t *testing.T) {
 }
 
 func TestPlanCIScheduleSingleRunnerAndNoNative(t *testing.T) {
-	plan, err := PlanCISchedule([]CIPlatformProject{{Name: "app", CheckPlatforms: []string{"macos"}}})
+	plan, err := planProjectSchedule([]CIPlatformProject{{Name: "app", CheckPlatforms: []string{"macos"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if plan.Mode != "single" || plan.Runner != "macos-14" || plan.HasNative || len(plan.Matrix) != 0 {
 		t.Fatalf("single schedule = %#v", plan)
 	}
-	if _, err := PlanCISchedule(nil); err == nil {
+	if _, err := planProjectSchedule(nil); err == nil {
 		t.Fatal("empty project schedule accepted")
 	}
+}
+
+func TestCIPlanAndSharedOnMergeFlows(t *testing.T) {
+	t.Run("when planning CI", func(t *testing.T) {
+		t.Run("it detects env and shared infra", func(t *testing.T) {
+			// Arrange.
+			root := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(root, "apps/web"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writePulumiYAML(t, filepath.Join(root, "infra/env"), "app")
+			writePulumiYAML(t, filepath.Join(root, "infra/shared"), "app-shared")
+			manifest := NewManifest("app")
+			manifest.Workspace.Kind = ProjectKindMonorepo
+			manifest.Workspace.Projects = []Project{{Name: "web", Template: "t:web", Path: "apps/web"}}
+			manifest.Workspace.Infra = &Infrastructure{
+				Directory:       "infra/env",
+				SharedDirectory: "infra/shared",
+			}
+
+			// Act.
+			plan, err := PlanCISchedule(t.Context(), root, manifest, CIFlowOnMerge, "", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var output bytes.Buffer
+			if err := WriteCIPlanOutputs(&output, "github", plan); err != nil {
+				t.Fatal(err)
+			}
+
+			// Assert.
+			text := output.String()
+			for _, want := range []string{"mode=single\n", "has_infra=true\n", "has_env_infra=true\n", "has_shared_infra=true\n"} {
+				if !strings.Contains(text, want) {
+					t.Fatalf("missing %q in outputs:\n%s", want, text)
+				}
+			}
+		})
+
+		t.Run("it allows shared-only platform repos without projects", func(t *testing.T) {
+			// Arrange.
+			root := t.TempDir()
+			writePulumiYAML(t, filepath.Join(root, "infra/shared"), "platform-shared")
+			manifest := NewManifest("platform")
+			manifest.Workspace.Kind = ProjectKindMonorepo
+			manifest.Workspace.Infra = &Infrastructure{
+				SharedDirectory: "infra/shared",
+			}
+
+			// Act.
+			plan, err := PlanCISchedule(t.Context(), root, manifest, CIFlowOnMerge, "", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var output bytes.Buffer
+			if err := WriteCIPlanOutputs(&output, "github", plan); err != nil {
+				t.Fatal(err)
+			}
+
+			// Assert.
+			text := output.String()
+			for _, want := range []string{"mode=none\n", "has_infra=true\n", "has_env_infra=false\n", "has_shared_infra=true\n"} {
+				if !strings.Contains(text, want) {
+					t.Fatalf("missing %q in outputs:\n%s", want, text)
+				}
+			}
+		})
+	})
+
+	t.Run("when running on-merge", func(t *testing.T) {
+		t.Run("it applies shared infra only when shared is selected", func(t *testing.T) {
+			// Arrange.
+			root := t.TempDir()
+			writePulumiYAML(t, filepath.Join(root, "infra/shared"), "app-shared")
+			writePulumiYAML(t, filepath.Join(root, "infra/env"), "app")
+			manifest := NewManifest("app")
+			manifest.Workspace.Kind = ProjectKindMonorepo
+			manifest.Workspace.Infra = &Infrastructure{
+				Directory:       "infra/env",
+				SharedDirectory: "infra/shared",
+				Backend:         "remote",
+				Backends:        map[string]InfraBackend{"remote": {URL: "gs://state"}},
+				Environments:    map[string]InfraEnvironment{"shared": {}, "dev": {}},
+			}
+			if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
+				t.Fatal(err)
+			}
+			logFile := filepath.Join(t.TempDir(), "pulumi.log")
+			bin := t.TempDir()
+			miseScript := "#!/bin/sh\nset -eu\nif [ \"$1 $2 $3\" = 'exec -- pulumi' ]; then\n  shift 3\n  printf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$PULUMI_LOG\"\n  exit 0\nfi\nexit 1\n"
+			if err := os.WriteFile(filepath.Join(bin, "mise"), []byte(miseScript), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			t.Setenv("PULUMI_LOG", logFile)
+
+			// Act.
+			err := RunCIFlowWithOptions(t.Context(), root, CIFlowOnMerge, "shared", CIReleaseNone, CIFlowOptions{}, io.Discard, io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// Assert.
+			data, err := os.ReadFile(logFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			logged := string(data)
+			for _, want := range []string{"infra/shared|install", "infra/shared|stack select shared", "infra/shared|preview --stack shared", "infra/shared|up --stack shared --yes"} {
+				if !strings.Contains(logged, want) {
+					t.Fatalf("missing %q in pulumi log:\n%s", want, logged)
+				}
+			}
+			if strings.Contains(logged, "infra/env") || strings.Contains(logged, "--stack dev") {
+				t.Fatalf("shared flow touched dev environment:\n%s", logged)
+			}
+		})
+
+		t.Run("it applies shared first then dev", func(t *testing.T) {
+			// Arrange.
+			root := t.TempDir()
+			writePulumiYAML(t, filepath.Join(root, "infra/shared"), "app-shared")
+			writePulumiYAML(t, filepath.Join(root, "infra/env"), "app")
+			manifest := NewManifest("app")
+			manifest.Workspace.Kind = ProjectKindMonorepo
+			manifest.Workspace.Infra = &Infrastructure{
+				Directory:       "infra/env",
+				SharedDirectory: "infra/shared",
+				Backend:         "remote",
+				Backends:        map[string]InfraBackend{"remote": {URL: "gs://state"}},
+				Environments:    map[string]InfraEnvironment{"shared": {}, "dev": {}},
+			}
+			if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
+				t.Fatal(err)
+			}
+			logFile := filepath.Join(t.TempDir(), "pulumi.log")
+			bin := t.TempDir()
+			miseScript := "#!/bin/sh\nset -eu\nif [ \"$1 $2 $3\" = 'exec -- pulumi' ]; then\n  shift 3\n  printf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$PULUMI_LOG\"\n  if [ \"$1 $2\" = 'stack ls' ]; then printf '[]'; fi\n  exit 0\nfi\nexit 1\n"
+			if err := os.WriteFile(filepath.Join(bin, "mise"), []byte(miseScript), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			t.Setenv("PULUMI_LOG", logFile)
+
+			// Act.
+			err := RunCIFlowWithOptions(t.Context(), root, CIFlowOnMerge, "dev", CIReleaseNone, CIFlowOptions{}, io.Discard, io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// Assert.
+			data, err := os.ReadFile(logFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			logged := string(data)
+			sharedUp := strings.Index(logged, "infra/shared|up --stack shared --yes")
+			devUp := strings.Index(logged, "infra/env|up --stack dev --yes")
+			if sharedUp == -1 || devUp == -1 || sharedUp >= devUp {
+				t.Fatalf("expected shared apply before dev apply, got:\n%s", logged)
+			}
+		})
+	})
 }
 
 func writeCIProject(t *testing.T, templates []Template, monorepo bool) string {

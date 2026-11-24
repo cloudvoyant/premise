@@ -23,10 +23,9 @@ func DeployCommand() *cobra.Command {
 
 			environment, _ := cmd.Flags().GetString("env")
 			branch, _ := cmd.Flags().GetString("branch")
-			shared, _ := cmd.Flags().GetBool("shared")
 			backend, _ := cmd.Flags().GetString("backend")
 			yes, _ := cmd.Flags().GetBool("yes")
-			options, err := core.ResolveInfraOptions(cmd.Context(), root, core.InfraOptions{Environment: environment, Branch: branch, Shared: shared, Backend: backend, Yes: yes})
+			options, err := core.ResolveInfraOptions(cmd.Context(), root, core.InfraOptions{Environment: environment, Branch: branch, Backend: backend, Yes: yes})
 			if err != nil {
 				return err
 			}
@@ -40,7 +39,6 @@ func DeployCommand() *cobra.Command {
 	}
 	command.Flags().String("env", "", "Environment: dev, stage, prod, or preview")
 	command.Flags().String("branch", "", "Branch identity required for preview environments")
-	command.Flags().Bool("shared", false, "Select only shared infrastructure")
 	command.Flags().String("backend", "", "Named saved backend; defaults to environment/workspace selection")
 	command.Flags().String("release", "", "Immutable release revision")
 

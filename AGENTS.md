@@ -50,6 +50,7 @@
 - Use `// Fixtures -------------------------------------------------------------------`, `// Tests ----------------------------------------------------------------------`, then `// Private helpers ------------------------------------------------------------` in Go test files. Omit empty sections and keep related test groups together.
 - Prefer command E2E tests, then module integration tests. Avoid tests that mirror implementation.
 - Separate Arrange, Act, and Assert with blank lines. Name the behavior and expected outcome.
+- [Proposed] Keep test names short and behavioral (such as "it applies shared first then dev"); keep exact flag or output invariants in assertions rather than test names.
 - Use Scaffold, Infra, Secrets, and CI suites. Nest `when ...` contexts and `it ...` outcomes.
 - Keep actions and assertions visible. Put reusable setup and process execution in helpers.
 - Each context must work with `go test -run`. Do not depend on sibling scenarios.

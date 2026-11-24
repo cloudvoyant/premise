@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	core "github.com/cloudvoyant/premise/libs/core"
-	"github.com/cloudvoyant/premise/libs/core/extensions"
 	"github.com/spf13/cobra"
 )
 
@@ -43,32 +42,9 @@ func CIPlanCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			projects, err := core.SelectCIProjects(root, manifest, flow)
+			plan, err := core.PlanCISchedule(cmd.Context(), root, manifest, flow, environment, branch)
 			if err != nil {
 				return err
-			}
-			plan, err := core.PlanCISchedule(projects)
-			if err != nil {
-				return err
-			}
-			if environment != "" {
-				if environment == "preview" && branch == "" {
-					branch, err = extensions.CurrentFeatureBranch(cmd.Context(), root)
-					if err != nil {
-						return err
-					}
-				}
-				if _, err := core.ResolveStackName(core.InfraOptions{Environment: environment, Branch: branch}); err != nil {
-					return err
-				}
-			}
-			plan.Environment, plan.Branch = environment, branch
-			plan.HasInfrastructure = manifest.Workspace.Infra != nil
-			if manifest.Workspace.Deployment != nil {
-				plan.Migrations, err = core.PlanMigrations(root, manifest)
-				if err != nil {
-					return err
-				}
 			}
 			if githubOutput {
 				return core.WriteCIPlanOutputs(cmd.OutOrStdout(), "github", plan)
@@ -126,7 +102,7 @@ func CIFlowCommand() *cobra.Command {
 			return nil
 		},
 	}
-	command.Flags().StringVar(&environment, "environment", "", "deployment environment: dev, stage, prod, or preview")
+	command.Flags().StringVar(&environment, "environment", "", "deployment environment: shared, dev, stage, prod, or preview")
 	command.Flags().StringVar(&branch, "branch", "", "feature branch identity for a preview")
 	command.Flags().StringVar(&backend, "backend", "", "Configured infrastructure backend override")
 	command.Flags().StringVar(&project, "project", "", "declared project template name")
