@@ -176,14 +176,14 @@ type CISchedule struct {
 	Branch                  string              `json:"branch,omitempty"`
 }
 
-// PlanWorkspaceCISchedule computes the runner schedule and infrastructure presence for a workspace.
+// PlanCISchedule computes the runner schedule and infrastructure presence for a workspace.
 // Infrastructure-only repositories with no declared projects emit mode "none".
-func PlanWorkspaceCISchedule(ctx context.Context, root string, manifest Config, flow CIFlow, environment, branch string) (CISchedule, error) {
+func PlanCISchedule(ctx context.Context, root string, manifest Config, flow CIFlow, environment, branch string) (CISchedule, error) {
 	projects, err := SelectCIProjects(root, manifest, flow)
 	if err != nil {
 		return CISchedule{}, err
 	}
-	hasEnv, hasShared := InfrastructurePresence(root, manifest.Workspace.Infra)
+	hasEnv, hasShared := infrastructurePresence(root, manifest.Workspace.Infra)
 	var plan CISchedule
 	if len(projects) == 0 && (hasEnv || hasShared) {
 		plan = CISchedule{
@@ -193,7 +193,7 @@ func PlanWorkspaceCISchedule(ctx context.Context, root string, manifest Config, 
 			Migrations: []MigrationGroup{},
 		}
 	} else {
-		plan, err = PlanCISchedule(projects)
+		plan, err = planProjectSchedule(projects)
 		if err != nil {
 			return CISchedule{}, err
 		}
@@ -218,44 +218,6 @@ func PlanWorkspaceCISchedule(ctx context.Context, root string, manifest Config, 
 		if err != nil {
 			return CISchedule{}, err
 		}
-	}
-	return plan, nil
-}
-
-// PlanCISchedule chooses one whole-runner flow or one unified matrix.
-func PlanCISchedule(projects []CIPlatformProject) (CISchedule, error) {
-	plan := CISchedule{Matrix: []CIMatrixRow{}, Excluded: []CIPlatformProject{}, Migrations: []MigrationGroup{}}
-	platforms := make(map[string]bool)
-	for _, project := range projects {
-		if !project.Eligible {
-			plan.Excluded = append(plan.Excluded, project)
-		}
-		if len(project.ReleasePlatforms) != 0 {
-			plan.HasNative = true
-		}
-		for _, platform := range project.Platforms() {
-			runner, err := CIRunner(platform)
-			if err != nil {
-				return CISchedule{}, err
-			}
-			platforms[platform] = true
-			plan.Matrix = append(plan.Matrix, CIMatrixRow{
-				Project: project.Name, Platform: platform, Runner: runner,
-				Checks:   slices.Contains(project.CheckPlatforms, platform),
-				Native:   slices.Contains(project.ReleasePlatforms, platform),
-				Artifact: project.Name + "-" + platform,
-			})
-		}
-	}
-	if len(platforms) == 0 {
-		return CISchedule{}, errors.New("no selected CI projects")
-	}
-	if len(platforms) == 1 {
-		plan.Mode = "single"
-		plan.Runner = plan.Matrix[0].Runner
-		plan.Matrix = []CIMatrixRow{}
-	} else {
-		plan.Mode = "matrix"
 	}
 	return plan, nil
 }
@@ -376,7 +338,7 @@ func RunCIFlowWithOptions(ctx context.Context, root string, flow CIFlow, environ
 			return RunInfra(ctx, root, "destroy", infrastructure, nil, stdout, stderr)
 		}
 		if flow == CIFlowOnMerge && target == "dev" {
-			hasEnv, hasShared := InfrastructurePresence(root, manifest.Workspace.Infra)
+			hasEnv, hasShared := infrastructurePresence(root, manifest.Workspace.Infra)
 			if hasShared {
 				if err := runSharedCIFlow(ctx, root, InfraOptions{Environment: "shared", Backend: options.Backend}, nil, stdout, stderr); err != nil {
 					return err
@@ -434,6 +396,49 @@ func RunCIFlowWithOptions(ctx context.Context, root string, flow CIFlow, environ
 }
 
 // Private helpers ------------------------------------------------------------
+
+func planProjectSchedule(projects []CIPlatformProject) (CISchedule, error) {
+	plan := CISchedule{
+		Matrix:     []CIMatrixRow{},
+		Excluded:   []CIPlatformProject{},
+		Migrations: []MigrationGroup{},
+	}
+	platforms := make(map[string]bool)
+	for _, project := range projects {
+		if !project.Eligible {
+			plan.Excluded = append(plan.Excluded, project)
+		}
+		if len(project.ReleasePlatforms) != 0 {
+			plan.HasNative = true
+		}
+		for _, platform := range project.Platforms() {
+			runner, err := CIRunner(platform)
+			if err != nil {
+				return CISchedule{}, err
+			}
+			platforms[platform] = true
+			plan.Matrix = append(plan.Matrix, CIMatrixRow{
+				Project:  project.Name,
+				Platform: platform,
+				Runner:   runner,
+				Checks:   slices.Contains(project.CheckPlatforms, platform),
+				Native:   slices.Contains(project.ReleasePlatforms, platform),
+				Artifact: project.Name + "-" + platform,
+			})
+		}
+	}
+	if len(platforms) == 0 {
+		return CISchedule{}, errors.New("no selected CI projects")
+	}
+	if len(platforms) == 1 {
+		plan.Mode = "single"
+		plan.Runner = plan.Matrix[0].Runner
+		plan.Matrix = []CIMatrixRow{}
+	} else {
+		plan.Mode = "matrix"
+	}
+	return plan, nil
+}
 
 // runSharedCIFlow prepares, previews, and applies shared infrastructure without migrations or app deployment.
 func runSharedCIFlow(ctx context.Context, root string, options InfraOptions, stdin io.Reader, stdout, stderr io.Writer) error {

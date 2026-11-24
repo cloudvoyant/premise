@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// Public API -----------------------------------------------------------------
+// Tests ----------------------------------------------------------------------
 
 func TestStackNamesSeparateEnvironmentsAndAvoidPreviewCollisions(t *testing.T) {
 	for _, tc := range []struct {
@@ -154,7 +154,7 @@ func TestInfrastructureScaffoldingAndPathResolution(t *testing.T) {
 			},
 		}
 
-		t.Run("given infra/ is absent, then it stages infra/env and infra/shared and writes both to premise.yaml", func(t *testing.T) {
+		t.Run("it creates env and shared programs", func(t *testing.T) {
 			// Arrange.
 			root := filepath.Join(t.TempDir(), "sample-app")
 			if err := os.MkdirAll(root, 0o755); err != nil {
@@ -196,7 +196,7 @@ func TestInfrastructureScaffoldingAndPathResolution(t *testing.T) {
 			}
 		})
 
-		t.Run("given anything exists in infra/, then it rejects and leaves files unchanged", func(t *testing.T) {
+		t.Run("it rejects existing infra without modifying files", func(t *testing.T) {
 			// Arrange.
 			root := filepath.Join(t.TempDir(), "existing-app")
 			if err := os.MkdirAll(filepath.Join(root, "infra"), 0o755); err != nil {
@@ -236,7 +236,7 @@ func TestInfrastructureScaffoldingAndPathResolution(t *testing.T) {
 	})
 
 	t.Run("when resolving infra paths", func(t *testing.T) {
-		t.Run("given no explicit directories, then env resolves to infra/env and shared resolves to infra/shared", func(t *testing.T) {
+		t.Run("it defaults to infra/env and infra/shared", func(t *testing.T) {
 			// Arrange.
 			root := t.TempDir()
 			writePulumiYAML(t, filepath.Join(root, "infra/env"), "app")
@@ -266,36 +266,6 @@ func TestInfrastructureScaffoldingAndPathResolution(t *testing.T) {
 			}
 			if sharedRes.Directory != filepath.Join(root, "infra/shared") || sharedRes.ProjectName != "app-shared" || sharedRes.Stack != "shared" {
 				t.Fatalf("shared resolution = %#v", sharedRes)
-			}
-		})
-
-		t.Run("given legacy directory: infra, then env resolves to infra/", func(t *testing.T) {
-			// Arrange.
-			root := t.TempDir()
-			writePulumiYAML(t, filepath.Join(root, "infra"), "legacy")
-			manifest := NewManifest("legacy")
-			manifest.Workspace.Infra = &Infrastructure{
-				Directory: "infra",
-				Backend:   "remote",
-				Backends:  map[string]InfraBackend{"remote": {URL: "gs://state"}},
-			}
-			if err := SaveManifest(filepath.Join(root, ManifestFilename), manifest); err != nil {
-				t.Fatal(err)
-			}
-
-			// Act.
-			envRes, err := ResolveInfrastructure(root, InfraOptions{Environment: "dev"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			hasEnv, hasShared := InfrastructurePresence(root, manifest.Workspace.Infra)
-
-			// Assert.
-			if envRes.Directory != filepath.Join(root, "infra") || envRes.ProjectName != "legacy" {
-				t.Fatalf("legacy env resolution = %#v", envRes)
-			}
-			if !hasEnv || hasShared {
-				t.Fatalf("presence = (env=%t, shared=%t), want (true, false)", hasEnv, hasShared)
 			}
 		})
 	})

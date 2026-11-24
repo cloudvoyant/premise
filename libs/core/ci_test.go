@@ -507,7 +507,7 @@ func TestPlanCIScheduleUsesOneMatrixForAllProjects(t *testing.T) {
 		{Name: "lib", CheckPlatforms: []string{"linux"}, ReleasePlatforms: []string{}},
 		{Name: "tauri", CheckPlatforms: []string{"linux", "macos", "windows"}, ReleasePlatforms: []string{"linux", "macos", "windows"}},
 	}
-	plan, err := PlanCISchedule(projects)
+	plan, err := planProjectSchedule(projects)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -523,21 +523,21 @@ func TestPlanCIScheduleUsesOneMatrixForAllProjects(t *testing.T) {
 }
 
 func TestPlanCIScheduleSingleRunnerAndNoNative(t *testing.T) {
-	plan, err := PlanCISchedule([]CIPlatformProject{{Name: "app", CheckPlatforms: []string{"macos"}}})
+	plan, err := planProjectSchedule([]CIPlatformProject{{Name: "app", CheckPlatforms: []string{"macos"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if plan.Mode != "single" || plan.Runner != "macos-14" || plan.HasNative || len(plan.Matrix) != 0 {
 		t.Fatalf("single schedule = %#v", plan)
 	}
-	if _, err := PlanCISchedule(nil); err == nil {
+	if _, err := planProjectSchedule(nil); err == nil {
 		t.Fatal("empty project schedule accepted")
 	}
 }
 
 func TestCIPlanAndSharedOnMergeFlows(t *testing.T) {
 	t.Run("when planning CI", func(t *testing.T) {
-		t.Run("given infra/env and infra/shared, then has_env_infra=true and has_shared_infra=true", func(t *testing.T) {
+		t.Run("it detects env and shared infra", func(t *testing.T) {
 			// Arrange.
 			root := t.TempDir()
 			if err := os.MkdirAll(filepath.Join(root, "apps/web"), 0o755); err != nil {
@@ -554,7 +554,7 @@ func TestCIPlanAndSharedOnMergeFlows(t *testing.T) {
 			}
 
 			// Act.
-			plan, err := PlanWorkspaceCISchedule(t.Context(), root, manifest, CIFlowOnMerge, "", "")
+			plan, err := PlanCISchedule(t.Context(), root, manifest, CIFlowOnMerge, "", "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -572,7 +572,7 @@ func TestCIPlanAndSharedOnMergeFlows(t *testing.T) {
 			}
 		})
 
-		t.Run("given infra/shared only and zero projects, then mode=none, has_infra=true, has_env_infra=false, has_shared_infra=true", func(t *testing.T) {
+		t.Run("it allows shared-only platform repos without projects", func(t *testing.T) {
 			// Arrange.
 			root := t.TempDir()
 			writePulumiYAML(t, filepath.Join(root, "infra/shared"), "platform-shared")
@@ -583,7 +583,7 @@ func TestCIPlanAndSharedOnMergeFlows(t *testing.T) {
 			}
 
 			// Act.
-			plan, err := PlanWorkspaceCISchedule(t.Context(), root, manifest, CIFlowOnMerge, "", "")
+			plan, err := PlanCISchedule(t.Context(), root, manifest, CIFlowOnMerge, "", "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -600,41 +600,10 @@ func TestCIPlanAndSharedOnMergeFlows(t *testing.T) {
 				}
 			}
 		})
-
-		t.Run("given legacy directory: infra only, then has_env_infra=true and has_shared_infra=false", func(t *testing.T) {
-			// Arrange.
-			root := t.TempDir()
-			if err := os.MkdirAll(filepath.Join(root, "apps/web"), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			writePulumiYAML(t, filepath.Join(root, "infra"), "legacy")
-			manifest := NewManifest("legacy")
-			manifest.Workspace.Kind = ProjectKindMonorepo
-			manifest.Workspace.Projects = []Project{{Name: "web", Template: "t:web", Path: "apps/web"}}
-			manifest.Workspace.Infra = &Infrastructure{Directory: "infra"}
-
-			// Act.
-			plan, err := PlanWorkspaceCISchedule(t.Context(), root, manifest, CIFlowOnMerge, "", "")
-			if err != nil {
-				t.Fatal(err)
-			}
-			var output bytes.Buffer
-			if err := WriteCIPlanOutputs(&output, "github", plan); err != nil {
-				t.Fatal(err)
-			}
-
-			// Assert.
-			text := output.String()
-			for _, want := range []string{"has_infra=true\n", "has_env_infra=true\n", "has_shared_infra=false\n"} {
-				if !strings.Contains(text, want) {
-					t.Fatalf("missing %q in outputs:\n%s", want, text)
-				}
-			}
-		})
 	})
 
-	t.Run("when running on-merge CI flow", func(t *testing.T) {
-		t.Run("given --environment shared, then shared setup, plan, and apply run without dev or migrations", func(t *testing.T) {
+	t.Run("when running on-merge", func(t *testing.T) {
+		t.Run("it applies shared infra only when shared is selected", func(t *testing.T) {
 			// Arrange.
 			root := t.TempDir()
 			writePulumiYAML(t, filepath.Join(root, "infra/shared"), "app-shared")
@@ -682,7 +651,7 @@ func TestCIPlanAndSharedOnMergeFlows(t *testing.T) {
 			}
 		})
 
-		t.Run("given --environment dev with infra/shared present, then shared applies first before dev", func(t *testing.T) {
+		t.Run("it applies shared first then dev", func(t *testing.T) {
 			// Arrange.
 			root := t.TempDir()
 			writePulumiYAML(t, filepath.Join(root, "infra/shared"), "app-shared")

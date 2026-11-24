@@ -42,7 +42,7 @@ func CIPlanCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			plan, err := core.PlanWorkspaceCISchedule(cmd.Context(), root, manifest, flow, environment, branch)
+			plan, err := core.PlanCISchedule(cmd.Context(), root, manifest, flow, environment, branch)
 			if err != nil {
 				return err
 			}

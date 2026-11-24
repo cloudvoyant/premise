@@ -429,22 +429,6 @@ func AuthenticateInfrastructure(ctx context.Context, root string, ci bool, stdin
 	return environment, nil
 }
 
-// InfrastructurePresence reports whether environment and shared Pulumi programs exist.
-func InfrastructurePresence(root string, infra *Infrastructure) (bool, bool) {
-	if infra == nil {
-		return false, false
-	}
-	envDir := infra.Directory
-	if envDir == "" {
-		envDir = defaultInfraDirectory
-	}
-	sharedDir := infra.SharedDirectory
-	if sharedDir == "" {
-		sharedDir = defaultSharedInfraDirectory
-	}
-	return hasPulumiProgram(root, envDir), hasPulumiProgram(root, sharedDir)
-}
-
 // InfrastructureSetup selects an empty language starter for new infrastructure.
 // PulumiVersion is persisted only in the workspace mise.toml.
 type InfrastructureSetup struct {
@@ -874,6 +858,21 @@ const (
 	defaultInfraDirectory       = "infra/env"
 	defaultSharedInfraDirectory = "infra/shared"
 )
+
+func infrastructurePresence(root string, infra *Infrastructure) (bool, bool) {
+	if infra == nil {
+		return false, false
+	}
+	envDir := infra.Directory
+	if envDir == "" {
+		envDir = defaultInfraDirectory
+	}
+	sharedDir := infra.SharedDirectory
+	if sharedDir == "" {
+		sharedDir = defaultSharedInfraDirectory
+	}
+	return hasPulumiProgram(root, envDir), hasPulumiProgram(root, sharedDir)
+}
 
 func hasPulumiProgram(root, relative string) bool {
 	directory, err := TemplateDirectory(root, relative)
