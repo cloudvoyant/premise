@@ -10,3 +10,6 @@ CHANGELOG.md
 .vercel/
 
 .releases/
+e2e/outputs/
+e2e/node_modules/
+e2e/bun.lock

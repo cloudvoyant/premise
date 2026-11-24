@@ -1,0 +1,21 @@
+workspace:
+  name: generic
+  kind: template-registry
+  schema-version: "0.2"
+  providers:
+    ci: github
+    tools: mise
+    tasks: mise
+    infra: pulumi
+    versioning: svu
+  projects: []
+template_registry:
+  workspace_files: []
+  templates:
+    - name: notes
+      kind: lib
+      path: templates/notes
+      questions:
+        - prompt: "Name:"
+          type: string
+          populate: name

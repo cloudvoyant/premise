@@ -1,0 +1,34 @@
+[tasks.install]
+description = "Install E2E TypeScript dependencies"
+dir = "{{config_root}}/.."
+run = "bun install"
+
+[tasks.test]
+depends = ["//...:build", "install"]
+description = "Run CLI E2E BDD suite (defaults to offline replay mode)"
+dir = "{{config_root}}/.."
+run = "bun x vitest run --config cli/vitest.config.ts"
+
+[tasks.run]
+depends = ["install"]
+description = "Run selected CLI E2E spec(s) against the existing pm binary"
+dir = "{{config_root}}/.."
+run = "bun x vitest run --config cli/vitest.config.ts"
+
+[tasks.smoke]
+depends = ["//...:build", "install"]
+description = "Run representative smoke CLI E2E flows"
+dir = "{{config_root}}/.."
+run = "bun x vitest run --config cli/vitest.config.ts --tags-filter=smoke --hideSkippedTests"
+
+[tasks.list]
+depends = ["install"]
+description = "List all CLI E2E BDD journeys without running them"
+dir = "{{config_root}}/.."
+run = "bun x vitest list --config cli/vitest.config.ts"
+
+[tasks.typecheck]
+depends = ["install"]
+description = "Type-check E2E TypeScript specs and harness"
+dir = "{{config_root}}/.."
+run = "bun x tsc --noEmit -p tsconfig.json"

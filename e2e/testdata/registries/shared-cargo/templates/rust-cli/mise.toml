@@ -1,0 +1,50 @@
+[tools]
+rust = '1.88.0'
+
+[env]
+APP_KIND = 'rust-cli'
+
+[tasks.install]
+run = 'cargo fetch --offline'
+
+[tasks.build]
+run = 'cargo build --offline'
+
+[tasks.clean]
+run = 'cargo clean'
+
+[tasks.test]
+run = 'cargo test --offline'
+
+[tasks.lint]
+run = 'cargo check --offline'
+
+[tasks."lint:fix"]
+run = 'cargo check --offline'
+
+[tasks.format]
+run = 'echo "format ok"'
+
+[tasks."format:check"]
+run = 'echo "format:check ok"'
+
+[tasks."env-pull"]
+run = 'echo "env-pull ok"'
+
+[tasks."publish:rc"]
+run = 'echo "publish:rc ok"'
+
+[tasks.publish]
+run = 'echo "publish ok"'
+
+[tasks.run]
+run = 'cargo run --quiet --offline'
+
+[tasks.dev]
+run = 'cargo run --quiet --offline'
+
+[tasks.deploy]
+run = 'echo "deploy ok"'
+
+[tasks.e2e]
+run = 'cargo test --offline'

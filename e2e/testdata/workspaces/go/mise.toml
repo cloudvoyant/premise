@@ -1,0 +1,7 @@
+monorepo_root = true
+
+[monorepo]
+config_roots = ['apps/*', 'libs/*']
+
+[tools]
+go = '1.25.14'

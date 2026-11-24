@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "paths": {
+      "vitest": ["./node_modules/vitest/dist/index.d.ts"],
+      "vitest/config": ["./node_modules/vitest/config.d.ts"]
+    }
+  },
+  "include": ["cli/**/*.ts", "../libs/tsutils/**/*.ts", "../libs/testutils/**/*.ts"]
+}

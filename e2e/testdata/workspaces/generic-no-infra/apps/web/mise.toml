@@ -1,0 +1,26 @@
+[tasks.build]
+run = '''
+if [ "${PREMISE_TEST_FAIL_TASK:-}" = "build" ]; then echo "requested build failure" >&2; exit 1; fi
+if [ -n "${PREMISE_TEST_EVENTS:-}" ]; then printf "web:build::%s\n" "${PM_RELEASE:-A}" >> "$PREMISE_TEST_EVENTS"; fi
+'''
+
+[tasks.test]
+run = '''
+if [ "${PREMISE_TEST_FAIL_TASK:-}" = "test" ]; then echo "requested test failure" >&2; exit 1; fi
+if [ -n "${PREMISE_TEST_EVENTS:-}" ]; then printf "web:test::%s\n" "${PM_RELEASE:-A}" >> "$PREMISE_TEST_EVENTS"; fi
+'''
+
+[tasks."format:check"]
+run = 'if [ -n "${PREMISE_TEST_EVENTS:-}" ]; then printf "web:format:check::%s\n" "${PM_RELEASE:-A}" >> "$PREMISE_TEST_EVENTS"; fi'
+
+[tasks.lint]
+run = 'if [ -n "${PREMISE_TEST_EVENTS:-}" ]; then printf "web:lint::%s\n" "${PM_RELEASE:-A}" >> "$PREMISE_TEST_EVENTS"; fi'
+
+[tasks."release:build"]
+run = '''
+if [ "${PREMISE_TEST_FAIL_TASK:-}" = "release:build" ]; then echo "requested release:build failure" >&2; exit 1; fi
+if [ -n "${PREMISE_TEST_EVENTS:-}" ]; then printf "web:release:build::%s\n" "${PM_RELEASE:-A}" >> "$PREMISE_TEST_EVENTS"; fi
+mkdir -p "${PREMISE_ARTIFACT_DIR:-dist}"
+cp "releases/${PM_RELEASE:-A}/index.html" "${PREMISE_ARTIFACT_DIR:-dist}/index.html"
+printf "%s:%s\n" "${PREMISE_RELEASE_CHANNEL:-stable}" "${RELEASE_VERSION:-0.1.0}" > "${PREMISE_ARTIFACT_DIR:-dist}/version.txt"
+'''

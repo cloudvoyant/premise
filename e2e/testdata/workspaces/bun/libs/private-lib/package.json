@@ -1,0 +1,8 @@
+{
+  "name": "@premise-e2e/private-lib",
+  "version": "0.1.0",
+  "main": "src/index.ts",
+  "publishConfig": {
+    "registry": "https://us-central1-npm.pkg.dev/cloudvoyant-premise/premise-e2e-npm/"
+  }
+}

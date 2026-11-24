@@ -1,0 +1,5 @@
+[tasks.publish]
+run = 'exit 1'
+
+[tasks."publish:rc"]
+run = 'exit 1'

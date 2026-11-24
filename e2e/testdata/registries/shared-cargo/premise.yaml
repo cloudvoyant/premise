@@ -1,0 +1,29 @@
+workspace:
+  name: cargo
+  kind: template-registry
+  schema-version: "0.2"
+  package_managers:
+    - cargo
+  providers:
+    ci: github
+    tools: mise
+    tasks: mise
+    infra: pulumi
+    versioning: svu
+  projects: []
+template_registry:
+  workspace_files:
+    - .gitignore
+    - .gitattributes
+    - mise.toml
+  templates:
+    - name: rust-cli
+      kind: app
+      path: templates/rust-cli
+      version: 0.1.0
+      questions:
+        - prompt: "CLI name:"
+          type: string
+          populate: name
+      substitutions:
+        rust-cli: name
