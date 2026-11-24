@@ -7,7 +7,7 @@ branding:
 
 inputs:
   command:
-    description: "Operation: plan | flow | flow-matrix | release | packages | infra-setup | infra-plan | infra-apply | infra-destroy | migrate | deploy"
+    description: "Operation: plan | flow | flow-matrix | preflight | release | packages | infra-setup | infra-plan | infra-apply | infra-destroy | migrate | deploy"
     required: false
     default: flow
   flow:
@@ -98,6 +98,12 @@ outputs:
   has_shared_infra:
     description: "Whether the workspace has a shared Pulumi program (infra/shared or configured shared_directory)"
     value: ${{ steps.schedule.outputs.has_shared_infra }}
+  has_github_release:
+    description: "Whether the workspace publishes a GitHub Release when a release version is planned"
+    value: ${{ steps.schedule.outputs.has_github_release }}
+  has_registry_packages:
+    description: "Whether the workspace has publishable registry packages"
+    value: ${{ steps.schedule.outputs.has_registry_packages }}
   has_migrations:
     description: "Whether the CI plan includes application migrations"
     value: ${{ steps.schedule.outputs.has_migrations }}
@@ -331,6 +337,12 @@ runs:
             fi
             if [[ "$ROOT_ONLY" == true ]]; then args+=(--root-only); fi
             if [[ "$SKIP_ROOT" == true ]]; then args+=(--skip-root); fi
+            ;;
+          preflight)
+            args=(release preflight --channel "$CHANNEL")
+            if [[ -n "$VERSION" ]]; then
+              args+=(--expected-version "$VERSION")
+            fi
             ;;
           release|packages)
             phase=publish

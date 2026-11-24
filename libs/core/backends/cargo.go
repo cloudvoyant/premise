@@ -46,15 +46,24 @@ func (Cargo) GetPackageMetadata(root string, template core.Template) (core.Packa
 	if pkg.Name != template.Name {
 		return core.PackageMetadata{}, false, fmt.Errorf("Cargo package %q does not match declared template %q", pkg.Name, template.Name)
 	}
+	registry := ""
+	publishable := false
+	if pkg.PublishCratesIO {
+		registry = "https://crates.io"
+		publishable = true
+	} else if len(pkg.PublishRegistries) > 0 {
+		registry = pkg.PublishRegistries[0]
+		publishable = true
+	}
 	return core.PackageMetadata{
 		Name:           pkg.Name,
 		Version:        pkg.Version,
 		Path:           directory,
 		PackageManager: "cargo",
 		Ecosystem:      "cargo",
-		Registry:       "https://crates.io",
+		Registry:       registry,
 		Public:         pkg.PublishCratesIO,
-		Publishable:    pkg.PublishCratesIO,
+		Publishable:    publishable,
 	}, true, nil
 }
 
@@ -102,7 +111,10 @@ func (Cargo) PreflightPublication(ctx context.Context, root, version, task strin
 		return errors.New("Cargo manifest declares no publication targets")
 	}
 	var failures []error
-	pending := false
+	if err := validateCargoWorkspaceDependencies(root, manifest); err != nil {
+		failures = append(failures, err)
+	}
+	neededTokens := map[string]struct{}{}
 	workspace, found, workspaceErr := cargoWorkspaceDirectory(root)
 	if workspaceErr != nil {
 		failures = append(failures, fmt.Errorf("inspect Cargo registry workspace: %w", workspaceErr))
@@ -124,11 +136,13 @@ func (Cargo) PreflightPublication(ctx context.Context, root, version, task strin
 			continue
 		}
 		if ready {
-			pending = true
+			neededTokens[cargoRegistryTokenEnv(metadata.Registry)] = struct{}{}
 		}
 	}
-	if pending && os.Getenv("CRATES_TOKEN") == "" {
-		failures = append(failures, errors.New("CRATES_TOKEN is required for Cargo publication"))
+	for envKey := range neededTokens {
+		if os.Getenv(envKey) == "" {
+			failures = append(failures, fmt.Errorf("%s is required for Cargo publication", envKey))
+		}
 	}
 	return errors.Join(failures...)
 }
@@ -432,10 +446,12 @@ func readExistingCargoWorkspaceMembers(request core.PackageGenerationContext) ([
 }
 
 type cargoTemplatePackage struct {
-	Template        core.Template
-	Directory       string
-	Name            string
-	RegistryPublish bool
+	Template         core.Template
+	Directory        string
+	Name             string
+	Registry         string
+	RegistryPublish  bool
+	PathDependencies []string
 }
 
 // cargoWorkspaceDirectory resolves the aggregate Cargo workspace at the
@@ -454,17 +470,23 @@ func inspectCargoTemplatePackage(root string, template core.Template) (cargoTemp
 	if err != nil || !found {
 		return cargoTemplatePackage{}, found, err
 	}
+	pkg, _, err := core.ReadCargoPackage(filepath.Join(metadata.Path, "Cargo.toml"))
+	if err != nil {
+		return cargoTemplatePackage{}, false, err
+	}
 	return cargoTemplatePackage{
-		Template:        template,
-		Directory:       metadata.Path,
-		Name:            metadata.Name,
-		RegistryPublish: metadata.Publishable,
+		Template:         template,
+		Directory:        metadata.Path,
+		Name:             metadata.Name,
+		Registry:         metadata.Registry,
+		RegistryPublish:  metadata.Publishable,
+		PathDependencies: pkg.PathDependencies,
 	}, true, nil
 }
 
 func cargoApplicationReleaseConfig(root string, manifest core.Config) (string, error) {
 	applications := []string{}
-	for _, template := range manifest.DeclaredTemplates() {
+	for _, template := range manifest.PublicationTargets() {
 		if template.Kind != "app" {
 			continue
 		}
@@ -531,6 +553,7 @@ type cargoFileBackup struct {
 type cargoPublishTarget struct {
 	directory string
 	name      string
+	registry  string
 	exists    bool
 }
 
@@ -542,9 +565,12 @@ func preflightCargoPackage(ctx context.Context, pkg cargoTemplatePackage, versio
 	} else if !taskExists {
 		failures = append(failures, fmt.Errorf("Cargo package %s does not define task %s", pkg.Name, task))
 	}
-	versionExists, err := cargoVersionExists(ctx, client, pkg.Name, version)
-	if err != nil {
-		failures = append(failures, err)
+	versionExists := false
+	if pkg.Registry == "" || pkg.Registry == "https://crates.io" || pkg.Registry == "crates-io" {
+		versionExists, err = cargoVersionExists(ctx, client, pkg.Name, version)
+		if err != nil {
+			failures = append(failures, err)
+		}
 	}
 	return versionExists, errors.Join(failures...)
 }
@@ -577,7 +603,55 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 		return errors.New("Cargo manifest declares no publication targets")
 	}
 
+	packages, failures := collectPublishableCargoPackages(root, manifest, templates, stdout)
+	if len(packages) == 0 && len(failures) == 0 {
+		return nil
+	}
+
+	workspaceDirectory, found, err := cargoWorkspaceDirectory(root)
+	if err != nil {
+		failures = append(failures, fmt.Errorf("inspect Cargo registry workspace: %w", err))
+	} else if !found {
+		failures = append(failures, errors.New("Cargo registry workspace is missing Cargo.toml"))
+	}
+	publications, pending, preflightFailures := preflightCargoTargets(ctx, packages, version, task, stderr)
+	failures = append(failures, preflightFailures...)
+	if err := errors.Join(failures...); err != nil {
+		return fmt.Errorf("Cargo publication preflight: %w", err)
+	}
+	if !pending {
+		for _, publication := range publications {
+			fmt.Fprintf(stdout, "skip: %s %s already published\n", publication.name, version)
+		}
+		return nil
+	}
+
+	backups, siblingVersions, err := backupCargoPublishFiles(packages, workspaceDirectory, version)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		resultErr = errors.Join(resultErr, restoreCargoFiles(backups))
+	}()
+
+	for _, backup := range backups[:len(packages)] {
+		if err := core.SetCargoPackageVersionAndSiblings(backup.path, version, siblingVersions); err != nil {
+			return err
+		}
+	}
+	lockRunner := core.MiseTaskRunner{Stdout: stdout, Stderr: stderr}
+	if err := lockRunner.Run(ctx, workspaceDirectory, nil, "exec", "--", "cargo", "generate-lockfile"); err != nil {
+		return fmt.Errorf("regenerate Cargo lockfile: %w", err)
+	}
+
+	return executeCargoPublishLoop(ctx, publications, version, task, stdout, stderr)
+}
+
+func collectPublishableCargoPackages(root string, manifest core.Config, templates []core.Template, stdout io.Writer) ([]cargoTemplatePackage, []error) {
 	var failures []error
+	if err := validateCargoWorkspaceDependencies(root, manifest); err != nil {
+		failures = append(failures, err)
+	}
 	packages := make([]cargoTemplatePackage, 0, len(templates))
 	for _, template := range templates {
 		pkg, found, err := inspectCargoTemplatePackage(root, template)
@@ -595,19 +669,22 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 		}
 		packages = append(packages, pkg)
 	}
-	if len(packages) == 0 && len(failures) == 0 {
-		return nil
+	if len(packages) > 0 {
+		if sorted, sortErr := sortCargoTemplatePackages(packages); sortErr != nil {
+			failures = append(failures, sortErr)
+		} else {
+			packages = sorted
+		}
 	}
+	return packages, failures
+}
 
-	workspaceDirectory, found, err := cargoWorkspaceDirectory(root)
-	if err != nil {
-		failures = append(failures, fmt.Errorf("inspect Cargo registry workspace: %w", err))
-	} else if !found {
-		failures = append(failures, errors.New("Cargo registry workspace is missing Cargo.toml"))
-	}
+func preflightCargoTargets(ctx context.Context, packages []cargoTemplatePackage, version, task string, stderr io.Writer) ([]cargoPublishTarget, bool, []error) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	preflight := core.MiseTaskRunner{Stderr: stderr}
 	publications := make([]cargoPublishTarget, 0, len(packages))
+	neededTokens := map[string]struct{}{}
+	var failures []error
 	pending := false
 	for _, pkg := range packages {
 		versionExists, err := preflightCargoPackage(ctx, pkg, version, task, preflight, client)
@@ -615,51 +692,40 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 			failures = append(failures, fmt.Errorf("package target %s: %w", pkg.Template.Name, err))
 			continue
 		}
-		publications = append(publications, cargoPublishTarget{directory: pkg.Directory, name: pkg.Name, exists: versionExists})
-		pending = pending || !versionExists
-	}
-	token := os.Getenv("CRATES_TOKEN")
-	if pending && token == "" {
-		failures = append(failures, errors.New("CRATES_TOKEN is required for Cargo publication"))
-	}
-	if err := errors.Join(failures...); err != nil {
-		return fmt.Errorf("Cargo publication preflight: %w", err)
-	}
-	if !pending {
-		for _, publication := range publications {
-			fmt.Fprintf(stdout, "skip: %s %s already published\n", publication.name, version)
+		publications = append(publications, cargoPublishTarget{directory: pkg.Directory, name: pkg.Name, registry: pkg.Registry, exists: versionExists})
+		if !versionExists {
+			pending = true
+			neededTokens[cargoRegistryTokenEnv(pkg.Registry)] = struct{}{}
 		}
-		return nil
 	}
+	for envKey := range neededTokens {
+		if os.Getenv(envKey) == "" {
+			failures = append(failures, fmt.Errorf("%s is required for Cargo publication", envKey))
+		}
+	}
+	return publications, pending, failures
+}
 
+func backupCargoPublishFiles(packages []cargoTemplatePackage, workspaceDirectory, version string) ([]cargoFileBackup, map[string]string, error) {
 	backups := make([]cargoFileBackup, 0, len(packages)+1)
+	siblingVersions := make(map[string]string, len(packages))
 	for _, pkg := range packages {
+		siblingVersions[pkg.Name] = version
 		backup, err := backupCargoFile(filepath.Join(pkg.Directory, "Cargo.toml"))
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 		backups = append(backups, backup)
 	}
-	lockPath := filepath.Join(workspaceDirectory, "Cargo.lock")
-	lockBackup, err := backupCargoFile(lockPath)
+	lockBackup, err := backupCargoFile(filepath.Join(workspaceDirectory, "Cargo.lock"))
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	backups = append(backups, lockBackup)
-	defer func() {
-		resultErr = errors.Join(resultErr, restoreCargoFiles(backups))
-	}()
+	return backups, siblingVersions, nil
+}
 
-	for _, backup := range backups[:len(packages)] {
-		if err := core.SetCargoPackageVersion(backup.path, version); err != nil {
-			return err
-		}
-	}
-	lockRunner := core.MiseTaskRunner{Stdout: stdout, Stderr: stderr}
-	if err := lockRunner.Run(ctx, workspaceDirectory, nil, "exec", "--", "cargo", "generate-lockfile"); err != nil {
-		return fmt.Errorf("regenerate Cargo lockfile: %w", err)
-	}
-
+func executeCargoPublishLoop(ctx context.Context, publications []cargoPublishTarget, version, task string, stdout, stderr io.Writer) error {
 	publisher := core.MiseTaskRunner{Stdout: stdout, Stderr: stderr}
 	for _, publication := range publications {
 		if publication.exists {
@@ -667,15 +733,79 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 			continue
 		}
 		fmt.Fprintf(stdout, "%s: %s %s\n", task, publication.name, version)
+		envKey := cargoRegistryTokenEnv(publication.registry)
+		token := os.Getenv(envKey)
 		environment := []string{
 			"RELEASE_VERSION=" + version,
-			"CARGO_REGISTRY_TOKEN=" + token,
+		}
+		if envKey == "CRATES_TOKEN" {
+			environment = append(environment, "CARGO_REGISTRY_TOKEN="+token)
+		} else {
+			environment = append(environment, envKey+"="+token, "PREMISE_CARGO_REGISTRY="+publication.registry)
 		}
 		if err := publisher.Run(ctx, publication.directory, environment, "run", task); err != nil {
 			return fmt.Errorf("publish Cargo package %s: %w", publication.name, err)
 		}
 	}
 	return nil
+}
+
+func cargoRegistryTokenEnv(registry string) string {
+	if registry == "" || registry == "https://crates.io" || registry == "crates-io" {
+		return "CRATES_TOKEN"
+	}
+	normalized := strings.ToUpper(strings.ReplaceAll(registry, "-", "_"))
+	return "CARGO_REGISTRIES_" + normalized + "_TOKEN"
+}
+
+func validateCargoWorkspaceDependencies(root string, manifest core.Config) error {
+	all := make(map[string]cargoTemplatePackage)
+	for _, target := range manifest.PublicationTargets() {
+		pkg, found, err := inspectCargoTemplatePackage(root, target)
+		if err != nil || !found {
+			continue
+		}
+		all[pkg.Name] = pkg
+	}
+	var failures []error
+	for name, pkg := range all {
+		if !pkg.RegistryPublish {
+			continue
+		}
+		for _, dep := range pkg.PathDependencies {
+			if target, isWorkspace := all[dep]; isWorkspace && !target.RegistryPublish {
+				failures = append(failures, fmt.Errorf("publishable Cargo crate %s depends on local-only workspace crate %s", name, dep))
+			}
+		}
+	}
+	return errors.Join(failures...)
+}
+
+func sortCargoTemplatePackages(packages []cargoTemplatePackage) ([]cargoTemplatePackage, error) {
+	byName := make(map[string]cargoTemplatePackage, len(packages))
+	order := make([]string, 0, len(packages))
+	deps := make(map[string][]string, len(packages))
+	for _, pkg := range packages {
+		byName[pkg.Name] = pkg
+		order = append(order, pkg.Name)
+	}
+	for _, pkg := range packages {
+		for _, dep := range pkg.PathDependencies {
+			if _, ok := byName[dep]; ok && dep != pkg.Name {
+				deps[pkg.Name] = append(deps[pkg.Name], dep)
+			}
+		}
+		sort.Strings(deps[pkg.Name])
+	}
+	sortedNames, err := topologicalOrder(order, deps)
+	if err != nil {
+		return nil, fmt.Errorf("order Cargo workspace crates: %w", err)
+	}
+	out := make([]cargoTemplatePackage, 0, len(sortedNames))
+	for _, name := range sortedNames {
+		out = append(out, byName[name])
+	}
+	return out, nil
 }
 
 func backupCargoFile(path string) (cargoFileBackup, error) {

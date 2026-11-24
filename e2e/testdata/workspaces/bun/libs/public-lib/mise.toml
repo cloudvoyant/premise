@@ -9,3 +9,9 @@ run = 'echo "public-lib:format:check"'
 
 [tasks.lint]
 run = 'echo "public-lib:lint"'
+
+[tasks.publish]
+run = 'printf "bun:publish:public-lib:%s\n" "${PREMISE_PUBLISH_VERSION:-}"'
+
+[tasks."publish:rc"]
+run = 'printf "bun:publish:rc:public-lib:%s\n" "${PREMISE_PUBLISH_VERSION:-}"'

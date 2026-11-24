@@ -9,3 +9,9 @@ run = 'echo "private-lib:format:check"'
 
 [tasks.lint]
 run = 'echo "private-lib:lint"'
+
+[tasks.publish]
+run = 'printf "cargo:publish:private-lib:%s:%s\n" "${RELEASE_VERSION:-}" "${PREMISE_CARGO_REGISTRY:-}"'
+
+[tasks."publish:rc"]
+run = 'printf "cargo:publish:rc:private-lib:%s:%s\n" "${RELEASE_VERSION:-}" "${PREMISE_CARGO_REGISTRY:-}"'

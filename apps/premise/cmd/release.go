@@ -46,7 +46,26 @@ func ReleaseCommand() *cobra.Command {
 	}
 	command.Flags().BoolVar(&dryRun, "dry-run", false, "plan the release without changing anything")
 	command.Flags().BoolVar(&buildOnly, "build", false, "build release artifacts without publishing")
-	command.AddCommand(ReleasePublishCommand(), ReleasePackagesCommand())
+	command.AddCommand(ReleasePreflightCommand(), ReleasePublishCommand(), ReleasePackagesCommand())
+	return command
+}
+
+func ReleasePreflightCommand() *cobra.Command {
+	var channel, expectedVersion string
+	command := &cobra.Command{
+		Use:   "preflight",
+		Short: "validate publishable package targets and required registry credentials",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			root, _, err := core.FindManifest(currentDirectory())
+			if err != nil {
+				return err
+			}
+			return core.PreflightReleasePackages(cmd.Context(), root, channel, expectedVersion, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
+	command.Flags().StringVar(&channel, "channel", "stable", "release channel (stable or rc)")
+	command.Flags().StringVar(&expectedVersion, "expected-version", "", "expected release version")
 	return command
 }
 

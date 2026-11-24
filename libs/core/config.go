@@ -77,9 +77,10 @@ type PlatformDeclaration struct {
 // PackageDeclaration holds project settings absent from a native package manifest.
 // All projects still use the repository release version.
 type PackageDeclaration struct {
-	Public *bool  `yaml:"public,omitempty"`
-	Main   string `yaml:"main,omitempty"`
-	Binary string `yaml:"binary,omitempty"`
+	Public   *bool  `yaml:"public,omitempty"`
+	Main     string `yaml:"main,omitempty"`
+	Binary   string `yaml:"binary,omitempty"`
+	Registry string `yaml:"registry,omitempty"`
 }
 
 type Project struct {
@@ -566,7 +567,7 @@ func (manifest Config) PublicationTargets() []Template {
 			} else if strings.HasPrefix(filepath.ToSlash(project.Path), "libs/") {
 				kind = "lib"
 			}
-			targets = append(targets, Template{Name: project.Name, Kind: kind, Path: project.Path, Version: project.Version, Package: project.Package})
+			targets = append(targets, Template{Name: project.Name, Kind: kind, Path: project.Path, Version: project.Version, CI: project.CI, Package: project.Package})
 		}
 	}
 	sort.SliceStable(targets, func(i, j int) bool {

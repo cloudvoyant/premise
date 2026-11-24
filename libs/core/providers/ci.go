@@ -14,6 +14,8 @@ type CIPlan struct {
 	HasInfrastructure       bool
 	HasEnvInfrastructure    bool
 	HasSharedInfrastructure bool
+	HasGitHubRelease        bool
+	HasRegistryPackages     bool
 	Matrix                  any
 	Migrations              any
 	HasMigrations           bool

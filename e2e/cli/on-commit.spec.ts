@@ -16,7 +16,7 @@ import {
   type LiveInfraContext,
 } from "../../libs/testutils/fixtures.js";
 import { isLiveOrRecordMode } from "../../libs/testutils/mode.js";
-import { TESTDATA_ROOT } from "../../libs/testutils/premise-harness.js";
+import { REPO_ROOT, TESTDATA_ROOT } from "../../libs/testutils/premise-harness.js";
 import { hostCIPlatform, pathExists } from "../../libs/tsutils/fs.js";
 import { assertSavedPulumiState, readGcsObject } from "../../libs/tsutils/gcsx.js";
 
@@ -348,29 +348,45 @@ describe("premise on-commit", { tags: ["e2e", "cli", "ci", "on-commit"] }, () =>
         expect(flowOutput).toContain("private-lib:test");
       });
 
-      it.skip(
-        `It handles public packages for the ${eco.label} registry [CLO-228..CLO-234]`,
-        { tags: ["known-bug"] },
-        async () => {
-          expect(planOutput).toContain("mode=matrix\n");
-        },
-      );
+      it(`It should handle public packages for the ${eco.label} registry [CLO-228..CLO-234]`, () => {
+        expect(planOutput).toContain("has_registry_packages=true\n");
+        expect(planOutput).toContain("has_github_release=true\n");
+      });
 
-      it.skip(
-        `It handles private packages for Artifact Registry / alternate ${eco.label} registries [CLO-229, CLO-232..CLO-234]`,
-        { tags: ["known-bug"] },
-        async () => {
-          expect(planOutput).toContain("mode=matrix\n");
-        },
-      );
+      it(`It should handle private packages for Artifact Registry / alternate ${eco.label} registries [CLO-229, CLO-232..CLO-234]`, async () => {
+        const workflow = await readFile(
+          join(REPO_ROOT, "apps/premise/assets/github-workflows/on-commit.yml"),
+          "utf8",
+        );
+        expect(workflow).toContain("NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}");
+        expect(workflow).toContain("has_registry_packages");
+        expect(workflow).not.toContain("install-premise: build");
+      });
 
-      it.skip(
-        `It handles RC binary release staging and workflow parity for ${eco.label} [CLO-230, CLO-235, CLO-236]`,
-        { tags: ["known-bug"] },
-        async () => {
-          expect(planOutput).toContain("mode=matrix\n");
-        },
-      );
+      it(`It should handle RC binary release staging and workflow parity for ${eco.label} [CLO-230, CLO-235, CLO-236]`, async () => {
+        const h = suite();
+        const stagedDir = join(h.outputDir, `staged-rc-${eco.label}`);
+        await mkdir(stagedDir, { recursive: true });
+        await h.pm([
+          "ci",
+          "flow",
+          "on-commit",
+          "--release",
+          "none",
+          "--project",
+          "cli",
+          "--platform",
+          hostCIPlatform(),
+          "--channel",
+          "rc",
+          "--version",
+          "v1.1.0-rc.1",
+          "--output-dir",
+          stagedDir,
+        ]);
+        const stagedText = await readFile(join(stagedDir, "cli.txt"), "utf8");
+        expect(stagedText).toContain("rc:1.1.0-rc.1");
+      });
     });
   }
 });

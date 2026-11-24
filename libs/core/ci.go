@@ -38,6 +38,8 @@ func WriteCIPlanOutputs(output io.Writer, provider string, plan CISchedule) erro
 		HasInfrastructure:       plan.HasInfrastructure,
 		HasEnvInfrastructure:    plan.HasEnvInfrastructure,
 		HasSharedInfrastructure: plan.HasSharedInfrastructure,
+		HasGitHubRelease:        plan.HasGitHubRelease,
+		HasRegistryPackages:     plan.HasRegistryPackages,
 		Matrix:                  plan.Matrix,
 		Migrations:              plan.Migrations,
 		HasMigrations:           len(plan.Migrations) > 0,
@@ -168,6 +170,8 @@ type CISchedule struct {
 	HasInfrastructure       bool                `json:"has_infra"`
 	HasEnvInfrastructure    bool                `json:"has_env_infra"`
 	HasSharedInfrastructure bool                `json:"has_shared_infra"`
+	HasGitHubRelease        bool                `json:"has_github_release"`
+	HasRegistryPackages     bool                `json:"has_registry_packages"`
 	HasNative               bool                `json:"has_native"`
 	Matrix                  []CIMatrixRow       `json:"matrix"`
 	Excluded                []CIPlatformProject `json:"excluded"`
@@ -213,6 +217,9 @@ func PlanCISchedule(ctx context.Context, root string, manifest Config, flow CIFl
 	plan.HasEnvInfrastructure = hasEnv
 	plan.HasSharedInfrastructure = hasShared
 	plan.HasInfrastructure = hasEnv || hasShared
+	hasGitHubRelease, hasRegistryPackages := planPublicationDestinations(root, manifest, plan.HasNative)
+	plan.HasGitHubRelease = hasGitHubRelease
+	plan.HasRegistryPackages = hasRegistryPackages
 	if manifest.Workspace.Deployment != nil {
 		plan.Migrations, err = PlanMigrations(root, manifest)
 		if err != nil {
@@ -985,4 +992,41 @@ func ciTarget(flow CIFlow, environment string) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported CI flow %q", flow)
 	}
+}
+
+func planPublicationDestinations(root string, manifest Config, hasNative bool) (hasGitHubRelease, hasRegistryPackages bool) {
+	plugins, err := packageManagersForConfig(manifest)
+	if err != nil {
+		return true, false
+	}
+	hasGoReleaserBuilds := false
+	hasPublicOrGitTagPackage := false
+	targets := manifest.PublicationTargets()
+	for _, plugin := range plugins {
+		if fragment, err := plugin.CreateGoReleaserConfig(root, manifest); err == nil && strings.TrimSpace(fragment) != "" {
+			hasGoReleaserBuilds = true
+		}
+		if !plugin.SupportsPackages() {
+			continue
+		}
+		for _, target := range targets {
+			metadata, found, err := plugin.GetPackageMetadata(root, target)
+			if err != nil || !found || !metadata.Publishable {
+				continue
+			}
+			hasRegistryPackages = true
+			if metadata.Public {
+				hasPublicOrGitTagPackage = true
+			}
+			if metadata.Registry == "" {
+				if gitTagPublisher, ok := plugin.(interface{ PublishesFromGitTag() bool }); ok && gitTagPublisher.PublishesFromGitTag() {
+					hasPublicOrGitTagPackage = true
+				}
+			}
+		}
+	}
+	if hasNative || hasGoReleaserBuilds || !hasRegistryPackages || hasPublicOrGitTagPackage {
+		hasGitHubRelease = true
+	}
+	return hasGitHubRelease, hasRegistryPackages
 }
