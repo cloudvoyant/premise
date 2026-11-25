@@ -446,12 +446,13 @@ func readExistingCargoWorkspaceMembers(request core.PackageGenerationContext) ([
 }
 
 type cargoTemplatePackage struct {
-	Template         core.Template
-	Directory        string
-	Name             string
-	Registry         string
-	RegistryPublish  bool
-	PathDependencies []string
+	Template                    core.Template
+	Directory                   string
+	Name                        string
+	Registry                    string
+	RegistryPublish             bool
+	PathDependencies            []string
+	UnversionedPathDependencies []string
 }
 
 // cargoWorkspaceDirectory resolves the aggregate Cargo workspace at the
@@ -475,12 +476,13 @@ func inspectCargoTemplatePackage(root string, template core.Template) (cargoTemp
 		return cargoTemplatePackage{}, false, err
 	}
 	return cargoTemplatePackage{
-		Template:         template,
-		Directory:        metadata.Path,
-		Name:             metadata.Name,
-		Registry:         metadata.Registry,
-		RegistryPublish:  metadata.Publishable,
-		PathDependencies: pkg.PathDependencies,
+		Template:                    template,
+		Directory:                   metadata.Path,
+		Name:                        metadata.Name,
+		Registry:                    metadata.Registry,
+		RegistryPublish:             metadata.Publishable,
+		PathDependencies:            pkg.PathDependencies,
+		UnversionedPathDependencies: pkg.UnversionedPathDependencies,
 	}, true, nil
 }
 
@@ -626,7 +628,7 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 		return nil
 	}
 
-	backups, siblingVersions, err := backupCargoPublishFiles(packages, workspaceDirectory, version)
+	backups, err := backupCargoPublishFiles(packages, workspaceDirectory)
 	if err != nil {
 		return err
 	}
@@ -635,7 +637,7 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 	}()
 
 	for _, backup := range backups[:len(packages)] {
-		if err := core.SetCargoPackageVersion(backup.path, version, siblingVersions); err != nil {
+		if err := core.SetCargoPackageVersion(backup.path, version); err != nil {
 			return err
 		}
 	}
@@ -706,23 +708,21 @@ func preflightCargoTargets(ctx context.Context, packages []cargoTemplatePackage,
 	return publications, pending, failures
 }
 
-func backupCargoPublishFiles(packages []cargoTemplatePackage, workspaceDirectory, version string) ([]cargoFileBackup, map[string]string, error) {
+func backupCargoPublishFiles(packages []cargoTemplatePackage, workspaceDirectory string) ([]cargoFileBackup, error) {
 	backups := make([]cargoFileBackup, 0, len(packages)+1)
-	siblingVersions := make(map[string]string, len(packages))
 	for _, pkg := range packages {
-		siblingVersions[pkg.Name] = version
 		backup, err := backupCargoFile(filepath.Join(pkg.Directory, "Cargo.toml"))
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		backups = append(backups, backup)
 	}
 	lockBackup, err := backupCargoFile(filepath.Join(workspaceDirectory, "Cargo.lock"))
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	backups = append(backups, lockBackup)
-	return backups, siblingVersions, nil
+	return backups, nil
 }
 
 func executeCargoPublishLoop(ctx context.Context, publications []cargoPublishTarget, version, task string, stdout, stderr io.Writer) error {
@@ -760,18 +760,36 @@ func cargoRegistryTokenEnv(registry string) string {
 
 func validateCargoWorkspaceDependencies(root string, manifest core.Config) error {
 	var packages []core.WorkspacePackage
+	var inspected []cargoTemplatePackage
+	workspaceNames := make(map[string]bool)
 	for _, target := range manifest.PublicationTargets() {
 		pkg, found, err := inspectCargoTemplatePackage(root, target)
 		if err != nil || !found {
 			continue
 		}
+		workspaceNames[pkg.Name] = true
+		inspected = append(inspected, pkg)
 		packages = append(packages, core.WorkspacePackage{
 			Name:         pkg.Name,
 			Publishable:  pkg.RegistryPublish,
 			Dependencies: pkg.PathDependencies,
 		})
 	}
-	return core.ValidateWorkspaceDependencies("Cargo", "crate", packages)
+	var failures []error
+	if err := core.ValidateWorkspaceDependencies("Cargo", "crate", packages); err != nil {
+		failures = append(failures, err)
+	}
+	for _, pkg := range inspected {
+		if !pkg.RegistryPublish {
+			continue
+		}
+		for _, dep := range pkg.UnversionedPathDependencies {
+			if workspaceNames[dep] {
+				failures = append(failures, fmt.Errorf("publishable Cargo crate %s has path-only workspace dependency %s without a version; specify a version requirement or [workspace.dependencies] entry in Cargo.toml before publishing", pkg.Name, dep))
+			}
+		}
+	}
+	return errors.Join(failures...)
 }
 
 func sortCargoTemplatePackages(packages []cargoTemplatePackage) ([]cargoTemplatePackage, error) {

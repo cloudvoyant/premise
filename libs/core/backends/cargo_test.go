@@ -95,7 +95,7 @@ func TestSetCargoPackageVersionPreservesUnrelatedSections(t *testing.T) {
 	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := core.SetCargoPackageVersion(path, "1.2.3", nil); err != nil {
+	if err := core.SetCargoPackageVersion(path, "1.2.3"); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(path)
@@ -109,7 +109,7 @@ func TestSetCargoPackageVersionPreservesUnrelatedSections(t *testing.T) {
 }
 
 func TestCargoMonorepoPublication(t *testing.T) {
-	t.Run("when a monorepo app depends on a sibling library", func(t *testing.T) {
+	t.Run("when a monorepo app depends on an unversioned path-only sibling library", func(t *testing.T) {
 		// Arrange
 		root := t.TempDir()
 		for path, content := range map[string]string{
@@ -133,12 +133,7 @@ func TestCargoMonorepoPublication(t *testing.T) {
 
 		// Act
 		config, configErr := (Cargo{}).CreateGoReleaserConfig(root, manifest)
-		versionErr := core.SetCargoPackageVersion(
-			filepath.Join(root, "apps/cli/Cargo.toml"),
-			"1.2.3",
-			map[string]string{"cli": "1.2.3", "helper": "1.2.3"},
-		)
-		updated, readErr := os.ReadFile(filepath.Join(root, "apps/cli/Cargo.toml"))
+		validationErr := validateCargoWorkspaceDependencies(root, manifest)
 
 		// Assert
 		t.Run("it generates a GoReleaser build for the monorepo app", func(t *testing.T) {
@@ -149,15 +144,9 @@ func TestCargoMonorepoPublication(t *testing.T) {
 				t.Fatalf("CreateGoReleaserConfig() missing monorepo app binary: %s", config)
 			}
 		})
-		t.Run("it rewrites sibling path dependency versions alongside package version", func(t *testing.T) {
-			if versionErr != nil {
-				t.Fatal(versionErr)
-			}
-			if readErr != nil {
-				t.Fatal(readErr)
-			}
-			if !strings.Contains(string(updated), `helper = { version = "1.2.3", path = "../../libs/helper" }`) {
-				t.Fatalf("sibling dependency version not rewritten: %s", string(updated))
+		t.Run("it rejects the unversioned path-only sibling dependency with an actionable error", func(t *testing.T) {
+			if validationErr == nil || !strings.Contains(validationErr.Error(), "path-only workspace dependency helper without a version") {
+				t.Fatalf("validateCargoWorkspaceDependencies() = %v, want unversioned path-only error", validationErr)
 			}
 		})
 	})

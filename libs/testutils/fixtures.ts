@@ -371,7 +371,7 @@ edition = "2021"
 publish = ["premise-private"]
 
 [dependencies]
-private-lib = { path = "../private-lib" }
+private-lib = { version = ">=0.1.0", path = "../private-lib" }
 `,
   );
   await h.writeFile(

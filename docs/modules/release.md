@@ -34,6 +34,7 @@ pm release --build     # build release artifacts without publishing
 ```
 
 ```sh
+pm release preflight --channel rc --expected-version v1.2.3-rc.1
 pm release publish --channel rc --expected-version v1.2.3-rc.1 --files-dir /tmp/native-files
 pm release packages --channel rc --expected-version v1.2.3-rc.1
 ```
@@ -87,3 +88,7 @@ Language-package credentials are excluded from general Mise and GoReleaser envir
 Project `release:build` tasks copy native output into the directory selected by the CI flow. They do not tag or publish. The hosted release job downloads every required native file and validates the complete set before creating or reusing a tag at the triggering commit. `pm release publish --channel rc --expected-version VERSION --files-dir DIRECTORY` publishes one combined GitHub release. `pm release packages` runs afterward with registry credentials isolated to that job.
 
 A `[publish-rc]` feature-branch push requests a GitHub prerelease. RCs do not replace the latest stable release. A dry release plan validates inputs without tags or publication. Native files are transferred as artifacts rather than caches. For Tauri, the project-owned Cargo/Mise task stages NSIS output for Windows RCs and can stage MSI output for stable releases.
+
+### Cargo workspace sibling dependencies
+
+Cargo requires every dependency of a published crate to include a `version` requirement (`cargo publish` rejects path-only entries such as `helper = { path = "../helper" }`). Declare sibling versions explicitly in `[dependencies]` (using a release-compatible range such as `>=0.1.0` when using tag-driven versions) or through root `[workspace.dependencies]` inheritance so each crate stays publishable under standard Cargo conventions. Premise validates this during `pm release preflight` and fails with an actionable error instead of rewriting dependency tables automatically.
