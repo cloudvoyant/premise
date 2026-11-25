@@ -54,7 +54,7 @@ func TestSetCargoPackageVersionPreservesOtherSections(t *testing.T) {
 	if err := os.WriteFile(path, []byte(before), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := SetCargoPackageVersion(path, "1.2.3"); err != nil {
+	if err := SetCargoPackageVersion(path, "1.2.3", nil); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)

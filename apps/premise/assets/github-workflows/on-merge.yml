@@ -35,7 +35,7 @@ jobs:
       has_env_infra: ${{ steps.plan.outputs.has_env_infra }}
       has_shared_infra: ${{ steps.plan.outputs.has_shared_infra }}
       has_github_release: ${{ steps.plan.outputs.has_github_release }}
-      has_registry_packages: ${{ steps.plan.outputs.has_registry_packages }}
+      has_publishable_packages: ${{ steps.plan.outputs.has_publishable_packages }}
       version: ${{ steps.plan.outputs.release_version }}
     steps:
       - uses: actions/checkout@v6
@@ -185,7 +185,7 @@ jobs:
     needs: [plan, single, matrix, publish-release]
     if: >-
       always() && needs.plan.outputs.version != '' &&
-      needs.plan.outputs.has_registry_packages == 'true' &&
+      needs.plan.outputs.has_publishable_packages == 'true' &&
       needs.plan.result == 'success' &&
       ((needs.plan.outputs.mode == 'single' &&
         needs.single.result == 'success') ||

@@ -506,7 +506,7 @@ describe("premise release", { tags: ["e2e", "cli", "release"] }, () => {
 
         it("It should plan both GitHub Release and registry package outputs", () => {
           expect(plan).toContain("has_github_release=true\n");
-          expect(plan).toContain("has_registry_packages=true\n");
+          expect(plan).toContain("has_publishable_packages=true\n");
         });
 
         it("It should stage the stable CLI binary artifact", () => {
@@ -550,7 +550,7 @@ describe("premise release", { tags: ["e2e", "cli", "release"] }, () => {
 
         it("It should skip GitHub Release creation while enabling registry publication", () => {
           expect(plan).toContain("has_github_release=false\n");
-          expect(plan).toContain("has_registry_packages=true\n");
+          expect(plan).toContain("has_publishable_packages=true\n");
         });
 
         it("It should require the alternate registry token during preflight", () => {
@@ -610,7 +610,7 @@ describe("premise release", { tags: ["e2e", "cli", "release"] }, () => {
 
         it("It should plan both GitHub Release and registry outputs", () => {
           expect(plan).toContain("has_github_release=true\n");
-          expect(plan).toContain("has_registry_packages=true\n");
+          expect(plan).toContain("has_publishable_packages=true\n");
         });
 
         it("It should pass release preflight for the tagged version", () => {

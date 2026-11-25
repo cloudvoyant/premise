@@ -96,15 +96,10 @@ func ReadCargoPackage(path string) (pkg CargoPackage, found bool, err error) {
 	}, true, nil
 }
 
-// SetCargoPackageVersion updates only the [package] version in Cargo.toml,
-// preserving comments and formatting in all other sections.
-func SetCargoPackageVersion(path, version string) error {
-	return SetCargoPackageVersionAndSiblings(path, version, nil)
-}
-
-// SetCargoPackageVersionAndSiblings updates [package].version and any matching
-// inline path dependency versions in [dependencies] and [build-dependencies].
-func SetCargoPackageVersionAndSiblings(path, version string, siblingVersions map[string]string) error {
+// SetCargoPackageVersion updates [package].version in Cargo.toml and, when
+// siblingVersions is non-empty, updates matching inline path dependency
+// versions in [dependencies] and [build-dependencies] while preserving formatting.
+func SetCargoPackageVersion(path, version string, siblingVersions map[string]string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read Cargo manifest %s: %w", path, err)

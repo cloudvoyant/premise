@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -171,6 +172,72 @@ func (request PackageGenerationContext) ValidateLocalPath(base, path string) err
 		return fmt.Errorf("local dependency path %q escapes workspace; generation supports local sources within the workspace root", path)
 	}
 	return nil
+}
+
+// WorkspacePackage describes one workspace member's publication eligibility
+// and internal workspace dependencies for shared preflight and ordering.
+type WorkspacePackage struct {
+	Name         string
+	Publishable  bool
+	Dependencies []string
+}
+
+// ValidateWorkspaceDependencies rejects publishable workspace packages that
+// depend on a local-only sibling in the same workspace.
+func ValidateWorkspaceDependencies(ecosystem, unit string, packages []WorkspacePackage) error {
+	publishable := make(map[string]bool, len(packages))
+	for _, pkg := range packages {
+		publishable[pkg.Name] = pkg.Publishable
+	}
+	var failures []error
+	for _, pkg := range packages {
+		if !pkg.Publishable {
+			continue
+		}
+		deps := append([]string(nil), pkg.Dependencies...)
+		slices.Sort(deps)
+		for _, dep := range deps {
+			if isPublishable, isWorkspace := publishable[dep]; isWorkspace && !isPublishable {
+				failures = append(failures, fmt.Errorf("publishable %s %s %s depends on local-only workspace %s %s", ecosystem, unit, pkg.Name, unit, dep))
+			}
+		}
+	}
+	return errors.Join(failures...)
+}
+
+// TopologicalOrder orders workspace package names so dependencies precede dependents.
+func TopologicalOrder(nodes []string, deps map[string][]string) ([]string, error) {
+	const (
+		unvisited = 0
+		visiting  = 1
+		visited   = 2
+	)
+	state := make(map[string]int, len(nodes))
+	out := make([]string, 0, len(nodes))
+	var visit func(string) error
+	visit = func(node string) error {
+		switch state[node] {
+		case visiting:
+			return fmt.Errorf("cyclic workspace dependency involving %s", node)
+		case visited:
+			return nil
+		}
+		state[node] = visiting
+		for _, dep := range deps[node] {
+			if err := visit(dep); err != nil {
+				return err
+			}
+		}
+		state[node] = visited
+		out = append(out, node)
+		return nil
+	}
+	for _, node := range nodes {
+		if err := visit(node); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 // Private helpers ------------------------------------------------------------

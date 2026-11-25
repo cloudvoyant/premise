@@ -226,12 +226,14 @@ func TestGoGeneration(t *testing.T) {
 		config, err := (Go{}).CreateGoReleaserConfig(root, manifest)
 
 		// Assert
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(config, "- windows") {
-			t.Fatalf("CreateGoReleaserConfig() missing windows goos: %s", config)
-		}
+		t.Run("it includes windows in the GoReleaser goos matrix", func(t *testing.T) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(config, "- windows") {
+				t.Fatalf("CreateGoReleaserConfig() missing windows goos: %s", config)
+			}
+		})
 	})
 	t.Run("when existing Go configuration defines multiple modules", func(t *testing.T) {
 		for _, path := range []string{"go.work", "libs/existing/go.mod"} {

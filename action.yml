@@ -101,9 +101,9 @@ outputs:
   has_github_release:
     description: "Whether the workspace publishes a GitHub Release when a release version is planned"
     value: ${{ steps.schedule.outputs.has_github_release }}
-  has_registry_packages:
+  has_publishable_packages:
     description: "Whether the workspace has publishable registry packages"
-    value: ${{ steps.schedule.outputs.has_registry_packages }}
+    value: ${{ steps.schedule.outputs.has_publishable_packages }}
   has_migrations:
     description: "Whether the CI plan includes application migrations"
     value: ${{ steps.schedule.outputs.has_migrations }}

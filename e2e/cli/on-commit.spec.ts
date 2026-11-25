@@ -375,13 +375,13 @@ describe("premise on-commit", { tags: ["e2e", "cli", "ci", "on-commit"] }, () =>
       });
 
       it(`It should plan registry and GitHub Release outputs for ${eco.label} packages`, () => {
-        expect(planOutput).toContain("has_registry_packages=true\n");
+        expect(planOutput).toContain("has_publishable_packages=true\n");
         expect(planOutput).toContain("has_github_release=true\n");
       });
 
       it(`It should pass registry auth and released action inputs in generated on-commit workflows for ${eco.label}`, () => {
         expect(workflow).toContain("NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}");
-        expect(workflow).toContain("has_registry_packages");
+        expect(workflow).toContain("has_publishable_packages");
         expect(workflow).not.toContain("install-premise: build");
       });
 

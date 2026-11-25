@@ -438,7 +438,7 @@ func bunVersionExistsInPackument(ctx context.Context, client *http.Client, regis
 }
 
 func validateBunWorkspaceDependencies(root string, manifest core.Config) error {
-	var packages []workspacePackage
+	var packages []core.WorkspacePackage
 	for _, target := range manifest.PublicationTargets() {
 		directory, err := core.TemplateDirectory(root, target.Path)
 		if err != nil {
@@ -453,13 +453,13 @@ func validateBunWorkspaceDependencies(root string, manifest core.Config) error {
 		for dep := range pkg.Dependencies {
 			deps = append(deps, dep)
 		}
-		packages = append(packages, workspacePackage{
-			name:         pkg.Name,
-			publishable:  !pkg.Private && regErr == nil && registry != nil,
-			dependencies: deps,
+		packages = append(packages, core.WorkspacePackage{
+			Name:         pkg.Name,
+			Publishable:  !pkg.Private && regErr == nil && registry != nil,
+			Dependencies: deps,
 		})
 	}
-	return validateWorkspaceDependencies("Bun", "package", packages)
+	return core.ValidateWorkspaceDependencies("Bun", "package", packages)
 }
 
 func sortBunPublishTargets(targets []bunPublishTarget) ([]bunPublishTarget, error) {
@@ -482,7 +482,7 @@ func sortBunPublishTargets(targets []bunPublishTarget) ([]bunPublishTarget, erro
 		}
 		slices.Sort(deps[target.name])
 	}
-	sortedNames, err := topologicalOrder(order, deps)
+	sortedNames, err := core.TopologicalOrder(order, deps)
 	if err != nil {
 		return nil, fmt.Errorf("order Bun workspace packages: %w", err)
 	}

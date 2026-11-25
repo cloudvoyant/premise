@@ -39,7 +39,7 @@ func WriteCIPlanOutputs(output io.Writer, provider string, plan CISchedule) erro
 		HasEnvInfrastructure:    plan.HasEnvInfrastructure,
 		HasSharedInfrastructure: plan.HasSharedInfrastructure,
 		HasGitHubRelease:        plan.HasGitHubRelease,
-		HasRegistryPackages:     plan.HasRegistryPackages,
+		HasPublishablePackages:  plan.HasPublishablePackages,
 		Matrix:                  plan.Matrix,
 		Migrations:              plan.Migrations,
 		HasMigrations:           len(plan.Migrations) > 0,
@@ -171,7 +171,7 @@ type CISchedule struct {
 	HasEnvInfrastructure    bool                `json:"has_env_infra"`
 	HasSharedInfrastructure bool                `json:"has_shared_infra"`
 	HasGitHubRelease        bool                `json:"has_github_release"`
-	HasRegistryPackages     bool                `json:"has_registry_packages"`
+	HasPublishablePackages  bool                `json:"has_publishable_packages"`
 	HasNative               bool                `json:"has_native"`
 	Matrix                  []CIMatrixRow       `json:"matrix"`
 	Excluded                []CIPlatformProject `json:"excluded"`
@@ -217,9 +217,9 @@ func PlanCISchedule(ctx context.Context, root string, manifest Config, flow CIFl
 	plan.HasEnvInfrastructure = hasEnv
 	plan.HasSharedInfrastructure = hasShared
 	plan.HasInfrastructure = hasEnv || hasShared
-	hasGitHubRelease, hasRegistryPackages := planPublicationDestinations(root, manifest, plan.HasNative)
+	hasGitHubRelease, hasPublishablePackages := planPublicationDestinations(root, manifest, plan.HasNative)
 	plan.HasGitHubRelease = hasGitHubRelease
-	plan.HasRegistryPackages = hasRegistryPackages
+	plan.HasPublishablePackages = hasPublishablePackages
 	if manifest.Workspace.Deployment != nil {
 		plan.Migrations, err = PlanMigrations(root, manifest)
 		if err != nil {

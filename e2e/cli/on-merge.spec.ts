@@ -283,7 +283,7 @@ describe("premise on-merge", { tags: ["e2e", "cli", "ci", "on-merge"] }, () => {
         `It should plan registry and GitHub Release outputs for ${eco.label} packages on merge`,
         { tags: ["replay"] },
         () => {
-          expect(planOutput).toContain("has_registry_packages=true\n");
+          expect(planOutput).toContain("has_publishable_packages=true\n");
           expect(planOutput).toContain("has_github_release=true\n");
         },
       );

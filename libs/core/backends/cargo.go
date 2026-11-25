@@ -635,7 +635,7 @@ func publishCargoPackages(ctx context.Context, root, version, task string, stdou
 	}()
 
 	for _, backup := range backups[:len(packages)] {
-		if err := core.SetCargoPackageVersionAndSiblings(backup.path, version, siblingVersions); err != nil {
+		if err := core.SetCargoPackageVersion(backup.path, version, siblingVersions); err != nil {
 			return err
 		}
 	}
@@ -759,19 +759,19 @@ func cargoRegistryTokenEnv(registry string) string {
 }
 
 func validateCargoWorkspaceDependencies(root string, manifest core.Config) error {
-	var packages []workspacePackage
+	var packages []core.WorkspacePackage
 	for _, target := range manifest.PublicationTargets() {
 		pkg, found, err := inspectCargoTemplatePackage(root, target)
 		if err != nil || !found {
 			continue
 		}
-		packages = append(packages, workspacePackage{
-			name:         pkg.Name,
-			publishable:  pkg.RegistryPublish,
-			dependencies: pkg.PathDependencies,
+		packages = append(packages, core.WorkspacePackage{
+			Name:         pkg.Name,
+			Publishable:  pkg.RegistryPublish,
+			Dependencies: pkg.PathDependencies,
 		})
 	}
-	return validateWorkspaceDependencies("Cargo", "crate", packages)
+	return core.ValidateWorkspaceDependencies("Cargo", "crate", packages)
 }
 
 func sortCargoTemplatePackages(packages []cargoTemplatePackage) ([]cargoTemplatePackage, error) {
@@ -790,7 +790,7 @@ func sortCargoTemplatePackages(packages []cargoTemplatePackage) ([]cargoTemplate
 		}
 		sort.Strings(deps[pkg.Name])
 	}
-	sortedNames, err := topologicalOrder(order, deps)
+	sortedNames, err := core.TopologicalOrder(order, deps)
 	if err != nil {
 		return nil, fmt.Errorf("order Cargo workspace crates: %w", err)
 	}

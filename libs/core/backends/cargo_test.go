@@ -95,7 +95,7 @@ func TestSetCargoPackageVersionPreservesUnrelatedSections(t *testing.T) {
 	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := core.SetCargoPackageVersion(path, "1.2.3"); err != nil {
+	if err := core.SetCargoPackageVersion(path, "1.2.3", nil); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(path)
@@ -108,84 +108,93 @@ func TestSetCargoPackageVersionPreservesUnrelatedSections(t *testing.T) {
 	}
 }
 
-func TestCargoMonorepoReleaseConfigAndSiblingOrdering(t *testing.T) {
-	// Arrange
-	root := t.TempDir()
-	for path, content := range map[string]string{
-		"apps/cli/Cargo.toml":    "[package]\nname = \"cli\"\nversion = \"0.1.0\"\n[dependencies]\nhelper = { path = \"../../libs/helper\" }\n",
-		"libs/helper/Cargo.toml": "[package]\nname = \"helper\"\nversion = \"0.1.0\"\n",
-	} {
-		full := filepath.Join(root, filepath.FromSlash(path))
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			t.Fatal(err)
+func TestCargoMonorepoPublication(t *testing.T) {
+	t.Run("when a monorepo app depends on a sibling library", func(t *testing.T) {
+		// Arrange
+		root := t.TempDir()
+		for path, content := range map[string]string{
+			"apps/cli/Cargo.toml":    "[package]\nname = \"cli\"\nversion = \"0.1.0\"\n[dependencies]\nhelper = { path = \"../../libs/helper\" }\n",
+			"libs/helper/Cargo.toml": "[package]\nname = \"helper\"\nversion = \"0.1.0\"\n",
+		} {
+			full := filepath.Join(root, filepath.FromSlash(path))
+			if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
 		}
-		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
-			t.Fatal(err)
+		manifest := NewManifest("cargo-monorepo")
+		manifest.Workspace.Kind = core.ProjectKindMonorepo
+		manifest.Workspace.Projects = []core.Project{
+			{Name: "cli", Path: "apps/cli"},
+			{Name: "helper", Path: "libs/helper"},
 		}
-	}
-	manifest := NewManifest("cargo-monorepo")
-	manifest.Workspace.Kind = core.ProjectKindMonorepo
-	manifest.Workspace.Projects = []core.Project{
-		{Name: "cli", Path: "apps/cli"},
-		{Name: "helper", Path: "libs/helper"},
-	}
 
-	// Act
-	config, err := (Cargo{}).CreateGoReleaserConfig(root, manifest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := core.SetCargoPackageVersionAndSiblings(
-		filepath.Join(root, "apps/cli/Cargo.toml"),
-		"1.2.3",
-		map[string]string{"cli": "1.2.3", "helper": "1.2.3"},
-	); err != nil {
-		t.Fatal(err)
-	}
-	updated, err := os.ReadFile(filepath.Join(root, "apps/cli/Cargo.toml"))
-	if err != nil {
-		t.Fatal(err)
-	}
+		// Act
+		config, configErr := (Cargo{}).CreateGoReleaserConfig(root, manifest)
+		versionErr := core.SetCargoPackageVersion(
+			filepath.Join(root, "apps/cli/Cargo.toml"),
+			"1.2.3",
+			map[string]string{"cli": "1.2.3", "helper": "1.2.3"},
+		)
+		updated, readErr := os.ReadFile(filepath.Join(root, "apps/cli/Cargo.toml"))
 
-	// Assert
-	if !strings.Contains(config, "binary: cli") {
-		t.Fatalf("CreateGoReleaserConfig() missing monorepo app binary: %s", config)
-	}
-	if !strings.Contains(string(updated), `helper = { version = "1.2.3", path = "../../libs/helper" }`) {
-		t.Fatalf("sibling dependency version not rewritten: %s", string(updated))
-	}
-}
+		// Assert
+		t.Run("it generates a GoReleaser build for the monorepo app", func(t *testing.T) {
+			if configErr != nil {
+				t.Fatal(configErr)
+			}
+			if !strings.Contains(config, "binary: cli") {
+				t.Fatalf("CreateGoReleaserConfig() missing monorepo app binary: %s", config)
+			}
+		})
+		t.Run("it rewrites sibling path dependency versions alongside package version", func(t *testing.T) {
+			if versionErr != nil {
+				t.Fatal(versionErr)
+			}
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if !strings.Contains(string(updated), `helper = { version = "1.2.3", path = "../../libs/helper" }`) {
+				t.Fatalf("sibling dependency version not rewritten: %s", string(updated))
+			}
+		})
+	})
 
-func TestCargoRejectsPublishableDependingOnLocalOnlySibling(t *testing.T) {
-	// Arrange
-	root := t.TempDir()
-	for path, content := range map[string]string{
-		"Cargo.toml":                "[workspace]\nmembers = [\"apps/cli\", \"libs/local-lib\"]\n",
-		"apps/cli/Cargo.toml":       "[package]\nname = \"cli\"\nversion = \"0.1.0\"\n[dependencies]\nlocal-lib = { path = \"../../libs/local-lib\" }\n",
-		"libs/local-lib/Cargo.toml": "[package]\nname = \"local-lib\"\nversion = \"0.1.0\"\npublish = false\n",
-	} {
-		full := filepath.Join(root, filepath.FromSlash(path))
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			t.Fatal(err)
+	t.Run("when a publishable crate depends on a local-only workspace sibling", func(t *testing.T) {
+		// Arrange
+		root := t.TempDir()
+		for path, content := range map[string]string{
+			"Cargo.toml":                "[workspace]\nmembers = [\"apps/cli\", \"libs/local-lib\"]\n",
+			"apps/cli/Cargo.toml":       "[package]\nname = \"cli\"\nversion = \"0.1.0\"\n[dependencies]\nlocal-lib = { path = \"../../libs/local-lib\" }\n",
+			"libs/local-lib/Cargo.toml": "[package]\nname = \"local-lib\"\nversion = \"0.1.0\"\npublish = false\n",
+		} {
+			full := filepath.Join(root, filepath.FromSlash(path))
+			if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
 		}
-		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
-			t.Fatal(err)
+		manifest := NewManifest("cargo-monorepo")
+		manifest.Workspace.Kind = core.ProjectKindMonorepo
+		manifest.Workspace.Projects = []core.Project{
+			{Name: "cli", Path: "apps/cli"},
+			{Name: "local-lib", Path: "libs/local-lib"},
 		}
-	}
-	manifest := NewManifest("cargo-monorepo")
-	manifest.Workspace.Kind = core.ProjectKindMonorepo
-	manifest.Workspace.Projects = []core.Project{
-		{Name: "cli", Path: "apps/cli"},
-		{Name: "local-lib", Path: "libs/local-lib"},
-	}
 
-	// Act
-	err := validateCargoWorkspaceDependencies(root, manifest)
+		// Act
+		err := validateCargoWorkspaceDependencies(root, manifest)
 
-	// Assert
-	if err == nil || !strings.Contains(err.Error(), "local-only workspace crate local-lib") {
-		t.Fatalf("validateCargoWorkspaceDependencies() = %v, want local-only error", err)
-	}
+		// Assert
+		t.Run("it rejects the workspace dependency graph during preflight", func(t *testing.T) {
+			if err == nil || !strings.Contains(err.Error(), "local-only workspace crate local-lib") {
+				t.Fatalf("validateCargoWorkspaceDependencies() = %v, want local-only error", err)
+			}
+		})
+	})
 }
 
 func TestCargoPublicationPreflightsEveryPackageBeforePublishing(t *testing.T) {
