@@ -322,6 +322,8 @@ describe("premise on-commit", { tags: ["e2e", "cli", "ci", "on-commit"] }, () =>
       });
       let planOutput = "";
       let flowOutput = "";
+      let workflow = "";
+      let stagedText = "";
 
       beforeAll(async () => {
         const h = suite();
@@ -329,42 +331,10 @@ describe("premise on-commit", { tags: ["e2e", "cli", "ci", "on-commit"] }, () =>
         await h.initGit(`chore: initial ${eco.label} project`, "v1.0.0");
         planOutput = (await h.pm(["ci", "plan", "--ci-output"])).stdout;
         flowOutput = (await h.pm(["ci", "flow", "on-commit", "--release", "none"])).combined;
-        await h.writeManifest();
-      });
-
-      it("It should handle multiple platforms in CI planning (linux, macos, windows)", () => {
-        expect(planOutput).toContain("has_infra=false\n");
-        expect(planOutput).toContain("mode=matrix\n");
-        expect(planOutput).toContain("native=true\n");
-        expect(planOutput).toContain('"platform":"linux"');
-        expect(planOutput).toContain('"platform":"macos"');
-        expect(planOutput).toContain('"platform":"windows"');
-      });
-
-      it(`It should handle nobuild and local-only ${eco.label} projects during on-commit checks`, () => {
-        expect(flowOutput).toContain("nobuild-lib:skip-build");
-        expect(flowOutput).toContain("local-lib:test");
-        expect(flowOutput).toContain("public-lib:test");
-        expect(flowOutput).toContain("private-lib:test");
-      });
-
-      it(`It should handle public packages for the ${eco.label} registry [CLO-228..CLO-234]`, () => {
-        expect(planOutput).toContain("has_registry_packages=true\n");
-        expect(planOutput).toContain("has_github_release=true\n");
-      });
-
-      it(`It should handle private packages for Artifact Registry / alternate ${eco.label} registries [CLO-229, CLO-232..CLO-234]`, async () => {
-        const workflow = await readFile(
+        workflow = await readFile(
           join(REPO_ROOT, "apps/premise/assets/github-workflows/on-commit.yml"),
           "utf8",
         );
-        expect(workflow).toContain("NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}");
-        expect(workflow).toContain("has_registry_packages");
-        expect(workflow).not.toContain("install-premise: build");
-      });
-
-      it(`It should handle RC binary release staging and workflow parity for ${eco.label} [CLO-230, CLO-235, CLO-236]`, async () => {
-        const h = suite();
         const stagedDir = join(h.outputDir, `staged-rc-${eco.label}`);
         await mkdir(stagedDir, { recursive: true });
         await h.pm([
@@ -384,7 +354,38 @@ describe("premise on-commit", { tags: ["e2e", "cli", "ci", "on-commit"] }, () =>
           "--output-dir",
           stagedDir,
         ]);
-        const stagedText = await readFile(join(stagedDir, "cli.txt"), "utf8");
+        stagedText = await readFile(join(stagedDir, "cli.txt"), "utf8");
+        await h.writeManifest();
+      });
+
+      it("It should handle multiple platforms in CI planning (linux, macos, windows)", () => {
+        expect(planOutput).toContain("has_infra=false\n");
+        expect(planOutput).toContain("mode=matrix\n");
+        expect(planOutput).toContain("native=true\n");
+        expect(planOutput).toContain('"platform":"linux"');
+        expect(planOutput).toContain('"platform":"macos"');
+        expect(planOutput).toContain('"platform":"windows"');
+      });
+
+      it(`It should handle nobuild and local-only ${eco.label} projects during on-commit checks`, () => {
+        expect(flowOutput).toContain("nobuild-lib:skip-build");
+        expect(flowOutput).toContain("local-lib:test");
+        expect(flowOutput).toContain("public-lib:test");
+        expect(flowOutput).toContain("private-lib:test");
+      });
+
+      it(`It should plan registry and GitHub Release outputs for ${eco.label} packages`, () => {
+        expect(planOutput).toContain("has_registry_packages=true\n");
+        expect(planOutput).toContain("has_github_release=true\n");
+      });
+
+      it(`It should pass registry auth and released action inputs in generated on-commit workflows for ${eco.label}`, () => {
+        expect(workflow).toContain("NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}");
+        expect(workflow).toContain("has_registry_packages");
+        expect(workflow).not.toContain("install-premise: build");
+      });
+
+      it(`It should stage RC binary release artifacts for ${eco.label}`, () => {
         expect(stagedText).toContain("rc:1.1.0-rc.1");
       });
     });

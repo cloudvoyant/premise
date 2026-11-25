@@ -333,3 +333,52 @@ template_registry:
   await writeFile(join(destination, "premise.yaml"), manifest, "utf8");
   return destination;
 }
+
+/** Configure a Cargo workspace with only private-registry crates (public-lib depending on private-lib) and no native releases. */
+export async function setupPrivateCargoWorkspace(h: PremiseHarness): Promise<void> {
+  await copyScaffold(join(TESTDATA_ROOT, "workspaces/cargo"), h.workspace);
+  await h.writeFile(
+    "premise.yaml",
+    `workspace:
+  name: cargo-private-only
+  kind: monorepo
+  schema-version: "0.2"
+  package_managers:
+    - cargo
+  providers:
+    ci: github
+    tools: mise
+    tasks: mise
+    infra: pulumi
+    versioning: svu
+  projects:
+    - name: private-lib
+      template: cloudvoyant/premise-cargo:rust-lib
+      version: 0.1.0
+      path: libs/private-lib
+    - name: public-lib
+      template: cloudvoyant/premise-cargo:rust-lib
+      version: 0.1.0
+      path: libs/public-lib
+`,
+  );
+  await h.writeFile(
+    "libs/public-lib/Cargo.toml",
+    `[package]
+name = "public-lib"
+version = "0.1.0"
+edition = "2021"
+publish = ["premise-private"]
+
+[dependencies]
+private-lib = { path = "../private-lib" }
+`,
+  );
+  await h.writeFile(
+    "Cargo.toml",
+    `[workspace]
+members = ["libs/private-lib", "libs/public-lib"]
+resolver = "2"
+`,
+  );
+}

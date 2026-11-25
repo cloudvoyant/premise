@@ -759,26 +759,19 @@ func cargoRegistryTokenEnv(registry string) string {
 }
 
 func validateCargoWorkspaceDependencies(root string, manifest core.Config) error {
-	all := make(map[string]cargoTemplatePackage)
+	var packages []workspacePackage
 	for _, target := range manifest.PublicationTargets() {
 		pkg, found, err := inspectCargoTemplatePackage(root, target)
 		if err != nil || !found {
 			continue
 		}
-		all[pkg.Name] = pkg
+		packages = append(packages, workspacePackage{
+			name:         pkg.Name,
+			publishable:  pkg.RegistryPublish,
+			dependencies: pkg.PathDependencies,
+		})
 	}
-	var failures []error
-	for name, pkg := range all {
-		if !pkg.RegistryPublish {
-			continue
-		}
-		for _, dep := range pkg.PathDependencies {
-			if target, isWorkspace := all[dep]; isWorkspace && !target.RegistryPublish {
-				failures = append(failures, fmt.Errorf("publishable Cargo crate %s depends on local-only workspace crate %s", name, dep))
-			}
-		}
-	}
-	return errors.Join(failures...)
+	return validateWorkspaceDependencies("Cargo", "crate", packages)
 }
 
 func sortCargoTemplatePackages(packages []cargoTemplatePackage) ([]cargoTemplatePackage, error) {

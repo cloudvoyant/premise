@@ -438,8 +438,7 @@ func bunVersionExistsInPackument(ctx context.Context, client *http.Client, regis
 }
 
 func validateBunWorkspaceDependencies(root string, manifest core.Config) error {
-	packages := make(map[string]core.BunPackage)
-	publishable := make(map[string]bool)
+	var packages []workspacePackage
 	for _, target := range manifest.PublicationTargets() {
 		directory, err := core.TemplateDirectory(root, target.Path)
 		if err != nil {
@@ -449,22 +448,18 @@ func validateBunWorkspaceDependencies(root string, manifest core.Config) error {
 		if err != nil || !found {
 			continue
 		}
-		packages[pkg.Name] = pkg
 		registry, regErr := bunPackageRegistry(pkg)
-		publishable[pkg.Name] = !pkg.Private && regErr == nil && registry != nil
-	}
-	var failures []error
-	for name, pkg := range packages {
-		if !publishable[name] {
-			continue
-		}
+		deps := make([]string, 0, len(pkg.Dependencies))
 		for dep := range pkg.Dependencies {
-			if _, isWorkspace := packages[dep]; isWorkspace && !publishable[dep] {
-				failures = append(failures, fmt.Errorf("publishable Bun package %s depends on local-only workspace package %s", name, dep))
-			}
+			deps = append(deps, dep)
 		}
+		packages = append(packages, workspacePackage{
+			name:         pkg.Name,
+			publishable:  !pkg.Private && regErr == nil && registry != nil,
+			dependencies: deps,
+		})
 	}
-	return errors.Join(failures...)
+	return validateWorkspaceDependencies("Bun", "package", packages)
 }
 
 func sortBunPublishTargets(targets []bunPublishTarget) ([]bunPublishTarget, error) {
@@ -494,40 +489,6 @@ func sortBunPublishTargets(targets []bunPublishTarget) ([]bunPublishTarget, erro
 	out := make([]bunPublishTarget, 0, len(sortedNames))
 	for _, name := range sortedNames {
 		out = append(out, byName[name])
-	}
-	return out, nil
-}
-
-func topologicalOrder(nodes []string, deps map[string][]string) ([]string, error) {
-	const (
-		unvisited = 0
-		visiting  = 1
-		visited   = 2
-	)
-	state := make(map[string]int, len(nodes))
-	out := make([]string, 0, len(nodes))
-	var visit func(string) error
-	visit = func(node string) error {
-		switch state[node] {
-		case visiting:
-			return fmt.Errorf("cyclic workspace dependency involving %s", node)
-		case visited:
-			return nil
-		}
-		state[node] = visiting
-		for _, dep := range deps[node] {
-			if err := visit(dep); err != nil {
-				return err
-			}
-		}
-		state[node] = visited
-		out = append(out, node)
-		return nil
-	}
-	for _, node := range nodes {
-		if err := visit(node); err != nil {
-			return nil, err
-		}
 	}
 	return out, nil
 }

@@ -52,6 +52,7 @@
 - Prefer command E2E tests, then module integration tests. Avoid tests that mirror implementation.
 - Separate Arrange, Act, and Assert with blank lines. Name the behavior and expected outcome.
 - [Proposed] Keep test names short and behavioral (such as "it applies shared first then dev"); keep exact flag or output invariants in assertions rather than test names.
+- Do not tag test names with ticket or issue IDs; use `beforeAll` setup with separate focused assertions for each verified side effect or invariant.
 - Organize CLI E2E specs under `e2e/cli/` by command and major flow: `scaffolding.spec.ts`, `secrets.spec.ts`, `infra.spec.ts`, `release.spec.ts`, `on-commit.spec.ts`, `on-merge.spec.ts`, and `on-deploy.spec.ts`. Nest `Given ...`, `When ...`, and `It ...` scopes; use `beforeAll` inside `When ...` blocks to run expensive CLI actions once and split outcomes into focused `it('It should ...')` assertions.
 - Store real, inspectable scaffolded workspaces and registries under `e2e/testdata/` and copy them into `e2e/outputs/cli/<spec>/<test-slug>/workspace/` alongside `cli.log` and `artifacts.json` on every run; avoid assembling workspaces inline in spec files.
 - Matrix provider-backed E2E specs (such as secret backends and per-ecosystem `bun`, `rust`, and `go` variants) over supported providers instead of duplicating separate blocks.

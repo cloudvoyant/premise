@@ -230,6 +230,8 @@ describe("premise on-merge", { tags: ["e2e", "cli", "ci", "on-merge"] }, () => {
       let version = "";
       let planOutput = "";
       let flowOutput = "";
+      let workflow = "";
+      let stagedText = "";
 
       beforeAll(async () => {
         const h = suite();
@@ -239,6 +241,30 @@ describe("premise on-merge", { tags: ["e2e", "cli", "ci", "on-merge"] }, () => {
         version = (await h.pm(["version", "next"])).stdout.trim();
         planOutput = (await h.pm(["ci", "plan", "--ci-output"])).stdout;
         flowOutput = (await h.pm(["ci", "flow", "on-merge", "--release", "none"])).combined;
+        workflow = await readFile(
+          join(REPO_ROOT, "apps/premise/assets/github-workflows/on-merge.yml"),
+          "utf8",
+        );
+        const stagedDir = join(h.outputDir, `staged-stable-${eco.label}`);
+        await mkdir(stagedDir, { recursive: true });
+        await h.pm([
+          "ci",
+          "flow",
+          "on-merge",
+          "--release",
+          "none",
+          "--project",
+          "cli",
+          "--platform",
+          hostCIPlatform(),
+          "--channel",
+          "stable",
+          "--version",
+          "v1.1.0",
+          "--output-dir",
+          stagedDir,
+        ]);
+        stagedText = await readFile(join(stagedDir, "cli.txt"), "utf8");
         await h.writeManifest();
       });
 
@@ -254,7 +280,7 @@ describe("premise on-merge", { tags: ["e2e", "cli", "ci", "on-merge"] }, () => {
       );
 
       it(
-        `It should handle public ${eco.label} packages on merge [CLO-228..CLO-234]`,
+        `It should plan registry and GitHub Release outputs for ${eco.label} packages on merge`,
         { tags: ["replay"] },
         () => {
           expect(planOutput).toContain("has_registry_packages=true\n");
@@ -263,13 +289,9 @@ describe("premise on-merge", { tags: ["e2e", "cli", "ci", "on-merge"] }, () => {
       );
 
       it(
-        `It should handle private ${eco.label} packages for Artifact Registry / alternate registries on merge [CLO-229, CLO-232..CLO-234]`,
+        `It should pass registry auth without unconditional token gates in generated on-merge workflows for ${eco.label}`,
         { tags: ["replay"] },
-        async () => {
-          const workflow = await readFile(
-            join(REPO_ROOT, "apps/premise/assets/github-workflows/on-merge.yml"),
-            "utf8",
-          );
+        () => {
           expect(workflow).toContain("NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}");
           expect(workflow).not.toContain("CRATES_TOKEN is unavailable before release");
           expect(workflow).not.toContain("install-premise: build");
@@ -277,30 +299,9 @@ describe("premise on-merge", { tags: ["e2e", "cli", "ci", "on-merge"] }, () => {
       );
 
       it(
-        `It should handle stable GitHub Releases for ${eco.label} on merge [CLO-230, CLO-235, CLO-236]`,
+        `It should stage stable GitHub Release artifacts for ${eco.label} on merge`,
         { tags: ["replay"] },
-        async () => {
-          const h = suite();
-          const stagedDir = join(h.outputDir, `staged-stable-${eco.label}`);
-          await mkdir(stagedDir, { recursive: true });
-          await h.pm([
-            "ci",
-            "flow",
-            "on-merge",
-            "--release",
-            "none",
-            "--project",
-            "cli",
-            "--platform",
-            hostCIPlatform(),
-            "--channel",
-            "stable",
-            "--version",
-            "v1.1.0",
-            "--output-dir",
-            stagedDir,
-          ]);
-          const stagedText = await readFile(join(stagedDir, "cli.txt"), "utf8");
+        () => {
           expect(stagedText).toContain("stable:1.1.0");
         },
       );
