@@ -217,7 +217,7 @@ func PlanCISchedule(ctx context.Context, root string, manifest Config, flow CIFl
 	plan.HasEnvInfrastructure = hasEnv
 	plan.HasSharedInfrastructure = hasShared
 	plan.HasInfrastructure = hasEnv || hasShared
-	hasGitHubRelease, hasPublishablePackages := planPublicationDestinations(root, manifest, plan.HasNative)
+	hasGitHubRelease, hasPublishablePackages := findPublicationDestinations(root, manifest, plan.HasNative)
 	plan.HasGitHubRelease = hasGitHubRelease
 	plan.HasPublishablePackages = hasPublishablePackages
 	if manifest.Workspace.Deployment != nil {
@@ -994,7 +994,7 @@ func ciTarget(flow CIFlow, environment string) (string, error) {
 	}
 }
 
-func planPublicationDestinations(root string, manifest Config, hasNative bool) (hasGitHubRelease, hasRegistryPackages bool) {
+func findPublicationDestinations(root string, manifest Config, hasNative bool) (hasGitHubRelease, hasPublishablePackages bool) {
 	plugins, err := packageManagersForConfig(manifest)
 	if err != nil {
 		return true, false
@@ -1014,7 +1014,7 @@ func planPublicationDestinations(root string, manifest Config, hasNative bool) (
 			if err != nil || !found || !metadata.Publishable {
 				continue
 			}
-			hasRegistryPackages = true
+			hasPublishablePackages = true
 			if metadata.Public {
 				hasPublicOrGitTagPackage = true
 			}
@@ -1025,8 +1025,8 @@ func planPublicationDestinations(root string, manifest Config, hasNative bool) (
 			}
 		}
 	}
-	if hasNative || hasGoReleaserBuilds || !hasRegistryPackages || hasPublicOrGitTagPackage {
+	if hasNative || hasGoReleaserBuilds || !hasPublishablePackages || hasPublicOrGitTagPackage {
 		hasGitHubRelease = true
 	}
-	return hasGitHubRelease, hasRegistryPackages
+	return hasGitHubRelease, hasPublishablePackages
 }
