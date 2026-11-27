@@ -99,6 +99,9 @@ func (Bun) PreflightPublication(ctx context.Context, root, version, task string)
 		return fmt.Errorf("load Bun registry manifest: %w", err)
 	}
 	var failures []error
+	if err := validateBunWorkspaceDependencies(root, manifest); err != nil {
+		failures = append(failures, err)
+	}
 	pending := false
 	for _, target := range manifest.PublicationTargets() {
 		metadata, found, metadataErr := (Bun{}).GetPackageMetadata(root, target)
@@ -367,6 +370,7 @@ type bunPublishTarget struct {
 }
 
 func bunVersionExists(ctx context.Context, client *http.Client, registry *url.URL, name, version string) (bool, error) {
+	token := strings.TrimSpace(os.Getenv("NODE_AUTH_TOKEN"))
 	endpoint := *registry
 	basePath := strings.TrimSuffix(endpoint.Path, "/")
 	escapedBasePath := strings.TrimSuffix(endpoint.EscapedPath(), "/")
@@ -376,6 +380,9 @@ func bunVersionExists(ctx context.Context, client *http.Client, registry *url.UR
 	if err != nil {
 		return false, fmt.Errorf("build Bun registry request for %s %s: %w", name, version, err)
 	}
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
 	response, err := client.Do(request)
 	if err != nil {
 		return false, fmt.Errorf("check Bun package %s version %s: %w", name, version, err)
@@ -384,10 +391,106 @@ func bunVersionExists(ctx context.Context, client *http.Client, registry *url.UR
 	if response.StatusCode == http.StatusNotFound {
 		return false, nil
 	}
+	if response.StatusCode >= 200 && response.StatusCode < 300 {
+		return true, nil
+	}
+	// Some registries (including GCP Artifact Registry for scoped packages)
+	// reject /<pkg>/<version> and serve version metadata on the packument /<pkg>.
+	if response.StatusCode == http.StatusBadRequest || response.StatusCode == http.StatusMethodNotAllowed {
+		return bunVersionExistsInPackument(ctx, client, registry, name, version, token)
+	}
+	return false, fmt.Errorf("check Bun package %s version %s: registry returned HTTP %d", name, version, response.StatusCode)
+}
+
+func bunVersionExistsInPackument(ctx context.Context, client *http.Client, registry *url.URL, name, version, token string) (bool, error) {
+	endpoint := *registry
+	basePath := strings.TrimSuffix(endpoint.Path, "/")
+	escapedBasePath := strings.TrimSuffix(endpoint.EscapedPath(), "/")
+	endpoint.Path = basePath + "/" + name
+	endpoint.RawPath = escapedBasePath + "/" + url.PathEscape(name)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return false, fmt.Errorf("build Bun packument request for %s: %w", name, err)
+	}
+	request.Header.Set("Accept", "application/vnd.npm.install-v1+json, application/json")
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return false, fmt.Errorf("check Bun packument %s: %w", name, err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return false, fmt.Errorf("check Bun package %s version %s: registry returned HTTP %d", name, version, response.StatusCode)
 	}
-	return true, nil
+	var packument struct {
+		Versions map[string]json.RawMessage `json:"versions"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(&packument); err != nil {
+		return false, fmt.Errorf("decode Bun packument for %s: %w", name, err)
+	}
+	_, exists := packument.Versions[version]
+	return exists, nil
+}
+
+func validateBunWorkspaceDependencies(root string, manifest core.Config) error {
+	var packages []core.WorkspacePackage
+	for _, target := range manifest.PublicationTargets() {
+		directory, err := core.TemplateDirectory(root, target.Path)
+		if err != nil {
+			continue
+		}
+		pkg, found, err := core.ReadBunPackage(filepath.Join(directory, "package.json"))
+		if err != nil || !found {
+			continue
+		}
+		registry, regErr := bunPackageRegistry(pkg)
+		deps := make([]string, 0, len(pkg.Dependencies))
+		for dep := range pkg.Dependencies {
+			deps = append(deps, dep)
+		}
+		packages = append(packages, core.WorkspacePackage{
+			Name:         pkg.Name,
+			Publishable:  !pkg.Private && regErr == nil && registry != nil,
+			Dependencies: deps,
+		})
+	}
+	return core.ValidateWorkspaceDependencies("Bun", "package", packages)
+}
+
+func sortBunPublishTargets(targets []bunPublishTarget) ([]bunPublishTarget, error) {
+	byName := make(map[string]bunPublishTarget, len(targets))
+	order := make([]string, 0, len(targets))
+	deps := make(map[string][]string, len(targets))
+	for _, target := range targets {
+		byName[target.name] = target
+		order = append(order, target.name)
+	}
+	for _, target := range targets {
+		pkg, found, err := core.ReadBunPackage(filepath.Join(target.directory, "package.json"))
+		if err != nil || !found {
+			continue
+		}
+		for dep := range pkg.Dependencies {
+			if _, ok := byName[dep]; ok && dep != target.name {
+				deps[target.name] = append(deps[target.name], dep)
+			}
+		}
+		slices.Sort(deps[target.name])
+	}
+	sortedNames, err := core.TopologicalOrder(order, deps)
+	if err != nil {
+		return nil, fmt.Errorf("order Bun workspace packages: %w", err)
+	}
+	out := make([]bunPublishTarget, 0, len(sortedNames))
+	for _, name := range sortedNames {
+		out = append(out, byName[name])
+	}
+	return out, nil
 }
 
 func publishBunPackages(ctx context.Context, root, version, task string, stdout, stderr io.Writer) (resultErr error) {
@@ -401,6 +504,9 @@ func publishBunPackages(ctx context.Context, root, version, task string, stdout,
 	}
 	var publications []bunPublishTarget
 	var failures []error
+	if err := validateBunWorkspaceDependencies(root, manifest); err != nil {
+		failures = append(failures, err)
+	}
 	preflight := core.MiseTaskRunner{Stderr: stderr}
 	client := &http.Client{Timeout: 30 * time.Second}
 	for _, target := range manifest.PublicationTargets() {
@@ -437,6 +543,10 @@ func publishBunPackages(ctx context.Context, root, version, task string, stdout,
 	}
 	if !pending {
 		return nil
+	}
+	publications, err = sortBunPublishTargets(publications)
+	if err != nil {
+		return fmt.Errorf("Bun publication preflight: %w", err)
 	}
 
 	// Reuse credentials within a registry, but do not expose a different

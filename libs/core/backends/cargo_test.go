@@ -25,16 +25,18 @@ func TestCargoGetPackageMetadata(t *testing.T) {
 		nestedManifest  string
 		found           bool
 		registryPublish bool
+		wantPublic      bool
+		wantRegistry    string
 		wantError       string
 	}{
-		{name: "default-package", kind: "lib", manifest: "[package]\nname = \"default-package\"\nversion = \"0.1.0\"\n", found: true, registryPublish: true},
+		{name: "default-package", kind: "lib", manifest: "[package]\nname = \"default-package\"\nversion = \"0.1.0\"\n", found: true, registryPublish: true, wantPublic: true, wantRegistry: "https://crates.io"},
 		{name: "internal-package", kind: "lib", manifest: "[package]\nname = \"internal-package\"\nversion = \"0.1.0\"\npublish = false # internal\n", found: true},
-		{name: "private-registry", kind: "lib", manifest: "[package]\nname = 'private-registry'\nversion = '0.1.0'\npublish = ['private']\n", found: true},
-		{name: "crates-allowlist", kind: "lib", manifest: "[package]\nname = 'crates-allowlist'\nversion = '0.1.0'\npublish = ['crates-io']\n", found: true, registryPublish: true},
-		{name: "direct-app", kind: "app", manifest: "[package]\nname = \"direct-app\"\nversion = \"0.1.0\"\n", found: true, registryPublish: true},
+		{name: "private-registry", kind: "lib", manifest: "[package]\nname = 'private-registry'\nversion = '0.1.0'\npublish = ['private']\n", found: true, registryPublish: true, wantPublic: false, wantRegistry: "private"},
+		{name: "crates-allowlist", kind: "lib", manifest: "[package]\nname = 'crates-allowlist'\nversion = '0.1.0'\npublish = ['crates-io']\n", found: true, registryPublish: true, wantPublic: true, wantRegistry: "https://crates.io"},
+		{name: "direct-app", kind: "app", manifest: "[package]\nname = \"direct-app\"\nversion = \"0.1.0\"\n", found: true, registryPublish: true, wantPublic: true, wantRegistry: "https://crates.io"},
 		{name: "nested-app", kind: "app", nestedManifest: "[package]\nname = \"nested-app\"\nversion = \"0.1.0\"\n"},
 		{name: "virtual-workspace", kind: "app", manifest: "[workspace]\nmembers = [\"src-tauri\"]\n"},
-		{name: "other-section", kind: "app", manifest: "[workspace]\nname = 'other-section'\nversion = '0.1.0'\n[package]\nname = 'other-section'\nversion = '0.1.0'\n[dependencies]\npublish = false\n", found: true, registryPublish: true},
+		{name: "other-section", kind: "app", manifest: "[workspace]\nname = 'other-section'\nversion = '0.1.0'\n[package]\nname = 'other-section'\nversion = '0.1.0'\n[dependencies]\npublish = false\n", found: true, registryPublish: true, wantPublic: true, wantRegistry: "https://crates.io"},
 		{name: "mismatched", kind: "lib", manifest: "[package]\nname = \"other\"\nversion = \"0.1.0\"\n", wantError: `does not match declared template "mismatched"`},
 		{name: "malformed", kind: "lib", manifest: "[package]\nname = \"malformed\"\n", wantError: "has no [package] version"},
 		{name: "invalid-toml", kind: "lib", manifest: "[package]\nname = 'invalid-toml'\nversion = [\n", wantError: "parse Cargo manifest"},
@@ -80,8 +82,8 @@ func TestCargoGetPackageMetadata(t *testing.T) {
 			if got.Name != template.Name || got.Path != directory || got.PackageManager != "cargo" || got.Ecosystem != "cargo" {
 				t.Fatalf("GetPackageMetadata() = %#v", got)
 			}
-			if got.Publishable != test.registryPublish || got.Public != test.registryPublish {
-				t.Fatalf("GetPackageMetadata() publishable/public = %v/%v, want %v", got.Publishable, got.Public, test.registryPublish)
+			if got.Publishable != test.registryPublish || got.Public != test.wantPublic || got.Registry != test.wantRegistry {
+				t.Fatalf("GetPackageMetadata() publishable/public/registry = %v/%v/%q, want %v/%v/%q", got.Publishable, got.Public, got.Registry, test.registryPublish, test.wantPublic, test.wantRegistry)
 			}
 		})
 	}
@@ -104,6 +106,84 @@ func TestSetCargoPackageVersionPreservesUnrelatedSections(t *testing.T) {
 	if string(got) != want {
 		t.Fatalf("setCargoPackageVersion() = %q, want %q", got, want)
 	}
+}
+
+func TestCargoMonorepoPublication(t *testing.T) {
+	t.Run("when a monorepo app depends on an unversioned path-only sibling library", func(t *testing.T) {
+		// Arrange
+		root := t.TempDir()
+		for path, content := range map[string]string{
+			"apps/cli/Cargo.toml":    "[package]\nname = \"cli\"\nversion = \"0.1.0\"\n[dependencies]\nhelper = { path = \"../../libs/helper\" }\n",
+			"libs/helper/Cargo.toml": "[package]\nname = \"helper\"\nversion = \"0.1.0\"\n",
+		} {
+			full := filepath.Join(root, filepath.FromSlash(path))
+			if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		manifest := NewManifest("cargo-monorepo")
+		manifest.Workspace.Kind = core.ProjectKindMonorepo
+		manifest.Workspace.Projects = []core.Project{
+			{Name: "cli", Path: "apps/cli"},
+			{Name: "helper", Path: "libs/helper"},
+		}
+
+		// Act
+		config, configErr := (Cargo{}).CreateGoReleaserConfig(root, manifest)
+		validationErr := validateCargoWorkspaceDependencies(root, manifest)
+
+		// Assert
+		t.Run("it generates a GoReleaser build for the monorepo app", func(t *testing.T) {
+			if configErr != nil {
+				t.Fatal(configErr)
+			}
+			if !strings.Contains(config, "binary: cli") {
+				t.Fatalf("CreateGoReleaserConfig() missing monorepo app binary: %s", config)
+			}
+		})
+		t.Run("it rejects the unversioned path-only sibling dependency with an actionable error", func(t *testing.T) {
+			if validationErr == nil || !strings.Contains(validationErr.Error(), "path-only workspace dependency helper without a version") {
+				t.Fatalf("validateCargoWorkspaceDependencies() = %v, want unversioned path-only error", validationErr)
+			}
+		})
+	})
+
+	t.Run("when a publishable crate depends on a local-only workspace sibling", func(t *testing.T) {
+		// Arrange
+		root := t.TempDir()
+		for path, content := range map[string]string{
+			"Cargo.toml":                "[workspace]\nmembers = [\"apps/cli\", \"libs/local-lib\"]\n",
+			"apps/cli/Cargo.toml":       "[package]\nname = \"cli\"\nversion = \"0.1.0\"\n[dependencies]\nlocal-lib = { path = \"../../libs/local-lib\" }\n",
+			"libs/local-lib/Cargo.toml": "[package]\nname = \"local-lib\"\nversion = \"0.1.0\"\npublish = false\n",
+		} {
+			full := filepath.Join(root, filepath.FromSlash(path))
+			if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		manifest := NewManifest("cargo-monorepo")
+		manifest.Workspace.Kind = core.ProjectKindMonorepo
+		manifest.Workspace.Projects = []core.Project{
+			{Name: "cli", Path: "apps/cli"},
+			{Name: "local-lib", Path: "libs/local-lib"},
+		}
+
+		// Act
+		err := validateCargoWorkspaceDependencies(root, manifest)
+
+		// Assert
+		t.Run("it rejects the workspace dependency graph during preflight", func(t *testing.T) {
+			if err == nil || !strings.Contains(err.Error(), "local-only workspace crate local-lib") {
+				t.Fatalf("validateCargoWorkspaceDependencies() = %v, want local-only error", err)
+			}
+		})
+	})
 }
 
 func TestCargoPublicationPreflightsEveryPackageBeforePublishing(t *testing.T) {

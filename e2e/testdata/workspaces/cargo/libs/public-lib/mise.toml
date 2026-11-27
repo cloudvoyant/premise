@@ -9,3 +9,9 @@ run = 'echo "public-lib:format:check"'
 
 [tasks.lint]
 run = 'echo "public-lib:lint"'
+
+[tasks.publish]
+run = 'printf "cargo:publish:public-lib:%s\n" "${RELEASE_VERSION:-}"'
+
+[tasks."publish:rc"]
+run = 'printf "cargo:publish:rc:public-lib:%s\n" "${RELEASE_VERSION:-}"'

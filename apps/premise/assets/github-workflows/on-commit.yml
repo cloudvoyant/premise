@@ -33,6 +33,8 @@ jobs:
       has_infra: ${{ steps.plan.outputs.has_infra }}
       has_env_infra: ${{ steps.plan.outputs.has_env_infra }}
       has_shared_infra: ${{ steps.plan.outputs.has_shared_infra }}
+      has_github_release: ${{ steps.plan.outputs.has_github_release }}
+      has_publishable_packages: ${{ steps.plan.outputs.has_publishable_packages }}
       version: ${{ steps.plan.outputs.release_version }}
     steps:
       - uses: actions/checkout@v6
@@ -46,7 +48,7 @@ jobs:
           command: plan
           flow: on-commit
           release: auto
-          install-premise: build
+          install-premise: pre-built
       - name: Run the root hook once before matrix rows
         if: steps.plan.outputs.mode == 'matrix'
         uses: cloudvoyant/premise@v0
@@ -75,7 +77,7 @@ jobs:
           command: flow
           flow: on-commit
           release: none
-          install-premise: build
+          install-premise: pre-built
           channel: rc
           version: ${{ needs.plan.outputs.version }}
           output-dir: ${{ runner.temp }}/premise-files
@@ -107,7 +109,7 @@ jobs:
           command: flow-matrix
           flow: on-commit
           release: none
-          install-premise: build
+          install-premise: pre-built
           project: ${{ matrix.project }}
           platform: ${{ matrix.platform }}
           skip-root: true
@@ -127,6 +129,7 @@ jobs:
       version: ${{ needs.plan.outputs.version }}
     if: >-
       always() && needs.plan.outputs.version != '' &&
+      needs.plan.outputs.has_github_release != 'false' &&
       needs.plan.result == 'success' &&
       ((needs.plan.outputs.mode == 'single' &&
         needs.single.result == 'success') ||
@@ -171,16 +174,23 @@ jobs:
           command: release
           flow: on-commit
           release: none
-          install-premise: build
+          install-premise: pre-built
           channel: rc
           version: ${{ needs.plan.outputs.version }}
           files-dir: ${{ needs.plan.outputs.native == 'true' && format('{0}/premise-files', runner.temp) || '' }}
 
   publish-packages:
-    needs: publish-release
+    needs: [plan, single, matrix, publish-release]
     if: >-
-      always() && needs.publish-release.result == 'success' &&
-      needs.publish-release.outputs.version != ''
+      always() && needs.plan.outputs.version != '' &&
+      needs.plan.outputs.has_publishable_packages == 'true' &&
+      needs.plan.result == 'success' &&
+      ((needs.plan.outputs.mode == 'single' &&
+        needs.single.result == 'success') ||
+       (needs.plan.outputs.mode == 'matrix' &&
+        needs.matrix.result == 'success')) &&
+      (needs.plan.outputs.has_github_release == 'false' ||
+       needs.publish-release.result == 'success')
     runs-on: ubuntu-22.04
     permissions:
       contents: read
@@ -194,13 +204,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         with:
           command: packages
           flow: on-commit
           release: none
-          install-premise: build
+          install-premise: pre-built
           channel: rc
-          version: ${{ needs.publish-release.outputs.version }}
+          version: ${{ needs.plan.outputs.version }}
 
   deploy:
     needs: [plan, single, matrix, publish-release, publish-packages]

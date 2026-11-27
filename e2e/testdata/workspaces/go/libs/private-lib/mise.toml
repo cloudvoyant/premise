@@ -9,3 +9,9 @@ run = 'echo "private-lib:format:check"'
 
 [tasks.lint]
 run = 'echo "private-lib:lint"'
+
+[tasks.publish]
+run = 'printf "go:publish:private-lib:%s:%s\n" "${PREMISE_PUBLISH_VERSION:-}" "${PREMISE_GO_REGISTRY:-}"'
+
+[tasks."publish:rc"]
+run = 'printf "go:publish:rc:private-lib:%s:%s\n" "${PREMISE_PUBLISH_VERSION:-}" "${PREMISE_GO_REGISTRY:-}"'

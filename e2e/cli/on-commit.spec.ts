@@ -16,7 +16,7 @@ import {
   type LiveInfraContext,
 } from "../../libs/testutils/fixtures.js";
 import { isLiveOrRecordMode } from "../../libs/testutils/mode.js";
-import { TESTDATA_ROOT } from "../../libs/testutils/premise-harness.js";
+import { REPO_ROOT, TESTDATA_ROOT } from "../../libs/testutils/premise-harness.js";
 import { hostCIPlatform, pathExists } from "../../libs/tsutils/fs.js";
 import { assertSavedPulumiState, readGcsObject } from "../../libs/tsutils/gcsx.js";
 
@@ -322,6 +322,8 @@ describe("premise on-commit", { tags: ["e2e", "cli", "ci", "on-commit"] }, () =>
       });
       let planOutput = "";
       let flowOutput = "";
+      let workflow = "";
+      let stagedText = "";
 
       beforeAll(async () => {
         const h = suite();
@@ -329,6 +331,30 @@ describe("premise on-commit", { tags: ["e2e", "cli", "ci", "on-commit"] }, () =>
         await h.initGit(`chore: initial ${eco.label} project`, "v1.0.0");
         planOutput = (await h.pm(["ci", "plan", "--ci-output"])).stdout;
         flowOutput = (await h.pm(["ci", "flow", "on-commit", "--release", "none"])).combined;
+        workflow = await readFile(
+          join(REPO_ROOT, "apps/premise/assets/github-workflows/on-commit.yml"),
+          "utf8",
+        );
+        const stagedDir = join(h.outputDir, `staged-rc-${eco.label}`);
+        await mkdir(stagedDir, { recursive: true });
+        await h.pm([
+          "ci",
+          "flow",
+          "on-commit",
+          "--release",
+          "none",
+          "--project",
+          "cli",
+          "--platform",
+          hostCIPlatform(),
+          "--channel",
+          "rc",
+          "--version",
+          "v1.1.0-rc.1",
+          "--output-dir",
+          stagedDir,
+        ]);
+        stagedText = await readFile(join(stagedDir, "cli.txt"), "utf8");
         await h.writeManifest();
       });
 
@@ -348,29 +374,20 @@ describe("premise on-commit", { tags: ["e2e", "cli", "ci", "on-commit"] }, () =>
         expect(flowOutput).toContain("private-lib:test");
       });
 
-      it.skip(
-        `It handles public packages for the ${eco.label} registry [CLO-228..CLO-234]`,
-        { tags: ["known-bug"] },
-        async () => {
-          expect(planOutput).toContain("mode=matrix\n");
-        },
-      );
+      it(`It should plan registry and GitHub Release outputs for ${eco.label} packages`, () => {
+        expect(planOutput).toContain("has_publishable_packages=true\n");
+        expect(planOutput).toContain("has_github_release=true\n");
+      });
 
-      it.skip(
-        `It handles private packages for Artifact Registry / alternate ${eco.label} registries [CLO-229, CLO-232..CLO-234]`,
-        { tags: ["known-bug"] },
-        async () => {
-          expect(planOutput).toContain("mode=matrix\n");
-        },
-      );
+      it(`It should pass registry auth and released action inputs in generated on-commit workflows for ${eco.label}`, () => {
+        expect(workflow).toContain("NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}");
+        expect(workflow).toContain("has_publishable_packages");
+        expect(workflow).not.toContain("install-premise: build");
+      });
 
-      it.skip(
-        `It handles RC binary release staging and workflow parity for ${eco.label} [CLO-230, CLO-235, CLO-236]`,
-        { tags: ["known-bug"] },
-        async () => {
-          expect(planOutput).toContain("mode=matrix\n");
-        },
-      );
+      it(`It should stage RC binary release artifacts for ${eco.label}`, () => {
+        expect(stagedText).toContain("rc:1.1.0-rc.1");
+      });
     });
   }
 });

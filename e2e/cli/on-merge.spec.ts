@@ -15,7 +15,7 @@ import {
   type LiveInfraContext,
 } from "../../libs/testutils/fixtures.js";
 import { isLiveOrRecordMode } from "../../libs/testutils/mode.js";
-import { TESTDATA_ROOT } from "../../libs/testutils/premise-harness.js";
+import { REPO_ROOT, TESTDATA_ROOT } from "../../libs/testutils/premise-harness.js";
 import { hostCIPlatform } from "../../libs/tsutils/fs.js";
 import { assertGcsBucketDeleted, readGcsObject } from "../../libs/tsutils/gcsx.js";
 
@@ -230,6 +230,8 @@ describe("premise on-merge", { tags: ["e2e", "cli", "ci", "on-merge"] }, () => {
       let version = "";
       let planOutput = "";
       let flowOutput = "";
+      let workflow = "";
+      let stagedText = "";
 
       beforeAll(async () => {
         const h = suite();
@@ -239,6 +241,30 @@ describe("premise on-merge", { tags: ["e2e", "cli", "ci", "on-merge"] }, () => {
         version = (await h.pm(["version", "next"])).stdout.trim();
         planOutput = (await h.pm(["ci", "plan", "--ci-output"])).stdout;
         flowOutput = (await h.pm(["ci", "flow", "on-merge", "--release", "none"])).combined;
+        workflow = await readFile(
+          join(REPO_ROOT, "apps/premise/assets/github-workflows/on-merge.yml"),
+          "utf8",
+        );
+        const stagedDir = join(h.outputDir, `staged-stable-${eco.label}`);
+        await mkdir(stagedDir, { recursive: true });
+        await h.pm([
+          "ci",
+          "flow",
+          "on-merge",
+          "--release",
+          "none",
+          "--project",
+          "cli",
+          "--platform",
+          hostCIPlatform(),
+          "--channel",
+          "stable",
+          "--version",
+          "v1.1.0",
+          "--output-dir",
+          stagedDir,
+        ]);
+        stagedText = await readFile(join(stagedDir, "cli.txt"), "utf8");
         await h.writeManifest();
       });
 
@@ -253,27 +279,30 @@ describe("premise on-merge", { tags: ["e2e", "cli", "ci", "on-merge"] }, () => {
         },
       );
 
-      it.skip(
-        `It handles public ${eco.label} packages on merge [CLO-228..CLO-234]`,
-        { tags: ["known-bug", "live"] },
-        async () => {
-          expect(planOutput).toContain("mode=matrix\n");
+      it(
+        `It should plan registry and GitHub Release outputs for ${eco.label} packages on merge`,
+        { tags: ["replay"] },
+        () => {
+          expect(planOutput).toContain("has_publishable_packages=true\n");
+          expect(planOutput).toContain("has_github_release=true\n");
         },
       );
 
-      it.skip(
-        `It handles private ${eco.label} packages for Artifact Registry / alternate registries on merge [CLO-229, CLO-232..CLO-234]`,
-        { tags: ["known-bug", "live"] },
-        async () => {
-          expect(planOutput).toContain("mode=matrix\n");
+      it(
+        `It should pass registry auth without unconditional token gates in generated on-merge workflows for ${eco.label}`,
+        { tags: ["replay"] },
+        () => {
+          expect(workflow).toContain("NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}");
+          expect(workflow).not.toContain("CRATES_TOKEN is unavailable before release");
+          expect(workflow).not.toContain("install-premise: build");
         },
       );
 
-      it.skip(
-        `It handles stable GitHub Releases for ${eco.label} on merge [CLO-230, CLO-235, CLO-236]`,
-        { tags: ["known-bug", "live"] },
-        async () => {
-          expect(planOutput).toContain("mode=matrix\n");
+      it(
+        `It should stage stable GitHub Release artifacts for ${eco.label} on merge`,
+        { tags: ["replay"] },
+        () => {
+          expect(stagedText).toContain("stable:1.1.0");
         },
       );
     });

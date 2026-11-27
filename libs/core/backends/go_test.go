@@ -207,6 +207,34 @@ func TestGoGeneration(t *testing.T) {
 			}
 		})
 	})
+	t.Run("when a Go CLI declares windows in release_platforms", func(t *testing.T) {
+		// Arrange
+		root := t.TempDir()
+		writePackageFixtureFile(t, root, "go.mod", "module example.com/win\ngo 1.25.0\n")
+		writePackageFixtureFile(t, root, "apps/cli/main.go", "package main\nfunc main() {}\n")
+		manifest := NewManifest("win-fixture")
+		manifest.Workspace.Kind = core.ProjectKindMonorepo
+		manifest.Workspace.Projects = []core.Project{
+			{
+				Name: "cli",
+				Path: "apps/cli",
+				CI:   core.PlatformDeclaration{ReleasePlatforms: []string{"linux", "macos", "windows"}},
+			},
+		}
+
+		// Act
+		config, err := (Go{}).CreateGoReleaserConfig(root, manifest)
+
+		// Assert
+		t.Run("it includes windows in the GoReleaser goos matrix", func(t *testing.T) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(config, "- windows") {
+				t.Fatalf("CreateGoReleaserConfig() missing windows goos: %s", config)
+			}
+		})
+	})
 	t.Run("when existing Go configuration defines multiple modules", func(t *testing.T) {
 		for _, path := range []string{"go.work", "libs/existing/go.mod"} {
 			t.Run("when existing configuration contains "+path, func(t *testing.T) {

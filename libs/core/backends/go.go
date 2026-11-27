@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/cloudvoyant/premise/libs/core"
@@ -44,13 +45,18 @@ func (Go) GetPackageMetadata(root string, target core.Template) (core.PackageMet
 		return core.PackageMetadata{}, false, err
 	}
 	public := target.Package.IsPublic()
+	registry := ""
+	if target.Package != nil {
+		registry = strings.TrimSpace(target.Package.Registry)
+	}
 	return core.PackageMetadata{
 		Name:           workspace.Path + "/" + filepath.ToSlash(target.Path),
 		Path:           directory,
 		PackageManager: "go",
 		Ecosystem:      "go",
+		Registry:       registry,
 		Public:         public,
-		Publishable:    public,
+		Publishable:    public || registry != "",
 	}, true, nil
 }
 
@@ -117,7 +123,11 @@ func (provider Go) PublishPackages(ctx context.Context, root, version, task stri
 	}
 	runner := core.MiseTaskRunner{Stdout: stdout, Stderr: stderr}
 	for _, target := range targets {
-		if err := runner.Run(ctx, target.Path, []string{"GOWORK=off", "PREMISE_PUBLISH_VERSION=" + strings.TrimPrefix(version, "v")}, "run", task); err != nil {
+		env := []string{"GOWORK=off", "PREMISE_PUBLISH_VERSION=" + strings.TrimPrefix(version, "v")}
+		if target.Registry != "" {
+			env = append(env, "PREMISE_GO_REGISTRY="+target.Registry)
+		}
+		if err := runner.Run(ctx, target.Path, env, "run", task); err != nil {
 			return err
 		}
 		fmt.Fprintf(stdout, "%s: %s at repository tag %s\n", task, target.Name, version)
@@ -280,7 +290,7 @@ func (Go) CreateGoReleaserConfig(root string, manifest core.Config) (string, err
 			continue
 		}
 		name := "go-" + target.Name
-		builds = append(builds, goProjectBuildConfig(name, filepath.ToSlash(target.Path), main, policy.Binary))
+		builds = append(builds, goProjectBuildConfig(name, filepath.ToSlash(target.Path), main, policy.Binary, target.CI.ReleasePlatforms))
 		archives = append(archives, goProjectArchiveConfig(name))
 	}
 	if len(builds) == 0 {
@@ -315,16 +325,20 @@ func goPublicationTargets(ctx context.Context, root, version, task string) ([]co
 	return targets, nil
 }
 
-func goProjectBuildConfig(name, directory, main, binary string) map[string]any {
+func goProjectBuildConfig(name, directory, main, binary string, releasePlatforms []string) map[string]any {
 	if binary == "" {
 		binary = strings.TrimPrefix(name, "go-")
+	}
+	goos := []string{"linux", "darwin"}
+	if slices.Contains(releasePlatforms, "windows") {
+		goos = append(goos, "windows")
 	}
 	return map[string]any{
 		"id":            name,
 		"dir":           directory,
 		"main":          main,
 		"binary":        binary,
-		"goos":          []string{"linux", "darwin"},
+		"goos":          goos,
 		"goarch":        []string{"amd64", "arm64"},
 		"env":           []string{"CGO_ENABLED=0"},
 		"flags":         []string{"-trimpath"},

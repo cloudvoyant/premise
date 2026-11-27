@@ -10,10 +10,12 @@ import (
 // BunPackage is package metadata read from package.json using Bun's npm
 // publication conventions.
 type BunPackage struct {
-	Name          string `json:"name"`
-	Version       string `json:"version"`
-	Private       bool   `json:"private"`
-	PublishConfig struct {
+	Name                 string            `json:"name"`
+	Version              string            `json:"version"`
+	Private              bool              `json:"private"`
+	Dependencies         map[string]string `json:"dependencies"`
+	OptionalDependencies map[string]string `json:"optionalDependencies"`
+	PublishConfig        struct {
 		Access   string `json:"access"`
 		Registry string `json:"registry"`
 	} `json:"publishConfig"`

@@ -15,22 +15,33 @@ workspace:
       template: cloudvoyant/premise-go:go-lib
       version: 0.1.0
       path: libs/local-lib
+      package:
+        public: false
     - name: nobuild-lib
       template: cloudvoyant/premise-go:go-lib
       version: 0.1.0
       path: libs/nobuild-lib
+      package:
+        public: false
     - name: public-lib
       template: cloudvoyant/premise-go:go-lib
       version: 0.1.0
       path: libs/public-lib
+      package:
+        public: true
     - name: private-lib
       template: cloudvoyant/premise-go:go-lib
       version: 0.1.0
       path: libs/private-lib
+      package:
+        public: false
+        registry: https://us-central1-go.pkg.dev/cloudvoyant-premise/premise-e2e-go
     - name: cli
       template: cloudvoyant/premise-go:go-app
       version: 0.1.0
       path: apps/cli
+      package:
+        public: false
       ci:
         release_platforms:
           - linux

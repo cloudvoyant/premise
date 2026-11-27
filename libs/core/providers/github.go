@@ -22,15 +22,17 @@ type GitHub struct{}
 // WritePlan formats task and migration matrices as GitHub Actions step outputs.
 func (provider GitHub) WritePlan(output io.Writer, plan CIPlan) error {
 	return provider.writeOutputs(output, map[string]any{
-		"mode":             plan.Mode,
-		"runner":           plan.Runner,
-		"native":           plan.HasNative,
-		"has_infra":        plan.HasInfrastructure,
-		"has_env_infra":    plan.HasEnvInfrastructure,
-		"has_shared_infra": plan.HasSharedInfrastructure,
-		"matrix":           map[string]any{"include": plan.Matrix},
-		"has_migrations":   plan.HasMigrations,
-		"migration_matrix": map[string]any{"include": plan.Migrations},
+		"mode":                     plan.Mode,
+		"runner":                   plan.Runner,
+		"native":                   plan.HasNative,
+		"has_infra":                plan.HasInfrastructure,
+		"has_env_infra":            plan.HasEnvInfrastructure,
+		"has_shared_infra":         plan.HasSharedInfrastructure,
+		"has_github_release":       plan.HasGitHubRelease,
+		"has_publishable_packages": plan.HasPublishablePackages,
+		"matrix":                   map[string]any{"include": plan.Matrix},
+		"has_migrations":           plan.HasMigrations,
+		"migration_matrix":         map[string]any{"include": plan.Migrations},
 	})
 }
 

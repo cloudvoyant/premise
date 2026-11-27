@@ -381,6 +381,75 @@ esac
 	}
 }
 
+func TestBunPrivateRegistryAndDependencies(t *testing.T) {
+	t.Run("when a private npm registry rejects scoped version paths and requires Bearer auth", func(t *testing.T) {
+		// Arrange
+		t.Setenv("NODE_AUTH_TOKEN", "secret-ar-token")
+		var authHeaders []string
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			authHeaders = append(authHeaders, request.Header.Get("Authorization"))
+			if strings.HasSuffix(request.URL.EscapedPath(), "/1.2.3") {
+				writer.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			_, _ = writer.Write([]byte(`{"versions":{"1.2.3":{}}}`))
+		}))
+		defer server.Close()
+		registry, err := url.Parse(server.URL + "/")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Act
+		exists, checkErr := bunVersionExists(t.Context(), server.Client(), registry, "@scope/pkg", "1.2.3")
+
+		// Assert
+		t.Run("it falls back to the scoped packument and reports the existing version", func(t *testing.T) {
+			if checkErr != nil || !exists {
+				t.Fatalf("bunVersionExists() = %v, %v; want true, nil", exists, checkErr)
+			}
+		})
+		t.Run("it sends Bearer auth on both requests", func(t *testing.T) {
+			if len(authHeaders) != 2 || authHeaders[0] != "Bearer secret-ar-token" || authHeaders[1] != "Bearer secret-ar-token" {
+				t.Fatalf("Authorization headers = %v; want Bearer secret-ar-token on both requests", authHeaders)
+			}
+		})
+	})
+
+	t.Run("when a publishable Bun package depends on a local-only workspace sibling", func(t *testing.T) {
+		// Arrange
+		root := t.TempDir()
+		for path, content := range map[string]string{
+			"apps/cli/package.json":   `{"name":"@scope/cli","version":"0.1.0","publishConfig":{"registry":"https://registry.npmjs.org"},"dependencies":{"@scope/local":"workspace:*"}}`,
+			"libs/local/package.json": `{"name":"@scope/local","version":"0.1.0","private":true}`,
+		} {
+			full := filepath.Join(root, filepath.FromSlash(path))
+			if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		manifest := NewManifest("bun-monorepo")
+		manifest.Workspace.Kind = core.ProjectKindMonorepo
+		manifest.Workspace.Projects = []core.Project{
+			{Name: "cli", Path: "apps/cli"},
+			{Name: "local", Path: "libs/local"},
+		}
+
+		// Act
+		err := validateBunWorkspaceDependencies(root, manifest)
+
+		// Assert
+		t.Run("it rejects the workspace dependency graph during preflight", func(t *testing.T) {
+			if err == nil || !strings.Contains(err.Error(), "local-only workspace package @scope/local") {
+				t.Fatalf("validateBunWorkspaceDependencies() = %v, want local-only error", err)
+			}
+		})
+	})
+}
+
 func TestBunGeneration(t *testing.T) {
 	registerBuiltins(t)
 	t.Run("when the project has no package.json", func(t *testing.T) {

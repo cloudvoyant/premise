@@ -250,6 +250,51 @@ func PublishLanguagePackages(ctx context.Context, root string, stdout, stderr io
 	return plan, nil
 }
 
+// PreflightReleasePackages validates every package manager backend before tagging
+// or publishing. Workspaces with no publishable registry targets pass without tokens.
+func PreflightReleasePackages(ctx context.Context, root, channel, expectedVersion string, stdout, stderr io.Writer) error {
+	if channel != "stable" && channel != "rc" {
+		return fmt.Errorf("invalid release channel %q", channel)
+	}
+	task := "publish"
+	if channel == "rc" {
+		task = "publish:rc"
+	}
+	version := expectedVersion
+	if version == "" {
+		if channel == "rc" {
+			version = "v0.1.0-rc.1"
+		} else {
+			version = "v0.1.0"
+		}
+	}
+	if !releaseVersionPattern.MatchString(version) ||
+		(channel == "stable" && !stableVersionPattern.MatchString(version)) ||
+		(channel == "rc" && stableVersionPattern.MatchString(version)) {
+		return fmt.Errorf("invalid %s preflight version %q", channel, version)
+	}
+	_, plugins, err := loadReleaseBackends(root)
+	if err != nil {
+		return fmt.Errorf("resolve package managers: %w", err)
+	}
+	var failures []error
+	for _, plugin := range plugins {
+		if !plugin.SupportsPackages() {
+			continue
+		}
+		if err := plugin.PreflightPublication(ctx, root, version, task); err != nil {
+			failures = append(failures, fmt.Errorf("%s preflight: %w", plugin.ID(), err))
+		}
+	}
+	if err := errors.Join(failures...); err != nil {
+		return err
+	}
+	if stdout != nil {
+		fmt.Fprintf(stdout, "preflight: ok (%s %s)\n", channel, version)
+	}
+	return nil
+}
+
 // PublishReleasePackages checks the exact tag at HEAD before invoking any
 // registry publisher. The workflow runs this only after GitHub publication.
 func PublishReleasePackages(ctx context.Context, root, channel, expectedVersion string, stdout, stderr io.Writer) (ReleasePlan, error) {

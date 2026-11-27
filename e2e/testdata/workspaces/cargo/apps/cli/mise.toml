@@ -9,3 +9,9 @@ run = 'echo "cli:format:check"'
 
 [tasks.lint]
 run = 'echo "cli:lint"'
+
+[tasks."release:build"]
+run = '''
+mkdir -p "${PREMISE_ARTIFACT_DIR:-dist}"
+printf "cargo-cli:%s:%s\n" "${PREMISE_RELEASE_CHANNEL:-stable}" "${RELEASE_VERSION:-0.1.0}" > "${PREMISE_ARTIFACT_DIR:-dist}/cli.txt"
+'''

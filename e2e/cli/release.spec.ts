@@ -5,9 +5,14 @@
  */
 import { chmod, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { HttpCassetteProxy } from "../../libs/testutils/cassette-proxy.js";
-import { copyScaffold, usePremiseHarness } from "../../libs/testutils/fixtures.js";
+import {
+  copyScaffold,
+  setupPrivateCargoWorkspace,
+  usePremiseHarness,
+  useSuiteHarness,
+} from "../../libs/testutils/fixtures.js";
 import { isReplayMode } from "../../libs/testutils/mode.js";
 import {
   RECORDINGS_ROOT,
@@ -16,7 +21,7 @@ import {
   type PremiseHarness,
 } from "../../libs/testutils/premise-harness.js";
 import { installSourceReleaseShims } from "../../libs/testutils/shims.js";
-import { pathExists } from "../../libs/tsutils/fs.js";
+import { hostCIPlatform, pathExists } from "../../libs/tsutils/fs.js";
 import { assertPrivateFixtureRepo, fixtureGithubRepo } from "../../libs/tsutils/ghx.js";
 
 // Fixtures -------------------------------------------------------------------
@@ -386,54 +391,238 @@ describe("premise release", { tags: ["e2e", "cli", "release"] }, () => {
     },
   );
 
-  describe("Given a project with publishable packages", { tags: ["known-bug"] }, () => {
-    it.skip(
-      "It passes without registry tokens when all projects are local-only [CLO-228]",
-      { tags: ["cargo", "replay"] },
-      async () => {
-        const h = harness();
+  describe("Given a project with publishable packages", () => {
+    describe("When all packages are local-only", { tags: ["cargo", "replay"] }, () => {
+      const suite = useSuiteHarness("release_local_only_cargo", import.meta.filename);
+      let preflightStdout = "";
+      let generatedWorkflow = "";
+
+      beforeAll(async () => {
+        const h = suite();
         await copyScaffold(join(TESTDATA_ROOT, "workspaces/cargo"), h.workspace);
-        await h.writeManifest();
-      },
-    );
+        for (const crate of ["libs/public-lib", "libs/private-lib", "apps/cli"]) {
+          const manifestPath = `${crate}/Cargo.toml`;
+          const content = await h.readFile(manifestPath);
+          const updated = content.includes("publish =")
+            ? content.replace(/publish\s*=\s*.+$/m, "publish = false")
+            : `${content.trimEnd()}\npublish = false\n`;
+          await h.writeFile(manifestPath, updated);
+        }
+        await h.initGit("chore: local-only cargo workspace", "v1.0.0");
 
-    it.skip(
-      "It rejects a publishable package depending on a local-only sibling before tagging [CLO-231]",
+        preflightStdout = (
+          await h.pm(["release", "preflight", "--channel", "stable"], {
+            env: { CRATES_TOKEN: "", NODE_AUTH_TOKEN: "", GITHUB_TOKEN: "", GH_TOKEN: "" },
+          })
+        ).stdout;
+        generatedWorkflow = await readFile(
+          join(REPO_ROOT, "apps/premise/assets/github-workflows/on-merge.yml"),
+          "utf8",
+        );
+        await h.writeManifest();
+      });
+
+      it("It should pass preflight without registry tokens", () => {
+        expect(preflightStdout).toContain("preflight: ok (stable");
+      });
+
+      it("It should omit unconditional CRATES_TOKEN checks and build-mode premise installs in generated on-merge workflows", () => {
+        expect(generatedWorkflow).not.toContain("CRATES_TOKEN is unavailable before release");
+        expect(generatedWorkflow).toContain("NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}");
+        expect(generatedWorkflow).not.toContain("install-premise: build");
+      });
+    });
+
+    describe(
+      "When a publishable package depends on a local-only sibling",
       { tags: ["bun", "cargo", "replay"] },
-      async () => {
-        const h = harness();
-        await copyScaffold(join(TESTDATA_ROOT, "workspaces/bun"), h.workspace);
-        await h.writeManifest();
+      () => {
+        const suite = useSuiteHarness("release_local_only_dep", import.meta.filename);
+        let exitCode: number | null = 0;
+        let combined = "";
+
+        beforeAll(async () => {
+          const h = suite();
+          await copyScaffold(join(TESTDATA_ROOT, "workspaces/bun"), h.workspace);
+          const pubPkg = JSON.parse(await h.readFile("libs/public-lib/package.json"));
+          pubPkg.dependencies = { "@premise-e2e/local-lib": "workspace:*" };
+          await h.writeFile("libs/public-lib/package.json", JSON.stringify(pubPkg, null, 2));
+          await h.initGit("chore: bun local-only dep violation", "v1.0.0");
+
+          const failed = await h.pmFail(["release", "preflight", "--channel", "stable"], {
+            env: { NODE_AUTH_TOKEN: "dummy-token" },
+          });
+          exitCode = failed.code;
+          combined = failed.combined;
+          await h.writeManifest();
+        });
+
+        it("It should fail preflight before tagging", () => {
+          expect(exitCode).not.toBe(0);
+        });
+
+        it("It should report the local-only workspace dependency", () => {
+          expect(combined).toContain("local-only workspace package @premise-e2e/local-lib");
+        });
       },
     );
 
-    it.skip(
-      "It publishes GitHub Release archives and checksums and runs them in a clean consumer [CLO-228, CLO-230, CLO-235]",
-      { tags: ["github", "go", "cargo", "bun", "live"] },
-      async () => {
-        const h = harness();
-        await copyScaffold(join(TESTDATA_ROOT, "workspaces/go"), h.workspace);
-        await h.writeManifest();
+    describe(
+      "When building GitHub Release archives for a Go workspace",
+      { tags: ["github", "go", "cargo", "replay"] },
+      () => {
+        const suite = useSuiteHarness("release_go_github_archives", import.meta.filename);
+        let plan = "";
+        let stagedText = "";
+
+        beforeAll(async () => {
+          const h = suite();
+          await copyScaffold(join(TESTDATA_ROOT, "workspaces/go"), h.workspace);
+          await h.initGit("feat: release go workspace", "v1.0.0");
+
+          plan = (await h.pm(["ci", "plan", "--flow", "on-merge", "--ci-output"])).stdout;
+          const stagedDir = join(h.outputDir, "staged-go");
+          await mkdir(stagedDir, { recursive: true });
+          await h.pm([
+            "ci",
+            "flow",
+            "on-merge",
+            "--release",
+            "none",
+            "--project",
+            "cli",
+            "--platform",
+            hostCIPlatform(),
+            "--channel",
+            "stable",
+            "--version",
+            "v1.1.0",
+            "--output-dir",
+            stagedDir,
+          ]);
+          stagedText = await readFile(join(stagedDir, "cli.txt"), "utf8");
+          await h.writeManifest();
+        });
+
+        it("It should plan both GitHub Release and registry package outputs", () => {
+          expect(plan).toContain("has_github_release=true\n");
+          expect(plan).toContain("has_publishable_packages=true\n");
+        });
+
+        it("It should stage the stable CLI binary artifact", () => {
+          expect(stagedText).toContain("go-cli:stable:1.1.0");
+        });
       },
     );
 
-    it.skip(
-      "It publishes private Artifact Registry packages in dependency order without a GitHub Release [CLO-229, CLO-231..CLO-235]",
-      { tags: ["gcp", "go", "cargo", "bun", "live"] },
-      async () => {
-        const h = harness();
-        await copyScaffold(join(TESTDATA_ROOT, "workspaces/bun"), h.workspace);
-        await h.writeManifest();
+    describe(
+      "When publishing private-only Cargo crates without a GitHub Release",
+      { tags: ["gcp", "cargo", "bun", "replay"] },
+      () => {
+        const suite = useSuiteHarness("release_private_cargo_only", import.meta.filename);
+        let plan = "";
+        let missingTokenCode: number | null = 0;
+        let missingTokenOutput = "";
+        let publishedStdout = "";
+
+        beforeAll(async () => {
+          const h = suite();
+          await setupPrivateCargoWorkspace(h);
+          await h.initGit("feat: private cargo crates", "v1.0.0");
+          await h.git(["commit", "--allow-empty", "-m", "feat: bump to 1.1.0"]);
+          await h.git(["tag", "v1.1.0"]);
+
+          plan = (await h.pm(["ci", "plan", "--flow", "on-merge", "--ci-output"])).stdout;
+          const missingToken = await h.pmFail(
+            ["release", "preflight", "--channel", "stable", "--expected-version", "v1.1.0"],
+            { env: { CRATES_TOKEN: "", CARGO_REGISTRIES_PREMISE_PRIVATE_TOKEN: "" } },
+          );
+          missingTokenCode = missingToken.code;
+          missingTokenOutput = missingToken.combined;
+          publishedStdout = (
+            await h.pm(
+              ["release", "packages", "--channel", "stable", "--expected-version", "v1.1.0"],
+              { env: { CARGO_REGISTRIES_PREMISE_PRIVATE_TOKEN: "test-private-token" } },
+            )
+          ).stdout;
+          await h.writeManifest();
+        });
+
+        it("It should skip GitHub Release creation while enabling registry publication", () => {
+          expect(plan).toContain("has_github_release=false\n");
+          expect(plan).toContain("has_publishable_packages=true\n");
+        });
+
+        it("It should require the alternate registry token during preflight", () => {
+          expect(missingTokenCode).not.toBe(0);
+          expect(missingTokenOutput).toContain("CARGO_REGISTRIES_PREMISE_PRIVATE_TOKEN");
+        });
+
+        it("It should publish crates in topological dependency order to the private registry", () => {
+          const privIdx = publishedStdout.indexOf("publish: private-lib 1.1.0");
+          const depIdx = publishedStdout.indexOf("publish: public-lib 1.1.0");
+          expect(privIdx).toBeGreaterThanOrEqual(0);
+          expect(depIdx).toBeGreaterThan(privIdx);
+          expect(publishedStdout).toContain("cargo:publish:private-lib:1.1.0:premise-private");
+        });
       },
     );
 
-    it.skip(
-      "It publishes both GitHub Releases and Artifact Registry packages and records proofs in artifacts.json [CLO-228..CLO-236]",
-      { tags: ["github", "gcp", "go", "cargo", "bun", "live"] },
-      async () => {
-        const h = harness();
-        await copyScaffold(join(TESTDATA_ROOT, "workspaces/go"), h.workspace);
-        await h.writeManifest();
+    describe(
+      "When publishing both GitHub Releases and Artifact Registry packages for a Go workspace",
+      { tags: ["github", "gcp", "go", "replay"] },
+      () => {
+        const suite = useSuiteHarness("release_go_dual_publication", import.meta.filename);
+        let plan = "";
+        let preflightStdout = "";
+        let publishedStdout = "";
+
+        beforeAll(async () => {
+          const h = suite();
+          await copyScaffold(join(TESTDATA_ROOT, "workspaces/go"), h.workspace);
+          await h.initGit("chore: initial go workspace", "v1.0.0");
+          await h.git(["commit", "--allow-empty", "-m", "feat: add dual publication"]);
+          await h.git(["tag", "v1.1.0"]);
+
+          plan = (await h.pm(["ci", "plan", "--flow", "on-merge", "--ci-output"])).stdout;
+          preflightStdout = (
+            await h.pm([
+              "release",
+              "preflight",
+              "--channel",
+              "stable",
+              "--expected-version",
+              "v1.1.0",
+            ])
+          ).stdout;
+          publishedStdout = (
+            await h.pm([
+              "release",
+              "packages",
+              "--channel",
+              "stable",
+              "--expected-version",
+              "v1.1.0",
+            ])
+          ).stdout;
+          await h.writeManifest();
+        });
+
+        it("It should plan both GitHub Release and registry outputs", () => {
+          expect(plan).toContain("has_github_release=true\n");
+          expect(plan).toContain("has_publishable_packages=true\n");
+        });
+
+        it("It should pass release preflight for the tagged version", () => {
+          expect(preflightStdout).toContain("preflight: ok (stable v1.1.0)");
+        });
+
+        it("It should publish both public and private Artifact Registry Go packages", () => {
+          expect(publishedStdout).toContain("go:publish:public-lib:1.1.0");
+          expect(publishedStdout).toContain(
+            "go:publish:private-lib:1.1.0:https://us-central1-go.pkg.dev/cloudvoyant-premise/premise-e2e-go",
+          );
+        });
       },
     );
   });

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -14,12 +16,15 @@ import (
 var cargoPackageVersionPattern = regexp.MustCompile(`^(\s*version\s*=\s*)(?:"[^"]*"|'[^']*')`)
 
 // CargoPackage holds metadata from a Cargo.toml [package] table. PublishCratesIO
-// reports whether Cargo permits publication to crates.io, not whether a release
-// workflow should publish this package.
+// reports whether Cargo permits publication to crates.io; PublishRegistries
+// lists explicitly configured named registries from [package].publish.
 type CargoPackage struct {
-	Name            string
-	Version         string
-	PublishCratesIO bool
+	Name                        string
+	Version                     string
+	PublishCratesIO             bool
+	PublishRegistries           []string
+	PathDependencies            []string
+	UnversionedPathDependencies []string
 }
 
 // ReadCargoPackage parses the [package] table at path. A missing file or a
@@ -39,6 +44,8 @@ func ReadCargoPackage(path string) (pkg CargoPackage, found bool, err error) {
 			Version any    `toml:"version"`
 			Publish any    `toml:"publish"`
 		} `toml:"package"`
+		Dependencies      map[string]any `toml:"dependencies"`
+		BuildDependencies map[string]any `toml:"build-dependencies"`
 	}
 	if err := toml.Unmarshal(data, &manifest); err != nil {
 		return CargoPackage{}, false, fmt.Errorf("parse Cargo manifest %s: %w", path, err)
@@ -54,6 +61,7 @@ func ReadCargoPackage(path string) (pkg CargoPackage, found bool, err error) {
 		return CargoPackage{}, false, fmt.Errorf("Cargo manifest %s has no [package] version", path)
 	}
 	publishCratesIO := true
+	var publishRegistries []string
 	switch publish := manifest.Package.Publish.(type) {
 	case nil:
 	case bool:
@@ -61,14 +69,29 @@ func ReadCargoPackage(path string) (pkg CargoPackage, found bool, err error) {
 	case []any:
 		publishCratesIO = false
 		for _, registry := range publish {
-			if registry == "crates-io" {
+			name, ok := registry.(string)
+			if !ok || strings.TrimSpace(name) == "" {
+				return CargoPackage{}, false, fmt.Errorf("Cargo manifest %s has invalid [package] publish registry entry", path)
+			}
+			if !slices.Contains(publishRegistries, name) {
+				publishRegistries = append(publishRegistries, name)
+			}
+			if name == "crates-io" {
 				publishCratesIO = true
 			}
 		}
 	default:
 		return CargoPackage{}, false, fmt.Errorf("Cargo manifest %s has invalid [package] publish value", path)
 	}
-	return CargoPackage{Name: manifest.Package.Name, Version: version, PublishCratesIO: publishCratesIO}, true, nil
+	pathDeps, unversionedPathDeps := collectCargoPathDependencies(manifest.Dependencies, manifest.BuildDependencies)
+	return CargoPackage{
+		Name:                        manifest.Package.Name,
+		Version:                     version,
+		PublishCratesIO:             publishCratesIO,
+		PublishRegistries:           publishRegistries,
+		PathDependencies:            pathDeps,
+		UnversionedPathDependencies: unversionedPathDeps,
+	}, true, nil
 }
 
 // SetCargoPackageVersion updates only the [package] version in Cargo.toml,
@@ -104,4 +127,41 @@ func SetCargoPackageVersion(path, version string) error {
 		return fmt.Errorf("write Cargo manifest %s: %w", path, err)
 	}
 	return nil
+}
+
+// Private helpers ------------------------------------------------------------
+
+func collectCargoPathDependencies(sections ...map[string]any) (all, unversioned []string) {
+	seenAll := map[string]struct{}{}
+	seenUnversioned := map[string]struct{}{}
+	for _, section := range sections {
+		for key, raw := range section {
+			table, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			if p, ok := table["path"].(string); !ok || strings.TrimSpace(p) == "" {
+				continue
+			}
+			name := key
+			if pkgName, ok := table["package"].(string); ok && strings.TrimSpace(pkgName) != "" {
+				name = pkgName
+			}
+			seenAll[name] = struct{}{}
+			ver, hasVer := table["version"].(string)
+			workspace, _ := table["workspace"].(bool)
+			if (!hasVer || strings.TrimSpace(ver) == "") && !workspace {
+				seenUnversioned[name] = struct{}{}
+			}
+		}
+	}
+	for name := range seenAll {
+		all = append(all, name)
+	}
+	for name := range seenUnversioned {
+		unversioned = append(unversioned, name)
+	}
+	sort.Strings(all)
+	sort.Strings(unversioned)
+	return all, unversioned
 }
